@@ -157,6 +157,671 @@ body.placing .fabs,body.placing .load,body.placing .tip{display:none}
 <div id="map"></div>
 
 <div class="topbar">
+  <div class="brand">みちくさ<small id="diag">MICHIKUSA v8</small></div>
+  <div class="readout" id="readout"></div>
+</div>
+
+<button class="load" id="btn-load">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12M7 10l5 5 5-5M4 20h16"/></svg>
+  <span>この範囲の店を読み込む</span>
+</button>
+
+<div class="fabs">
+  <button class="fab sub" id="btn-loc" title="現在地">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
+  </button>
+  <button class="fab sub" id="btn-lib" title="カメラロール">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.4"/></svg>
+  </button>
+  <button class="fab" id="btn-cam" title="その場で撮る">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
+  </button>
+</div>
+
+<div class="tip" id="tip">地図をタップして、ここに思い出を追加</div>
+
+<!-- 位置の確認 -->
+<div class="confirm" id="confirm">
+  <div class="cf-row">
+    <span class="cf-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 22s7-6.4 7-12a7 7 0 1 0-14 0c0 5.6 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg></span>
+    <span class="cf-txt">
+      <span class="cf-name" id="cf-name">場所を調べています…</span>
+      <span class="cf-ask" id="cf-ask">この場所でいいですか？</span>
+    </span>
+  </div>
+  <div class="cf-btns">
+    <button class="cf-no"  id="cf-no">いいえ</button>
+    <button class="cf-yes" id="cf-yes">はい</button>
+  </div>
+  <button class="cf-cancel" id="cf-cancel">やめる</button>
+</div>
+
+<input type="file" accept="image/*" capture="environment" hidden id="in-cam">
+<input type="file" accept="image/*" hidden id="in-lib">
+
+<script>
+function showErr(m){const e=document.getElementById('err');e.style.display='block';
+  e.innerHTML='<b>エラー内容（そのまま貼ってください）</b>\n'+m;}
+function dump(x){
+  if(!x) return String(x);
+  if(x.stack) return (x.message||x.name||'')+'\n--- 発生箇所 ---\n'+x.stack;
+  if(typeof x==='object'){ try{ return JSON.stringify(x); }catch(e){ return String(x); } }
+  return String(x);
+}
+window.addEventListener('error',function(ev){
+  showErr('[error] '+(ev.message||'')+'\n'+(ev.filename||'')+':'+(ev.lineno||'')+
+    (ev.error&&ev.error.stack?'\n--- 発生箇所 ---\n'+ev.error.stack:''));
+});
+window.addEventListener('unhandledrejection',function(ev){
+  showErr('[promise] '+dump(ev.reason));
+});
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
+<script>
+if(typeof exifr==='undefined'){
+  document.write('<scr'+'ipt src="https://unpkg.com/exifr/dist/lite.umd.js"><\/scr'+'ipt>');
+}
+</script>
+<script>
+/* ============================================================
+   みちくさ v6
+   ・地図タップ → 「ここに思い出を追加」
+   ・座標ではなく地名で「この場所でいいですか？」を確認
+   ・いいえ → タップで置き直し（ピンのドラッグも可）
+   ============================================================ */
+if(typeof L==='undefined'){ showErr('Leaflet を読み込めませんでした。'); }
+else{ try{
+
+const CATS=['喫茶','麺','酒','湯','社','園','景','本'];
+const ASK={
+  '喫茶':['何を飲んだ / 食べた？','例：クリームソーダ'],
+  '麺'  :['何を食べた？','例：味玉らーめん'],
+  '酒'  :['何を飲んだ？','例：レモンサワー'],
+  '湯'  :['ひとこと','例：外気浴の椅子が最高'],
+  '社'  :['どう撮った？','例：夕方、参道から'],
+  '園'  :['どう撮った？','例：桜、朝いちばん'],
+  '景'  :['どう撮った？','例：対岸から、日没20分前'],
+  '本'  :['ひとこと','例：2階の奥がいい']
+};
+
+const SEED=[
+  {id:'s1',n:'カヤバ珈琲',  c:'喫茶',lat:35.7229,lng:139.7669,tag:'たまごサンド',d:'2026-05-10',place:'東京都台東区谷中'},
+  {id:'s2',n:'浅草寺',      c:'社', lat:35.7148,lng:139.7967,tag:'夜、雷門の裏から',d:'2026-03-15',place:'東京都台東区浅草'},
+  {id:'s3',n:'上野恩賜公園',c:'園', lat:35.7156,lng:139.7745,tag:'',d:'2026-04-19',place:'東京都台東区上野公園'}
+];
+let spots=[];
+let pois=[], meMarker=null;
+
+const map=L.map('map',{zoomControl:false}).setView([35.7150,139.7745],15);
+L.control.zoom({position:'bottomleft'}).addTo(map);
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png',{
+  maxZoom:18,minZoom:4,
+  attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank">国土地理院</a> / <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
+}).addTo(map);
+
+const glowLayer=L.layerGroup().addTo(map);
+const poiLayer =L.layerGroup().addTo(map);
+const pinLayer =L.layerGroup().addTo(map);
+const lblLayer =L.layerGroup().addTo(map);
+
+function esc(s){return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));}
+function setTip(t){const e=document.getElementById('tip');e.textContent=t;e.style.opacity='1';}
+
+/* ============================================================
+   保存（IndexedDB）— 端末内に残るので、リロードしても消えない
+   本番では Cloudflare D1 + R2 に置き換える
+   ============================================================ */
+let db=null;
+function openDB(){
+  return new Promise(function(res){
+    try{
+      if(!window.indexedDB) return res(false);
+      const rq=indexedDB.open('michikusa',1);
+      rq.onupgradeneeded=function(){
+        const d=rq.result;
+        if(!d.objectStoreNames.contains('spots')) d.createObjectStore('spots',{keyPath:'id'});
+        if(!d.objectStoreNames.contains('meta'))  d.createObjectStore('meta', {keyPath:'k'});
+      };
+      rq.onsuccess=function(){ db=rq.result; res(true); };
+      rq.onerror  =function(){ res(false); };
+      setTimeout(function(){ if(!db) res(false); },4000);
+    }catch(e){ res(false); }
+  });
+}
+function tx(store,mode){ return db.transaction(store,mode).objectStore(store); }
+function dbPut(store,val){
+  return new Promise(function(res){
+    if(!db) return res(false);
+    try{ const r=tx(store,'readwrite').put(val); r.onsuccess=()=>res(true); r.onerror=()=>res(false); }
+    catch(e){ res(false); }
+  });
+}
+function dbDel(store,key){
+  return new Promise(function(res){
+    if(!db) return res(false);
+    try{ const r=tx(store,'readwrite').delete(key); r.onsuccess=()=>res(true); r.onerror=()=>res(false); }
+    catch(e){ res(false); }
+  });
+}
+function dbAll(store){
+  return new Promise(function(res){
+    if(!db) return res([]);
+    try{ const r=tx(store,'readonly').getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>res([]); }
+    catch(e){ res([]); }
+  });
+}
+function dbGet(store,key){
+  return new Promise(function(res){
+    if(!db) return res(null);
+    try{ const r=tx(store,'readonly').get(key); r.onsuccess=()=>res(r.result||null); r.onerror=()=>res(null); }
+    catch(e){ res(null); }
+  });
+}
+function newId(){ return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+function valid(p){
+  return p && typeof p.lat==='number' && typeof p.lng==='number' &&
+    isFinite(p.lat) && isFinite(p.lng) &&
+    p.lat>=-90 && p.lat<=90 && p.lng>=-180 && p.lng<=180;
+}
+const MOPT={interactive:false,keyboard:false,autoPanOnFocus:false};
+
+function draw(){
+ try{
+  glowLayer.clearLayers();poiLayer.clearLayers();pinLayer.clearLayers();lblLayer.clearLayers();
+  const z=map.getZoom();
+  pois.filter(valid).forEach(function(p){
+    L.circleMarker([p.lat,p.lng],{radius:z>=16?5:z>=14?3.6:2.4,color:'#4FB3B3',weight:1.3,
+      fillColor:'#0B111C',fillOpacity:.9})
+      .on('click',function(e){L.DomEvent.stopPropagation(e);
+        startPlacing(p.lat,p.lng,{known:p.n,cat:p.c});})
+      .addTo(poiLayer);
+  });
+  spots.filter(valid).forEach(function(s){
+    [[z>=16?46:z>=14?30:18,.06],[z>=16?28:z>=14?18:11,.09],[z>=16?15:z>=14?10:6,.14]]
+      .forEach(function(pr){L.circleMarker([s.lat,s.lng],{radius:pr[0],stroke:false,
+        fillColor:'#FFC24B',fillOpacity:pr[1],interactive:false}).addTo(glowLayer);});
+    L.circleMarker([s.lat,s.lng],{radius:z>=16?9:z>=14?7:5,color:'#FFC24B',weight:2,
+      fillColor:'#0B111C',fillOpacity:1})
+      .on('click',function(e){L.DomEvent.stopPropagation(e);openDetail(s);})
+      .addTo(pinLayer);
+    if(z>=13) L.marker([s.lat,s.lng],Object.assign({},MOPT,{
+      icon:L.divIcon({className:'lbl-wrap',html:'<span class="lbl">'+esc(s.n)+'</span>',iconSize:null})
+    })).addTo(lblLayer);
+  });
+  document.getElementById('readout').innerHTML=
+    '<b>'+spots.length+'</b> 灯<br><i>'+pois.length+'</i> 件 読込済';
+ }catch(e){ showErr('[draw] '+dump(e)); }
+}
+map.on('zoomend',draw);
+
+/* ============================================================
+   位置の確認フロー
+   ============================================================ */
+let placing=null;     /* {lat,lng,marker,photo,date,known,cat,place} */
+const cf     =document.getElementById('confirm');
+const cfName =document.getElementById('cf-name');
+const cfAsk  =document.getElementById('cf-ask');
+
+function startPlacing(lat,lng,opt){
+ try{
+  opt=opt||{};
+  if(!isFinite(lat)||!isFinite(lng)) return;
+  if(placing&&placing.marker){ try{ map.removeLayer(placing.marker); }catch(e){} }
+  placing=Object.assign({lat:lat,lng:lng,place:null},opt);
+
+  const m=L.marker([lat,lng],{draggable:true,keyboard:false,autoPanOnFocus:false,
+    icon:L.divIcon({className:'drop',html:'<u></u><i></i>',iconSize:null})}).addTo(map);
+  m.on('dragend',function(){
+    try{ const p=m.getLatLng(); movePlacing(p.lat,p.lng,true); }catch(e){}
+  });
+  placing.marker=m;
+
+  document.body.classList.add('placing');
+  cf.classList.add('on'); cf.classList.remove('pick');
+  const z=map.getZoom();
+  map.setView([lat,lng], z<16?16:z, {animate:true,duration:.5});
+  askPlace(lat,lng);
+ }catch(e){ showErr('[startPlacing] '+dump(e)); }
+}
+
+function movePlacing(lat,lng,fromDrag){
+ try{
+  if(!placing) return;
+  placing.lat=lat; placing.lng=lng;
+  if(!fromDrag) placing.marker.setLatLng([lat,lng]);
+  cf.classList.remove('pick');
+  askPlace(lat,lng);
+ }catch(e){ showErr('[movePlacing] '+dump(e)); }
+}
+
+let askSeq=0;
+async function askPlace(lat,lng){
+ try{
+  const my=++askSeq;
+  cfName.textContent='場所を調べています…';
+  cfAsk.textContent='この場所でいいですか？';
+  const r=await revGeo(lat,lng);
+  if(my!==askSeq||!placing) return;
+  placing.place=r.name;
+  if(r.near&&!placing.known) placing.known=r.near.n;
+  cfName.textContent=r.name;
+  cfAsk.textContent=r.near?('近く：'+r.near.n):'この場所でいいですか？';
+ }catch(e){ showErr('[askPlace] '+dump(e)); }
+}
+
+document.getElementById('cf-yes').onclick=function(){
+  if(!placing) return;
+  const p=placing;
+  endPlacing();
+  openAdd(p);
+};
+document.getElementById('cf-no').onclick=function(){
+  if(!placing) return;
+  cf.classList.add('pick');
+  cfName.textContent='地図をタップして、正しい場所を選んでください';
+  cfAsk.textContent='ピンを長押しして動かすこともできます';
+};
+document.getElementById('cf-cancel').onclick=endPlacing;
+
+function endPlacing(){
+  if(placing&&placing.marker) map.removeLayer(placing.marker);
+  placing=null;
+  cf.classList.remove('on','pick');
+  document.body.classList.remove('placing');
+}
+
+/* 地図タップ：置いていなければ開始、置いていれば移動 */
+map.on('click',function(e){
+  if(placing) movePlacing(e.latlng.lat,e.latlng.lng);
+  else        startPlacing(e.latlng.lat,e.latlng.lng,{});
+});
+
+/* ---------- 逆ジオコーディング（座標 → 地名） ---------- */
+const geoCache=new Map();
+async function revGeo(lat,lng){
+  const key=lat.toFixed(4)+','+lng.toFixed(4);
+  if(geoCache.has(key)) return geoCache.get(key);
+
+  /* 近くにすでに知っている場所があれば拾う */
+  let near=null,nd=1e9;
+  pois.concat(spots).forEach(function(p){
+    const d=Math.hypot((p.lat-lat)*111000,(p.lng-lng)*91000);
+    if(d<nd){nd=d;near=p;}
+  });
+  if(nd>90) near=null;
+
+  let name=null;
+  try{
+    const u='https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18'+
+            '&accept-language=ja&lat='+lat+'&lon='+lng;
+    const res=await fetch(u);
+    if(res.ok){
+      const j=await res.json(), a=j.address||{};
+      const seq=[a.province||a.state, a.city||a.town||a.village||a.county,
+                 a.city_district||a.suburb, a.neighbourhood||a.quarter, a.road];
+      const out=[];
+      seq.forEach(function(v){ if(v&&out.indexOf(v)<0) out.push(v); });
+      if(out.length) name=out.join('');
+      if(j.name&&name&&name.indexOf(j.name)<0) name=j.name+'（'+name+'）';
+      else if(j.name&&!name) name=j.name;
+    }
+  }catch(e){}
+
+  if(!name&&near)  name=near.n+' のあたり';
+  if(!name)        name='緯度 '+lat.toFixed(5)+' / 経度 '+lng.toFixed(5);
+  const out={name:name,near:near};
+  geoCache.set(key,out);
+  return out;
+}
+
+/* ---------- 現在地 ---------- */
+const GEO_ERR={1:'許可されていません（ブラウザとOSの両方で位置情報を許可してください）',
+               2:'位置を特定できません（GPSが掴めていない／屋内など）',
+               3:'時間内に取得できませんでした'};
+document.getElementById('btn-loc').onclick=function(){
+  const btn=this;
+  if(!navigator.geolocation){ setTip('この端末には位置情報機能がありません'); return; }
+  if(!window.isSecureContext){ setTip('HTTPSでないと現在地は使えません'); return; }
+  btn.classList.add('act');
+  function ok(p,mode){
+   try{
+    const lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy;
+    map.setView([lat,lng],acc>2000?13:16,{animate:true});
+    if(meMarker){ try{ map.removeLayer(meMarker); }catch(e){} }
+    meMarker=L.marker([lat,lng],Object.assign({},MOPT,{
+      icon:L.divIcon({className:'me-dot',html:'<i></i>',iconSize:null})})).addTo(map);
+    setTip('現在地 ／誤差 約'+Math.round(acc)+'m（'+mode+'）');
+    btn.classList.remove('act');
+   }catch(e){ showErr('[geo] '+dump(e)); }
+  }
+  function fail(err){ btn.classList.remove('act');
+    setTip('取得失敗 ['+err.code+'] '+(GEO_ERR[err.code]||err.message)); }
+  setTip('現在地を取得中…');
+  navigator.geolocation.getCurrentPosition(p=>ok(p,'高精度'),function(){
+    setTip('高精度で取れず。通常精度で再試行中…');
+    navigator.geolocation.getCurrentPosition(p=>ok(p,'通常精度'),fail,
+      {enableHighAccuracy:false,timeout:25000,maximumAge:600000});
+  },{enableHighAccuracy:true,timeout:30000,maximumAge:0});
+};
+
+/* ---------- OSM から店を降らせる ---------- */
+const TAGS=[
+  ['amenity','cafe','喫茶'],['amenity','restaurant','麺'],['amenity','fast_food','麺'],
+  ['amenity','bar','酒'],['amenity','pub','酒'],['amenity','public_bath','湯'],
+  ['shop','bakery','喫茶'],['shop','books','本'],
+  ['leisure','park','園'],['amenity','place_of_worship','社'],
+  ['tourism','attraction','景'],['tourism','viewpoint','景'],['tourism','museum','景']
+];
+const ENDPOINTS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+document.getElementById('btn-load').onclick=async function(){
+  const btn=this,txt=btn.querySelector('span');
+  if(map.getZoom()<13){ setTip('もう少し拡大してください（ズーム13以上）'); return; }
+  btn.disabled=true; txt.textContent='読み込み中…';
+  const b=map.getBounds();
+  const bbox=[b.getSouth().toFixed(5),b.getWest().toFixed(5),b.getNorth().toFixed(5),b.getEast().toFixed(5)].join(',');
+  const q='[out:json][timeout:25];('+TAGS.map(t=>'node["'+t[0]+'"="'+t[1]+'"]["name"]('+bbox+');').join('')+');out body 400;';
+  let lastErr=null;
+  for(const url of ENDPOINTS){
+    try{
+      const res=await fetch(url,{method:'POST',body:'data='+encodeURIComponent(q)});
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      const j=await res.json();
+      const seen=new Set(pois.map(p=>p.n+p.lat.toFixed(4)));
+      let added=0;
+      (j.elements||[]).forEach(function(e2){
+        const nm=e2.tags&&e2.tags.name; if(!nm)return;
+        const k=nm+e2.lat.toFixed(4); if(seen.has(k))return; seen.add(k);
+        let cat='景';
+        for(const t of TAGS){ if(e2.tags[t[0]]===t[1]){cat=t[2];break;} }
+        pois.push({n:nm,c:cat,lat:e2.lat,lng:e2.lon}); added++;
+      });
+      draw(); setTip(added?added+'件 追加':'この範囲には見つかりませんでした');
+      btn.disabled=false; txt.textContent='この範囲の店を読み込む'; return;
+    }catch(e){ lastErr=e; }
+  }
+  btn.disabled=false; txt.textContent='この範囲の店を読み込む';
+  showErr('店の読み込みに失敗しました。\n'+(lastErr&&lastErr.message));
+};
+
+/* ---------- 写真 ---------- */
+document.getElementById('btn-cam').onclick=()=>document.getElementById('in-cam').click();
+document.getElementById('btn-lib').onclick=()=>document.getElementById('in-lib').click();
+['in-cam','in-lib'].forEach(function(id){
+  document.getElementById(id).onchange=async function(e){
+    const f=e.target.files[0]; if(!f)return; e.target.value='';
+    setTip('写真を読み込み中…');
+    let gps=null,date=null;
+    try{
+      if(typeof exifr!=='undefined'){
+        const g=await exifr.gps(f).catch(()=>null);
+        if(g&&g.latitude!=null) gps={lat:g.latitude,lng:g.longitude};
+        const p=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(()=>null);
+        const d=p&&(p.DateTimeOriginal||p.CreateDate);
+        if(d) date=new Date(d).toISOString().slice(0,10);
+      }
+    }catch(_){}
+    shrink(f,function(url){
+      const c=map.getCenter();
+      startPlacing(gps?gps.lat:c.lat, gps?gps.lng:c.lng,
+        {photo:url,date:date,fromExif:!!gps});
+      if(!gps) setTimeout(function(){
+        cfAsk.textContent='写真に位置情報がありません。場所を選んでください';
+      },900);
+    });
+  };
+});
+
+function shrink(file,cb){
+  const r=new FileReader();
+  r.onload=function(){
+    const im=new Image();
+    im.onload=function(){
+      const M=1600,sc=Math.min(1,M/Math.max(im.width,im.height));
+      const cv=document.createElement('canvas');
+      cv.width=Math.round(im.width*sc); cv.height=Math.round(im.height*sc);
+      const cx=cv.getContext('2d'); cx.imageSmoothingQuality='high';
+      cx.drawImage(im,0,0,cv.width,cv.height);
+      cb(cv.toDataURL('image/jpeg',.86));
+    };
+    im.onerror=()=>cb(null); im.src=r.result;
+  };
+  r.readAsDataURL(file);
+}
+
+/* ---------- 記録シート ---------- */
+function el(h){const d=document.createElement('div');d.innerHTML=h.trim();return d.firstElementChild;}
+
+function openAdd(p){
+  let cat=p.cat||CATS[0];
+  const scrim=el('<div class="scrim"></div>');
+  const card=el('<div class="card">'+
+    '<div class="grab"></div>'+
+    '<div class="here">'+
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 22s7-6.4 7-12a7 7 0 1 0-14 0c0 5.6 7 12 7 12z"/><circle cx="12" cy="10" r="2.6"/></svg>'+
+      '<span><b>'+esc(p.place||'この場所')+'</b>'+
+      (p.date?'<em>撮影 '+esc(p.date)+'</em>':'')+'</span>'+
+    '</div>'+
+    (p.fromExif?'<div class="ok-note">✓ 写真の位置情報を使いました</div>':'')+
+    (p.photo?'<img class="shot" src="'+p.photo+'">':'')+
+    '<div class="chips" id="chips"></div>'+
+    '<input class="fld" id="f-n" placeholder="場所の名前" autocomplete="off" value="'+esc(p.known||'')+'">'+
+    '<div class="lab" id="lab">'+ASK[cat][0]+'</div>'+
+    '<input class="fld" id="f-t" placeholder="'+ASK[cat][1]+'" autocomplete="off">'+
+    (!p.photo?'<div class="photorow">'+
+      '<label class="pick" id="p1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg><span>その場で撮る</span></label>'+
+      '<label class="pick" id="p2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/></svg><span>カメラロール</span></label>'+
+    '</div>':'')+
+    '<button class="btn" id="ok">ここに灯す</button>'+
+    '<button class="btn ghost" id="ng">やめる</button>'+
+  '</div>');
+  document.body.append(scrim,card);
+
+  const chips=card.querySelector('#chips'),lab=card.querySelector('#lab'),fldT=card.querySelector('#f-t');
+  CATS.forEach(function(c){
+    const b=el('<button class="chip '+(c===cat?'on':'')+'">'+c+'</button>');
+    b.onclick=function(){cat=c;
+      chips.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));b.classList.add('on');
+      lab.textContent=ASK[c][0]; fldT.placeholder=ASK[c][1];};
+    chips.appendChild(b);
+  });
+  const nm=card.querySelector('#f-n'),ok=card.querySelector('#ok');
+  const sync=()=>ok.disabled=!nm.value.trim(); nm.oninput=sync; sync();
+  const close=function(){scrim.remove();card.remove();};
+  card.querySelector('#ng').onclick=close; scrim.onclick=close;
+  const p1=card.querySelector('#p1'),p2=card.querySelector('#p2');
+  if(p1) p1.onclick=function(){close();document.getElementById('in-cam').click();};
+  if(p2) p2.onclick=function(){close();document.getElementById('in-lib').click();};
+
+  ok.onclick=function(){
+    const rec={id:newId(),n:nm.value.trim(),c:cat,lat:p.lat,lng:p.lng,place:p.place||'',
+      tag:fldT.value.trim(),d:p.date||new Date().toISOString().slice(0,10),
+      photo:p.photo||'',saved:Date.now()};
+    spots.push(rec);
+    dbPut('spots',rec).then(function(okv){ if(!okv) setTip('※保存できませんでした（端末内保存が使えない状態です）'); });
+    if(p.known) pois=pois.filter(x=>x.n!==p.known);
+    close(); draw();
+  };
+  if(!p.known) setTimeout(()=>nm.focus(),320);
+}
+
+function openDetail(s){
+  const scrim=el('<div class="scrim"></div>');
+  const card=el('<div class="card det">'+
+    '<div class="grab"></div>'+
+    (s.photo?'<img class="ph" src="'+s.photo+'">':'')+
+    '<h3>'+esc(s.n)+'</h3>'+
+    '<p class="sub">'+esc(s.c)+(s.place?'　'+esc(s.place):'')+(s.d?'　'+s.d:'')+'</p>'+
+    (s.tag?'<div class="dish"><em>'+esc((ASK[s.c]||['メモ'])[0])+'</em><b>'+esc(s.tag)+'</b></div>':'')+
+    '<button class="btn ghost" id="x">とじる</button>'+
+    '<button class="btn ghost" id="del" style="border-color:rgba(226,87,76,.4);color:#E2574C">この記録を消す</button>'+
+  '</div>');
+  document.body.append(scrim,card);
+  const close=function(){scrim.remove();card.remove();};
+  card.querySelector('#x').onclick=close; scrim.onclick=close;
+  card.querySelector('#del').onclick=function(){
+    const b=this;
+    if(b.dataset.sure!=='1'){ b.dataset.sure='1'; b.textContent='本当に消す？（もう一度押す）'; return; }
+    spots=spots.filter(x=>x.id!==s.id);
+    if(s.id) dbDel('spots',s.id);
+    close(); draw();
+  };
+}
+
+(async function init(){
+ try{
+  const ok=await openDB();
+  if(ok){
+    const seeded=await dbGet('meta','seeded');
+    if(!seeded){
+      for(const s of SEED) await dbPut('spots',s);
+      await dbPut('meta',{k:'seeded',v:1});
+      spots=SEED.slice();
+    }else{
+      const all=await dbAll('spots');
+      spots=all.filter(valid);
+      spots.sort((a,b)=>String(a.d||'').localeCompare(String(b.d||'')));
+      if(all.length!==spots.length) setTip('※壊れた記録を'+(all.length-spots.length)+'件スキップしました');
+    }
+  }else{
+    spots=SEED.slice();
+  }
+  draw();
+  document.getElementById('diag').textContent=
+    'exifr '+(typeof exifr!=='undefined'?'OK':'NG')+
+    ' / geo '+(navigator.geolocation?'OK':'NG')+
+    ' / 保存 '+(ok?'OK':'NG');
+ }catch(e){ showErr('[init] '+dump(e)); }
+})();
+setTimeout(function(){const t=document.getElementById('tip');if(t)t.style.opacity='.5';},7000);
+
+}catch(e){ showErr(e.message+'\n'+(e.stack||'')); } }
+</script>
+</body>
+</html>.lbl-wrap{background:none;border:none}
+.lbl{font-family:var(--mincho);font-size:11px;color:#EDE7DA;white-space:nowrap;
+  text-shadow:0 0 4px #0B111C,0 0 9px #0B111C,0 0 14px #0B111C;
+  transform:translate(-50%,10px);display:inline-block}
+.me-dot{background:none;border:none}
+.me-dot i{display:block;width:14px;height:14px;border-radius:50%;background:#4FB3B3;
+  border:2px solid #0B111C;box-shadow:0 0 0 6px rgba(79,179,179,.25),0 0 16px rgba(79,179,179,.7);
+  transform:translate(-50%,-50%)}
+
+/* 置こうとしている場所のピン */
+.drop{background:none;border:none}
+.drop i{display:block;width:22px;height:22px;border-radius:50% 50% 50% 0;
+  background:var(--hi);transform:translate(-50%,-100%) rotate(-45deg);
+  box-shadow:0 0 22px rgba(255,194,75,.85);position:relative}
+.drop i::after{content:'';position:absolute;left:50%;top:50%;width:7px;height:7px;
+  margin:-3.5px 0 0 -3.5px;border-radius:50%;background:#0B111C}
+.drop u{position:absolute;left:0;top:0;width:14px;height:14px;border-radius:50%;
+  border:2px solid var(--hi);transform:translate(-50%,-50%);
+  animation:ping 1.6s ease-out infinite;opacity:0}
+@keyframes ping{0%{transform:translate(-50%,-50%) scale(.4);opacity:.9}
+  100%{transform:translate(-50%,-50%) scale(4.2);opacity:0}}
+
+.fabs{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);z-index:700;
+  display:flex;flex-direction:column;gap:11px;align-items:flex-end}
+.fab{width:56px;height:56px;border-radius:50%;background:var(--hi);color:#0B111C;
+  display:flex;align-items:center;justify-content:center;box-shadow:0 8px 26px rgba(255,194,75,.34)}
+.fab svg{width:25px;height:25px}
+.fab.sub{width:46px;height:46px;background:rgba(16,26,43,.94);color:var(--kinari);
+  border:1px solid var(--line);box-shadow:0 6px 18px rgba(0,0,0,.5)}
+.fab.sub svg{width:20px;height:20px}
+.fab.sub.act{color:var(--mizu);border-color:rgba(79,179,179,.5)}
+
+.load{position:fixed;left:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);z-index:700;
+  background:rgba(16,26,43,.94);border:1px solid rgba(79,179,179,.45);color:var(--mizu);
+  border-radius:99px;padding:12px 17px;font-size:12.5px;box-shadow:0 6px 18px rgba(0,0,0,.5);
+  display:flex;align-items:center;gap:8px}
+.load:disabled{opacity:.5}
+.load svg{width:16px;height:16px;flex:0 0 16px}
+
+.tip{position:fixed;left:50%;transform:translateX(-50%);z-index:600;
+  bottom:calc(env(safe-area-inset-bottom,0px) + 92px);
+  font-family:var(--mono);font-size:10px;color:var(--dim);
+  background:rgba(11,17,28,.82);border:1px solid var(--line);padding:7px 13px;border-radius:99px;
+  pointer-events:none;transition:opacity .5s;max-width:88vw;text-align:center}
+
+/* 位置の確認バー */
+.confirm{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);
+  z-index:900;background:rgba(16,26,43,.98);border:1px solid rgba(255,194,75,.35);
+  border-radius:17px;padding:15px 16px 14px;box-shadow:0 14px 46px rgba(0,0,0,.66);
+  display:none;backdrop-filter:blur(10px)}
+.confirm.on{display:block;animation:rise .26s cubic-bezier(.2,.85,.3,1)}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.cf-row{display:flex;gap:11px;align-items:flex-start;margin-bottom:13px}
+.cf-ico{flex:0 0 20px;margin-top:2px;color:var(--hi)}
+.cf-ico svg{width:20px;height:20px}
+.cf-txt{flex:1;min-width:0}
+.cf-name{font-family:var(--mincho);font-size:16px;line-height:1.5;letter-spacing:.03em;
+  word-break:break-all}
+.cf-ask{font-size:11.5px;color:var(--dim);margin-top:5px}
+.cf-btns{display:flex;gap:9px}
+.cf-btns button{flex:1;padding:13px;border-radius:12px;font-size:14.5px;
+  font-family:var(--mincho);letter-spacing:.08em}
+.cf-no{border:1px solid var(--line);color:var(--dim)}
+.cf-yes{background:var(--hi);color:#0B111C;font-weight:700}
+.cf-cancel{width:100%;text-align:center;font-size:11px;color:var(--dim);margin-top:11px}
+.confirm.pick .cf-btns{display:none}
+.confirm.pick .cf-name{color:var(--hi)}
+body.placing .fabs,body.placing .load,body.placing .tip{display:none}
+
+.scrim{position:fixed;inset:0;z-index:2000;background:rgba(5,8,14,.68)}
+.card{position:fixed;left:0;right:0;bottom:0;z-index:2001;background:#101A2B;
+  border-top:1px solid rgba(255,194,75,.22);border-radius:20px 20px 0 0;
+  padding:20px 18px calc(env(safe-area-inset-bottom,0px) + 20px);max-height:92%;overflow-y:auto;
+  animation:up .3s cubic-bezier(.2,.85,.3,1)}
+@keyframes up{from{transform:translateY(100%)}to{transform:none}}
+.grab{width:34px;height:3px;border-radius:2px;background:rgba(237,231,218,.2);margin:-6px auto 15px}
+.here{display:flex;gap:9px;align-items:flex-start;border:1px solid rgba(255,194,75,.28);
+  border-radius:12px;padding:12px 13px;margin-bottom:14px}
+.here svg{width:17px;height:17px;color:var(--hi);flex:0 0 17px;margin-top:2px}
+.here b{font-family:var(--mincho);font-size:14px;font-weight:400;line-height:1.55;letter-spacing:.03em}
+.here em{font-style:normal;display:block;font-family:var(--mono);font-size:9px;
+  color:var(--dim);margin-top:5px;letter-spacing:.1em}
+.ok-note{font-family:var(--mono);font-size:9.5px;color:var(--mizu);margin:-6px 0 12px}
+
+.chips{display:flex;gap:7px;overflow-x:auto;margin-bottom:14px;padding-bottom:3px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;padding:9px 14px;border:1px solid var(--line);border-radius:11px;
+  font-family:var(--mincho);font-size:12.5px;color:var(--dim);background:rgba(34,55,90,.25)}
+.chip.on{border-color:var(--hi);background:rgba(255,194,75,.12);color:var(--hi)}
+.fld{width:100%;background:rgba(0,0,0,.28);border:1px solid var(--line);border-radius:11px;
+  padding:13px 14px;font-size:15px;color:var(--kinari);margin-bottom:9px;font-family:inherit}
+.fld::placeholder{color:#55627A}
+.fld:focus{outline:none;border-color:rgba(255,194,75,.45)}
+.lab{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--hi);margin:14px 0 7px}
+.photorow{display:flex;gap:10px;margin-bottom:14px}
+.pick{flex:1;height:76px;border:1px dashed rgba(237,231,218,.24);border-radius:12px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+  color:var(--dim);font-size:10.5px}
+.pick svg{width:19px;height:19px;opacity:.6}
+.shot{width:100%;border-radius:12px;margin:0 0 6px;display:block}
+.btn{width:100%;padding:15px;border-radius:12px;background:var(--hi);color:#0B111C;
+  font-size:15px;font-weight:700;letter-spacing:.1em;font-family:var(--mincho);margin-top:4px}
+.btn:disabled{background:rgba(237,231,218,.1);color:#55627A}
+.btn.ghost{background:none;border:1px solid var(--line);color:var(--dim);font-weight:400;
+  font-size:13px;padding:12px;margin-top:8px}
+.det h3{font-family:var(--mincho);font-size:19px;margin:4px 0 6px}
+.det .sub{font-size:12px;color:var(--dim);margin:0 0 12px}
+.det .dish{border:1px solid rgba(255,194,75,.3);border-radius:11px;padding:12px 14px;margin-bottom:13px}
+.det .dish em{font-style:normal;font-family:var(--mono);font-size:9px;letter-spacing:.14em;color:var(--hi);display:block;margin-bottom:5px}
+.det .dish b{font-family:var(--mincho);font-size:17px;font-weight:400}
+.det img.ph{width:100%;border-radius:12px;margin-bottom:13px;display:block}
+
+.leaflet-control-attribution{background:rgba(11,17,28,.82)!important;color:#8E9AAC!important;font-size:9px!important}
+.leaflet-control-attribution a{color:#8E9AAC!important}
+.leaflet-control-zoom a{background:rgba(16,26,43,.94)!important;color:#EDE7DA!important;border-color:rgba(237,231,218,.12)!important}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div id="err"></div>
+<div id="map"></div>
+
+<div class="topbar">
   <div class="brand">みちくさ<small id="diag">MICHIKUSA v7</small></div>
   <div class="readout" id="readout"></div>
 </div>
