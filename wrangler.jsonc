@@ -5,5 +5,18 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS"
-  }
+  },
+  "vars": {
+    "FIREBASE_PROJECT_ID": "あとで入れる"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "michikusa-db",
+      "database_id": "e85e9ae2-3905-477b-b6e6-4c3abd9f7e39"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "PHOTOS", "bucket_name": "michikusa-photos" }
+  ]
 }
