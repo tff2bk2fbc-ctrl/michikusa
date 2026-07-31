@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>みちくさ — v17</title>
+<title>みちくさ — v18</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css">
 <style>
 :root{
@@ -252,7 +252,7 @@ body.placing .fabs,body.placing .load,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v17';
+var BUILD='v18';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){
@@ -467,8 +467,34 @@ function buildLayers(){
       'circle-color':'#0B111C','circle-stroke-width':1.5,
       'circle-stroke-color':['match',['get','src'],'wiki','#B48CD6','#3E9B9B']}});
   }
+  unifyPoiStyle();
   refresh();
  }catch(e){ showErr('[buildLayers] '+dump(e)); }
+}
+
+
+/**
+ * 地図に元から描かれている店の文字を、こちらの見た目に揃える。
+ * 放っておくと、読み込んだ店と地図の店で書体も色も別物に見えてしまう。
+ */
+function unifyPoiStyle(){
+  try{
+    var st=map.getStyle(); if(!st||!st.layers)return;
+    var ink  = night?'#A9DEDE':'#2E6E6E';
+    var halo = night?'#0B111C':'#FFFDF7';
+    st.layers.forEach(function(L){
+      if(L.type!=='symbol')return;
+      if(L['source-layer']!=='poi')return;
+      try{
+        map.setPaintProperty(L.id,'text-color',ink);
+        map.setPaintProperty(L.id,'text-halo-color',halo);
+        map.setPaintProperty(L.id,'text-halo-width',1.5);
+        map.setLayoutProperty(L.id,'text-size',11);
+        map.setLayoutProperty(L.id,'text-font',['Noto Sans Regular']);
+        map.setPaintProperty(L.id,'icon-opacity',0.5);
+      }catch(e){}
+    });
+  }catch(e){}
 }
 
 function fc(list){
@@ -804,6 +830,27 @@ const TAGS=[
   ['tourism','museum','景'],['historic','monument','景']
 ];
 const ENDPOINTS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+
+
+/* 拡大したら、その場所の店を自動で取りに行く。
+   同じあたりを何度も叩かないよう、約1kmのマス単位で記録しておく */
+let autoBusy=false;
+const loadedCells={};
+map.on('moveend',function(){ maybeAutoLoad(); });
+async function maybeAutoLoad(){
+  try{
+    if(autoBusy||placing)return;
+    if(map.getZoom()<16)return;
+    var c=map.getCenter();
+    var cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
+    if(loadedCells[cell])return;
+    loadedCells[cell]=1;
+    autoBusy=true;
+    var n=await loadHotpepper();
+    if(n){ refresh(); setTip('この辺りの店を '+n+' 件 追加しました'); }
+  }catch(e){}
+  finally{ autoBusy=false; }
+}
 
 document.getElementById('btn-load').onclick=async function(){
   var btn=this, txt=btn.querySelector('span');
