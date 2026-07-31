@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>みちくさ — v15</title>
+<title>みちくさ — v16</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css">
 <style>
 :root{
@@ -252,7 +253,7 @@ body.placing .fabs,body.placing .load,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v15';
+var BUILD='v16';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){
@@ -436,6 +437,12 @@ function buildLayers(){
     var src=null, st=map.getStyle();
     for(var k in st.sources){ if(st.sources[k].type==='vector'){src=k;break;} }
     if(src){
+      // 最初の文字レイヤーを探し、その「下」に建物を入れる。
+      // 上に置くと、地名や店名が建物の裏に隠れて読めなくなる
+      var firstSymbol=null;
+      for(var i=0;i<st.layers.length;i++){
+        if(st.layers[i].type==='symbol'){ firstSymbol=st.layers[i].id; break; }
+      }
       map.addLayer({
         id:'bld3d', type:'fill-extrusion', source:src, 'source-layer':'building',
         minzoom:14,
@@ -443,9 +450,9 @@ function buildLayers(){
           'fill-extrusion-color': night?'#1E2A3E':'#DCD4C4',
           'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],6],
           'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
-          'fill-extrusion-opacity':night?0.85:0.92
+          'fill-extrusion-opacity':night?0.82:0.9
         }
-      });
+      }, firstSymbol);
       map.setLayoutProperty('bld3d','visibility',is3D?'visible':'none');
     }
   }
@@ -459,14 +466,6 @@ function buildLayers(){
     map.addLayer({id:'poi',type:'circle',source:'pois',paint:{
       'circle-radius':['interpolate',['linear'],['zoom'],13,2.6,16,5,18,7],
       'circle-color':'#0B111C','circle-stroke-color':'#3E9B9B','circle-stroke-width':1.4}});
-    map.on('click','pin',function(e){
-      var p=e.features[0].properties; e.originalEvent.__hit=true;
-      var s=spots.filter(function(x){return x.id===p.id;})[0]; if(s)openDetail(s);
-    });
-    map.on('click','poi',function(e){
-      var p=e.features[0].properties; e.originalEvent.__hit=true;
-      startPlacing(e.lngLat.lat,e.lngLat.lng,{known:p.n,cat:p.c,gname:p.gname,budget:p.budget});
-    });
   }
   refresh();
  }catch(e){ showErr('[buildLayers] '+dump(e)); }
@@ -594,10 +593,62 @@ document.getElementById('cf-no').onclick=function(){
 };
 document.getElementById('cf-cancel').onclick=endPlacing;
 
+/** 地図に元から描かれている店の種類を、こちらの分類に置き換える */
+function baseCat(p){
+  var c=((p.class||'')+'/'+(p.subclass||'')).toLowerCase();
+  if(/cafe|coffee|tea/.test(c))                       return '喫茶';
+  if(/bar|pub|alcohol|sake|nightclub/.test(c))        return '酒';
+  if(/restaurant|fast_food|food|noodle|ramen/.test(c))return '食';
+  if(/park|garden|playground/.test(c))                return '園';
+  if(/worship|shinto|temple|shrine|buddhis/.test(c))  return '社';
+  if(/book|library/.test(c))                          return '本';
+  if(/onsen|spa|bath|sauna/.test(c))                  return '湯';
+  return '景';
+}
+
+/** 指先の周りを調べて、一番近いものを選ぶ（円ぴったりだと押せないため） */
+function pickAt(e){
+  var pad=18;
+  var box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]];
+  var feats=[];
+  try{ feats=map.queryRenderedFeatures(box); }catch(_){ return null; }
+  var best=null,bestScore=1e9,bestKind=null;
+  for(var i=0;i<feats.length;i++){
+    var f=feats[i];
+    if(!f.geometry||f.geometry.type!=='Point')continue;
+    var kind = f.layer.id==='pin' ? 'mine'
+             : f.layer.id==='poi' ? 'ours'
+             : (f.sourceLayer==='poi' && f.properties && f.properties.name) ? 'base'
+             : null;
+    if(!kind)continue;
+    var pt=map.project(f.geometry.coordinates);
+    var d=Math.hypot(pt.x-e.point.x,pt.y-e.point.y);
+    // 自分の記録はわずかに優先（重なっている時のため）
+    var score=d-(kind==='mine'?5:0);
+    if(score<bestScore){bestScore=score;best=f;bestKind=kind;}
+  }
+  return best?{f:best,kind:bestKind}:null;
+}
+
 map.on('click',function(e){
-  if(e.originalEvent&&e.originalEvent.__hit)return;
-  if(placing)movePlacing(e.lngLat.lat,e.lngLat.lng);
-  else startPlacing(e.lngLat.lat,e.lngLat.lng,{});
+  if(placing){ movePlacing(e.lngLat.lat,e.lngLat.lng); return; }
+  var hit=pickAt(e);
+  if(hit){
+    var f=hit.f, c=f.geometry.coordinates, pr=f.properties||{};
+    if(hit.kind==='mine'){
+      var s=spots.filter(function(x){return x.id===pr.id;})[0];
+      if(s){ openDetail(s); return; }
+    }else if(hit.kind==='ours'){
+      startPlacing(c[1],c[0],{known:pr.n,cat:pr.c,gname:pr.gname,budget:pr.budget});
+      return;
+    }else{
+      // 地図に元から載っている店・施設
+      var nm=pr['name:ja']||pr.name_ja||pr.name;
+      startPlacing(c[1],c[0],{known:nm,cat:baseCat(pr),gname:pr.subclass||pr.class||''});
+      return;
+    }
+  }
+  startPlacing(e.lngLat.lat,e.lngLat.lng,{});
 });
 
 /* 逆ジオコーディング */
