@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>みちくさ — v16</title>
+<title>みちくさ — v17</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css">
 <style>
 :root{
@@ -252,7 +252,7 @@ body.placing .fabs,body.placing .load,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v16';
+var BUILD='v17';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){
@@ -464,7 +464,8 @@ function buildLayers(){
       'circle-color':'#0B111C','circle-stroke-color':'#FFC24B','circle-stroke-width':2}});
     map.addLayer({id:'poi',type:'circle',source:'pois',paint:{
       'circle-radius':['interpolate',['linear'],['zoom'],13,2.6,16,5,18,7],
-      'circle-color':'#0B111C','circle-stroke-color':'#3E9B9B','circle-stroke-width':1.4}});
+      'circle-color':'#0B111C','circle-stroke-width':1.5,
+      'circle-stroke-color':['match',['get','src'],'wiki','#B48CD6','#3E9B9B']}});
   }
   refresh();
  }catch(e){ showErr('[buildLayers] '+dump(e)); }
@@ -473,7 +474,8 @@ function buildLayers(){
 function fc(list){
   return {type:'FeatureCollection',features:list.filter(valid).map(function(s){
     return {type:'Feature',geometry:{type:'Point',coordinates:[s.lng,s.lat]},
-      properties:{id:s.id||'',n:s.n,c:s.c||'',gname:s.gname||'',budget:s.budget||''}};
+      properties:{id:s.id||'',n:s.n,c:s.c||'',gname:s.gname||'',
+        budget:s.budget||'',src:s.src||''}};
   })};
 }
 function refresh(){
@@ -810,7 +812,8 @@ document.getElementById('btn-load').onclick=async function(){
   var before=pois.length, msg=[];
   try{
     msg.push('飲食 '+await loadHotpepper());
-    msg.push('その他 '+await loadOSM());
+    msg.push('施設 '+await loadOSM());
+    msg.push('名所 '+await loadWiki());
     refresh();
     setTip(msg.join(' / ')+'（計'+(pois.length-before)+'件）');
   }catch(e){ showErr('[load] '+dump(e)); }
@@ -858,6 +861,52 @@ async function loadOSM(){
     }catch(e){}
   }
   return 0;
+}
+
+
+/**
+ * Wikipedia の位置検索。キー不要・登録不要・サーバー中継も不要。
+ * origin=* を付けるとブラウザから直接呼べる。
+ * 城・滝・山・史跡・名所などが、説明文つきで取れる。
+ */
+const WIKI_SKIP=/学校|高校|中学|小学|大学|病院|株式会社|企業|放送局|ダム|変電|工場/;
+function wikiCat(d){
+  var s=String(d||'');
+  if(/寺|神社|大社|神宮|廟|教会/.test(s))            return '社';
+  if(/公園|庭園|植物園/.test(s))                      return '園';
+  if(/温泉|銭湯/.test(s))                             return '湯';
+  if(/図書館|書店/.test(s))                           return '本';
+  if(/飲食|料理|レストラン|食堂/.test(s))             return '食';
+  return '景';
+}
+async function loadWiki(){
+  try{
+    var c=map.getCenter(), b=map.getBounds();
+    var r=Math.min(10000,Math.max(500,Math.round(Math.abs(b.getNorth()-c.lat)*111000)));
+    var u='https://ja.wikipedia.org/w/api.php?action=query&format=json&origin=*'+
+      '&generator=geosearch&ggscoord='+c.lat.toFixed(6)+'%7C'+c.lng.toFixed(6)+
+      '&ggsradius='+r+'&ggslimit=100'+
+      '&prop=coordinates%7Cdescription%7Cpageimages&piprop=thumbnail&pithumbsize=240';
+    var res=await fetch(u);
+    if(!res.ok)return 0;
+    var j=await res.json();
+    var pages=(j.query&&j.query.pages)||{};
+    var seen={}; pois.forEach(function(p){seen[p.n+p.lat.toFixed(4)]=1;});
+    var n=0;
+    Object.keys(pages).forEach(function(k){
+      var pg=pages[k];
+      var co=pg.coordinates&&pg.coordinates[0]; if(!co)return;
+      var title=pg.title||''; if(!title)return;
+      var desc=pg.description||'';
+      if(WIKI_SKIP.test(title+desc))return;
+      var key=title+Number(co.lat).toFixed(4); if(seen[key])return; seen[key]=1;
+      pois.push({n:title,c:wikiCat(title+desc),lat:Number(co.lat),lng:Number(co.lon),
+        gname:desc,src:'wiki',
+        photo:pg.thumbnail?pg.thumbnail.source:''});
+      n++;
+    });
+    return n;
+  }catch(e){ return 0; }
 }
 
 document.getElementById('btn-cam').onclick=function(){document.getElementById('in-cam').click();};
