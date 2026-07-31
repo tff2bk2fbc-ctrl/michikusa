@@ -71,6 +71,9 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
   font-size:11px;font-weight:600;white-space:nowrap;color:var(--ink);pointer-events:none;
   text-shadow:0 0 3px var(--bg),0 0 7px var(--bg),0 0 12px var(--bg)}
 .pn.mine .im{border-color:var(--btn)}
+.pn .ic{border-radius:50%;background:var(--sf);box-shadow:var(--sh);
+  display:flex;align-items:center;justify-content:center;color:var(--ink)}
+.pn .ic svg{opacity:.8}
 
 /* ---------- 下：カード ---------- */
 .rail{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
@@ -207,6 +210,9 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <div class="rail" id="rail"></div>
 
 <div class="fabs">
+  <button class="fab" id="btn-3d">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2.8L3 7.4v9.2l9 4.6 9-4.6V7.4z"/><path d="M3 7.4l9 4.6 9-4.6M12 12v9.2"/></svg>
+  </button>
   <button class="fab" id="btn-loc">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
   </button>
@@ -232,7 +238,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v20';
+var BUILD='v21';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -260,6 +266,7 @@ const HP_CAT={G001:'酒',G002:'酒',G011:'酒',G012:'酒',G014:'喫茶'};
 
 let spots=[], pois=[], pins=[], placing=null, dropM=null, meM=null, askSeq=0;
 let night=(function(){var h=new Date().getHours();return h<6||h>=18;})();
+let is3D=true;
 document.body.classList.toggle('dark',night);
 
 function esc(s){return String(s==null?'':s).replace(/[<>&"]/g,function(c){
@@ -342,7 +349,8 @@ function retint(st){
 
 /* ---------- 地図 ---------- */
 const map=new maplibregl.Map({container:'map',style:STYLE,
-  center:[139.7745,35.7150],zoom:15.4,pitch:0,maxPitch:65,attributionControl:{compact:true}});
+  center:[139.7745,35.7150],zoom:15.4,pitch:48,bearing:-12,maxPitch:70,
+  antialias:true,attributionControl:{compact:true}});
 let baseStyle=null;
 
 map.on('load',function(){
@@ -366,6 +374,24 @@ function afterStyle(){
       map.setPaintProperty(L.id,'icon-opacity',0.45);
     }catch(e){}
   });
+  // 3Dの建物。地図の文字より下に入れて、名前が隠れないようにする
+  if(is3D&&!map.getLayer('bld3d')){
+    var src=null;
+    for(var k in st.sources){ if(st.sources[k].type==='vector'){src=k;break;} }
+    var firstSym=null;
+    for(var i2=0;i2<st.layers.length;i2++){
+      if(st.layers[i2].type==='symbol'){firstSym=st.layers[i2].id;break;} }
+    if(src){
+      try{
+        map.addLayer({id:'bld3d',type:'fill-extrusion',source:src,'source-layer':'building',
+          minzoom:14,paint:{
+            'fill-extrusion-color':night?'#1C1C1C':'#E4E1DB',
+            'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],6],
+            'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
+            'fill-extrusion-opacity':night?0.85:0.9}},firstSym);
+      }catch(e){}
+    }
+  }
   if(!map.getSource('dots')){
     map.addSource('dots',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
     map.addLayer({id:'dots',type:'circle',source:'dots',paint:{
@@ -382,14 +408,32 @@ function afterStyle(){
    写真ピン
    引きでは点、拡大すると写真になる
    ============================================================ */
+
+/* 場所の種類を表す記号。ひと目で何か分かるものだけにする */
+const GLY={
+'喫茶':'<path d="M5 8h11v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V8z"/><path d="M16 9.5h2.2a2.2 2.2 0 0 1 0 4.4H16"/><path d="M4 21h14"/>',
+'食'  :'<path d="M4.5 3v6a2.2 2.2 0 0 0 4.4 0V3"/><path d="M6.7 9.2V21"/><path d="M18.5 3c-2.2 0-3.4 2.6-3.4 5.2s1.2 4.1 3.4 4.1V21"/>',
+'酒'  :'<path d="M4 4h16l-8 9.2V19"/><path d="M8 21h8"/>',
+'湯'  :'<path d="M3.5 13.5h17a8.5 8.5 0 0 1-17 0z"/><path d="M8 10c0-1.6 1.6-1.8 1.6-3.4S8 4.6 8 3M12 10c0-1.6 1.6-1.8 1.6-3.4S12 4.6 12 3M16 10c0-1.6 1.6-1.8 1.6-3.4S16 4.6 16 3"/>',
+'社'  :'<path d="M3 5.5h18M4.5 8.5h15M7.5 8.5V20M16.5 8.5V20"/>',
+'園'  :'<circle cx="12" cy="9" r="5.5"/><path d="M12 14.5V21"/>',
+'景'  :'<path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/>',
+'本'  :'<path d="M12 6.5C10 4.9 7.5 4.5 4.5 4.9v13c3-.4 5.5 0 7.5 1.6 2-1.6 4.5-2 7.5-1.6v-13C16.5 4.5 14 4.9 12 6.5z"/><path d="M12 6.5v13"/>'
+};
+function glyph(c,px){
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '+
+    'stroke-linecap="round" stroke-linejoin="round" style="width:'+px+'px;height:'+px+'px">'+
+    (GLY[c]||GLY['景'])+'</svg>';
+}
+
 function photoOf(p){
   if(p.photo)return p.photo;
   var m=spots.filter(function(s){return s.n===p.n&&s.photo;});
   return m.length?m[m.length-1].photo:'';
 }
-function render(){
+let lastSig='';
+function render(force){
  try{
-  pins.forEach(function(m){m.remove();}); pins=[];
   var z=map.getZoom(), b=map.getBounds();
   var all=spots.filter(valid).map(function(s){return {p:s,mine:true};})
     .concat(pois.filter(valid).map(function(p){return {p:p,mine:false};}));
@@ -401,6 +445,12 @@ function render(){
   var used=[], photoCount=0, dotFeat=[];
 
   var c=map.getCenter();
+  // 同じものが同じ大きさで出るだけなら、作り直さない（ちらつきの原因になる）
+  var sig=Math.round(z*4)+'|'+inView.map(function(o){return o.p.n;}).join(',');
+  if(!force && sig===lastSig) return;
+  lastSig=sig;
+  pins.forEach(function(m){m.remove();}); pins=[];
+
   inView.sort(function(a,x){
     if(a.mine!==x.mine)return a.mine?-1:1;                 // 自分の記録を優先
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
@@ -414,23 +464,39 @@ function render(){
   }
 
   inView.forEach(function(o){
-    var p=o.p, img=photoOf(p);
-    var wantPhoto = showPhoto && photoCount<34 && (o.mine||img);
-    if(wantPhoto && room(p.lat,p.lng,size+26,size+22)){
-      var d=document.createElement('div');
-      d.className='pn'+(o.mine?' mine':'');
-      d.innerHTML='<div class="im" style="width:'+size+'px;height:'+size+'px'+
-        (img?';background-image:url('+JSON.stringify(img)+')':'')+'">'+
-        (img?'':esc((p.n||'?').charAt(0)))+'</div><div class="tl"></div>'+
-        (z>=15.2?'<div class="cp">'+esc(p.n)+'</div>':'');
-      d.onclick=function(ev){ev.stopPropagation();openPlace(p,o.mine);};
-      pins.push(new maplibregl.Marker({element:d,anchor:'bottom'})
-        .setLngLat([p.lng,p.lat]).addTo(map));
-      photoCount++;
-    }else{
-      dotFeat.push({type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
-        properties:{n:p.n}});
+    var p=o.p;
+    if(o.mine){
+      // 自分の思い出 → 写真のピン
+      var img=photoOf(p);
+      if(showPhoto && photoCount<34 && room(p.lat,p.lng,size+26,size+22)){
+        var d=document.createElement('div'); d.className='pn mine';
+        d.innerHTML='<div class="im" style="width:'+size+'px;height:'+size+'px'+
+          (img?';background-image:url('+JSON.stringify(img)+')':'')+'">'+
+          (img?'':esc((p.n||'?').charAt(0)))+'</div><div class="tl"></div>'+
+          (z>=15.2?'<div class="cp">'+esc(p.n)+'</div>':'');
+        d.onclick=function(ev){ev.stopPropagation();openPlace(p,true);};
+        pins.push(new maplibregl.Marker({element:d,anchor:'bottom'})
+          .setLngLat([p.lng,p.lat]).addTo(map));
+        photoCount++;
+        return;
+      }
+    }else if(showPhoto && photoCount<34){
+      // まだ思い出のない場所 → 種類の記号。大きさも形も全部そろえる
+      var ic=z>=16.2?32:27;
+      if(room(p.lat,p.lng,ic+22,ic+18)){
+        var e2=document.createElement('div'); e2.className='pn poi';
+        e2.innerHTML='<div class="ic" style="width:'+ic+'px;height:'+ic+'px">'+
+          glyph(p.c,Math.round(ic*0.52))+'</div><div class="tl"></div>'+
+          (z>=15.6?'<div class="cp">'+esc(p.n)+'</div>':'');
+        e2.onclick=function(ev){ev.stopPropagation();openPlace(p,false);};
+        pins.push(new maplibregl.Marker({element:e2,anchor:'bottom'})
+          .setLngLat([p.lng,p.lat]).addTo(map));
+        photoCount++;
+        return;
+      }
     }
+    dotFeat.push({type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
+      properties:{n:p.n}});
   });
 
   if(map.getSource('dots'))
@@ -439,7 +505,6 @@ function render(){
  }catch(e){ showErr('[render] '+dump(e)); }
 }
 map.on('moveend',function(){render();autoLoad();});
-map.on('zoomend',render);
 
 /* ---------- 下のカード ---------- */
 function drawRail(inView){
@@ -527,7 +592,7 @@ function openPlace(p,mine){
     if(this.dataset.s!=='1'){this.dataset.s='1';this.textContent='本当に消す？（もう一度）';return;}
     mySpots.forEach(function(x){dbDel('spots',x.id);});
     spots=spots.filter(function(x){return x.n!==p.n;});
-    closeSheet(); render();
+    closeSheet(); render(true);
   };
 }
 
@@ -661,7 +726,7 @@ async function autoLoad(){
     var c=map.getCenter(),cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
     if(cells[cell])return; cells[cell]=1; busy=true;
     var n=await loadHP(); var w=await loadWiki();
-    if(n+w){render();setTip('この辺りを '+(n+w)+' 件 読み込みました');}
+    if(n+w){render(true);setTip('この辺りを '+(n+w)+' 件 読み込みました');}
   }catch(e){}finally{busy=false;}
 }
 function dedupe(){var s={};pois.forEach(function(p){s[p.n+p.lat.toFixed(4)]=1;});return s;}
@@ -800,16 +865,11 @@ document.getElementById('btn-lib').onclick=function(){document.getElementById('i
   };
 });
 function shrink(file,cb){
+  // 圧縮しない。原本をそのまま持つ。
+  // 一度落とした画質は戻らないので、ここでケチらない。
   var r=new FileReader();
-  r.onload=function(){var im=new Image();
-    im.onload=function(){
-      var M=1600,sc=Math.min(1,M/Math.max(im.width,im.height));
-      var cv=document.createElement('canvas');
-      cv.width=Math.round(im.width*sc);cv.height=Math.round(im.height*sc);
-      var cx=cv.getContext('2d');cx.imageSmoothingQuality='high';
-      cx.drawImage(im,0,0,cv.width,cv.height);
-      cb(cv.toDataURL('image/jpeg',.86));};
-    im.onerror=function(){cb(null);};im.src=r.result;};
+  r.onload=function(){ cb(r.result); };
+  r.onerror=function(){ cb(null); };
   r.readAsDataURL(file);
 }
 
@@ -834,6 +894,13 @@ document.getElementById('btn-loc').onclick=function(){
     {enableHighAccuracy:true,timeout:30000,maximumAge:0});
 };
 
+document.getElementById('btn-3d').onclick=function(){
+  is3D=!is3D; this.classList.toggle('act',is3D);
+  if(map.getLayer('bld3d'))map.setLayoutProperty('bld3d','visibility',is3D?'visible':'none');
+  else if(is3D)afterStyle();
+  map.easeTo({pitch:is3D?48:0,duration:520});
+  setTip(is3D?'3D':'2D');
+};
 document.getElementById('btn-night').onclick=function(){
   night=!night; document.body.classList.toggle('dark',night);
   applyTint(); setTip(night?'夜':'昼');
@@ -878,7 +945,7 @@ function openAdd(p){
     var rec={id:nid(),n:nm.value.trim(),c:cat,lat:p.lat,lng:p.lng,place:p.place||'',
       tag:ft.value.trim(),d:p.date||new Date().toISOString().slice(0,10),photo:p.photo||''};
     spots.push(rec); dbPut('spots',rec);
-    closeSheet(); render(); setTip('追加しました');
+    closeSheet(); render(true); setTip('追加しました');
   };
   if(!p.known&&!p.photo)setTimeout(function(){nm.focus();},340);
 }
