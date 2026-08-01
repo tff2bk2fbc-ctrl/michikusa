@@ -62,18 +62,10 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 /* ---------- 写真ピン ---------- */
 .pn{position:relative;cursor:pointer}
 .pn .im{border-radius:50%;border:3px solid var(--ring);box-shadow:var(--sh);
-  background-size:cover;background-position:center;background-color:var(--chip);
-  display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;
-  color:var(--dim);transition:width .2s,height .2s}
+  background-color:var(--chip)}
 .pn .tl{position:absolute;left:50%;bottom:-4px;width:9px;height:9px;background:var(--ring);
   transform:translateX(-50%) rotate(45deg);border-radius:1px;box-shadow:var(--sh);z-index:-1}
-.pn .cp{position:absolute;left:50%;top:calc(100% + 5px);transform:translateX(-50%);
-  font-size:11px;font-weight:600;white-space:nowrap;color:var(--ink);pointer-events:none;
-  text-shadow:0 0 3px var(--bg),0 0 7px var(--bg),0 0 12px var(--bg)}
-.pn.mine .im{border-color:var(--btn)}
-.pn .ic{border-radius:50%;background:var(--sf);box-shadow:var(--sh);
-  display:flex;align-items:center;justify-content:center;color:var(--ink)}
-.pn .ic svg{opacity:.8}
+
 
 /* ---------- 下：カード ---------- */
 .rail{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
@@ -238,7 +230,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v21';
+var BUILD='v22';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -264,7 +256,7 @@ const ASK={'喫茶':['何を飲んだ / 食べた？','クリームソーダ'],'
 function ask(c){return ASK[c]||['ひとこと',''];}
 const HP_CAT={G001:'酒',G002:'酒',G011:'酒',G012:'酒',G014:'喫茶'};
 
-let spots=[], pois=[], pins=[], placing=null, dropM=null, meM=null, askSeq=0;
+let spots=[], pois=[], placing=null, dropM=null, meM=null, askSeq=0;
 let night=(function(){var h=new Date().getHours();return h<6||h>=18;})();
 let is3D=true;
 document.body.classList.toggle('dark',night);
@@ -392,15 +384,8 @@ function afterStyle(){
       }catch(e){}
     }
   }
-  if(!map.getSource('dots')){
-    map.addSource('dots',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-    map.addLayer({id:'dots',type:'circle',source:'dots',paint:{
-      'circle-radius':['interpolate',['linear'],['zoom'],11,2.2,15,3.6,18,5],
-      'circle-color':night?'#141414':'#FFFFFF',
-      'circle-stroke-color':night?'#A0A0A0':'#787878','circle-stroke-width':1.6,
-      'circle-opacity':.9}});
-  }
-  render();
+  addPlaceLayers();
+  render(true);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
 
@@ -409,102 +394,130 @@ function afterStyle(){
    引きでは点、拡大すると写真になる
    ============================================================ */
 
-/* 場所の種類を表す記号。ひと目で何か分かるものだけにする */
-const GLY={
-'喫茶':'<path d="M5 8h11v6a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V8z"/><path d="M16 9.5h2.2a2.2 2.2 0 0 1 0 4.4H16"/><path d="M4 21h14"/>',
-'食'  :'<path d="M4.5 3v6a2.2 2.2 0 0 0 4.4 0V3"/><path d="M6.7 9.2V21"/><path d="M18.5 3c-2.2 0-3.4 2.6-3.4 5.2s1.2 4.1 3.4 4.1V21"/>',
-'酒'  :'<path d="M4 4h16l-8 9.2V19"/><path d="M8 21h8"/>',
-'湯'  :'<path d="M3.5 13.5h17a8.5 8.5 0 0 1-17 0z"/><path d="M8 10c0-1.6 1.6-1.8 1.6-3.4S8 4.6 8 3M12 10c0-1.6 1.6-1.8 1.6-3.4S12 4.6 12 3M16 10c0-1.6 1.6-1.8 1.6-3.4S16 4.6 16 3"/>',
-'社'  :'<path d="M3 5.5h18M4.5 8.5h15M7.5 8.5V20M16.5 8.5V20"/>',
-'園'  :'<circle cx="12" cy="9" r="5.5"/><path d="M12 14.5V21"/>',
-'景'  :'<path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/>',
-'本'  :'<path d="M12 6.5C10 4.9 7.5 4.5 4.5 4.9v13c3-.4 5.5 0 7.5 1.6 2-1.6 4.5-2 7.5-1.6v-13C16.5 4.5 14 4.9 12 6.5z"/><path d="M12 6.5v13"/>'
-};
-function glyph(c,px){
-  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '+
-    'stroke-linecap="round" stroke-linejoin="round" style="width:'+px+'px;height:'+px+'px">'+
-    (GLY[c]||GLY['景'])+'</svg>';
-}
+/* ============================================================
+   地図の上の表示
 
+   ピンをHTMLで作ると、拡大縮小のあいだ地図と別々に動いてしまう。
+   （HTMLは地図のアニメーションから遅れて追いつくため）
+   なので地図そのものの中に描く。元からある店の記号と同じ仕組み。
+   ============================================================ */
 function photoOf(p){
   if(p.photo)return p.photo;
   var m=spots.filter(function(s){return s.n===p.n&&s.photo;});
   return m.length?m[m.length-1].photo:'';
 }
+
+/* 地図が元から持っている記号の名前に合わせる。
+   これで自分で足した場所も、地図に元からある店と同じ絵になる */
+const ICON={
+  '喫茶':'cafe','食':'restaurant','酒':'bar','湯':'hot_spring',
+  '社':'place_of_worship','園':'park','景':'attraction','本':'library'
+};
+/* その名前が地図の絵の中に無い場合の代わり */
+const ICON_ALT={
+  '喫茶':['cafe','fast_food','restaurant'],
+  '食'  :['restaurant','fast_food','cafe'],
+  '酒'  :['bar','alcohol_shop','restaurant'],
+  '湯'  :['hot_spring','spa','swimming'],
+  '社'  :['place_of_worship','shinto','buddhist','monument'],
+  '園'  :['park','garden','tree','forest'],
+  '景'  :['attraction','viewpoint','monument','museum'],
+  '本'  :['library','books','shop']
+};
+let iconOK=null;
+function pickIcon(cat){
+  if(!iconOK){
+    iconOK={};
+    try{
+      var st=map.getStyle();
+      var sp=(st&&st.sprite)||'';
+      // 使える絵は map.hasImage で確かめる
+    }catch(e){}
+  }
+  var list=ICON_ALT[cat]||ICON_ALT['景'];
+  for(var i=0;i<list.length;i++){
+    if(map.hasImage&&map.hasImage(list[i]))return list[i];
+    if(map.hasImage&&map.hasImage(list[i]+'_11'))return list[i]+'_11';
+  }
+  return '';
+}
+
+function fcOf(list,mine){
+  return {type:'FeatureCollection',features:list.filter(valid).map(function(p){
+    return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
+      properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0}};
+  })};
+}
+
 let lastSig='';
 function render(force){
  try{
-  var z=map.getZoom(), b=map.getBounds();
-  var all=spots.filter(valid).map(function(s){return {p:s,mine:true};})
-    .concat(pois.filter(valid).map(function(p){return {p:p,mine:false};}));
-  var inView=all.filter(function(o){return b.contains([o.p.lng,o.p.lat]);});
-
-  // 引きのときは全部点だけ
-  var showPhoto = z>=14.6;
-  var size = z>=16.2?46:38;
-  var used=[], photoCount=0, dotFeat=[];
-
+  if(!map.getSource('mine'))return;
+  map.getSource('mine').setData(fcOf(spots,true));
+  map.getSource('spot').setData(fcOf(pois,false));
+  var b=map.getBounds();
+  var inView=spots.filter(valid).filter(function(s){return b.contains([s.lng,s.lat]);})
+      .map(function(s){return {p:s,mine:true};})
+    .concat(pois.filter(valid).filter(function(p){return b.contains([p.lng,p.lat]);})
+      .map(function(p){return {p:p,mine:false};}));
   var c=map.getCenter();
-  // 同じものが同じ大きさで出るだけなら、作り直さない（ちらつきの原因になる）
-  var sig=Math.round(z*4)+'|'+inView.map(function(o){return o.p.n;}).join(',');
-  if(!force && sig===lastSig) return;
-  lastSig=sig;
-  pins.forEach(function(m){m.remove();}); pins=[];
-
   inView.sort(function(a,x){
-    if(a.mine!==x.mine)return a.mine?-1:1;                 // 自分の記録を優先
-    return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
-  });
-
-  function room(lat,lng,w,h){
-    var q=map.project([lng,lat]);
-    for(var i=0;i<used.length;i++){var r=used[i];
-      if(Math.abs(q.x-r.x)<(w+r.w)/2 && Math.abs(q.y-r.y)<(h+r.h)/2)return false;}
-    used.push({x:q.x,y:q.y,w:w,h:h}); return true;
-  }
-
-  inView.forEach(function(o){
-    var p=o.p;
-    if(o.mine){
-      // 自分の思い出 → 写真のピン
-      var img=photoOf(p);
-      if(showPhoto && photoCount<34 && room(p.lat,p.lng,size+26,size+22)){
-        var d=document.createElement('div'); d.className='pn mine';
-        d.innerHTML='<div class="im" style="width:'+size+'px;height:'+size+'px'+
-          (img?';background-image:url('+JSON.stringify(img)+')':'')+'">'+
-          (img?'':esc((p.n||'?').charAt(0)))+'</div><div class="tl"></div>'+
-          (z>=15.2?'<div class="cp">'+esc(p.n)+'</div>':'');
-        d.onclick=function(ev){ev.stopPropagation();openPlace(p,true);};
-        pins.push(new maplibregl.Marker({element:d,anchor:'bottom'})
-          .setLngLat([p.lng,p.lat]).addTo(map));
-        photoCount++;
-        return;
-      }
-    }else if(showPhoto && photoCount<34){
-      // まだ思い出のない場所 → 種類の記号。大きさも形も全部そろえる
-      var ic=z>=16.2?32:27;
-      if(room(p.lat,p.lng,ic+22,ic+18)){
-        var e2=document.createElement('div'); e2.className='pn poi';
-        e2.innerHTML='<div class="ic" style="width:'+ic+'px;height:'+ic+'px">'+
-          glyph(p.c,Math.round(ic*0.52))+'</div><div class="tl"></div>'+
-          (z>=15.6?'<div class="cp">'+esc(p.n)+'</div>':'');
-        e2.onclick=function(ev){ev.stopPropagation();openPlace(p,false);};
-        pins.push(new maplibregl.Marker({element:e2,anchor:'bottom'})
-          .setLngLat([p.lng,p.lat]).addTo(map));
-        photoCount++;
-        return;
-      }
-    }
-    dotFeat.push({type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
-      properties:{n:p.n}});
-  });
-
-  if(map.getSource('dots'))
-    map.getSource('dots').setData({type:'FeatureCollection',features:dotFeat});
-  drawRail(inView);
+    if(a.mine!==x.mine)return a.mine?-1:1;
+    return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);});
+  var sig=inView.slice(0,14).map(function(o){return o.p.n;}).join(',');
+  if(force||sig!==lastSig){ lastSig=sig; drawRail(inView); }
  }catch(e){ showErr('[render] '+dump(e)); }
 }
 map.on('moveend',function(){render();autoLoad();});
+
+/* 地図の中にレイヤーを積む */
+function addPlaceLayers(){
+  if(map.getSource('spot'))return;
+  map.addSource('spot',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addSource('mine',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+
+  // まだ思い出のない場所
+  map.addLayer({id:'spot-dot',type:'circle',source:'spot',paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],12,2.4,15,4.2,18,6],
+    'circle-color':night?'#141414':'#FFFFFF',
+    'circle-stroke-color':night?'#9A9A9A':'#6E6E6E','circle-stroke-width':1.6}});
+  map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14.5,layout:{
+    'icon-image':['get','icon'],
+    'icon-size':['interpolate',['linear'],['zoom'],14.5,.8,17,1.1],
+    'icon-allow-overlap':false,'icon-optional':true,
+    'text-field':['get','n'],'text-size':11,'text-offset':[0,1.15],'text-anchor':'top',
+    'text-optional':true,'text-max-width':9
+  },paint:{
+    'text-color':night?'#E8E8E8':'#2B2B2B',
+    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.6,
+    'icon-opacity':.95}});
+
+  // 自分の思い出がある場所
+  map.addLayer({id:'mine-ring',type:'circle',source:'mine',paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],12,5,15,8,18,11],
+    'circle-color':night?'#FAFAFA':'#111111',
+    'circle-stroke-color':night?'#000000':'#FFFFFF','circle-stroke-width':2.4}});
+  map.addLayer({id:'mine-ic',type:'symbol',source:'mine',minzoom:13.5,layout:{
+    'icon-image':['get','icon'],
+    'icon-size':['interpolate',['linear'],['zoom'],13.5,.85,17,1.15],
+    'icon-allow-overlap':true,'icon-optional':true,'icon-offset':[0,-26],
+    'text-field':['get','n'],'text-size':11.5,'text-offset':[0,1.5],'text-anchor':'top',
+    'text-optional':true,'text-max-width':9
+  },paint:{
+    'text-color':night?'#FFFFFF':'#000000',
+    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.8}});
+
+  ['mine-ring','mine-ic','spot-dot','spot-ic'].forEach(function(id){
+    map.on('click',id,function(e){
+      var pr=e.features[0].properties;
+      e.originalEvent.__hit=1;
+      var mine=String(pr.mine)==='1';
+      var list=mine?spots:pois;
+      var f=list.filter(function(x){return x.n===pr.n;})[0];
+      if(f)openPlace(f,mine);
+    });
+  });
+}
 
 /* ---------- 下のカード ---------- */
 function drawRail(inView){
@@ -664,6 +677,7 @@ function baseCat(p){
 }
 map.on('click',function(e){
   if(placing){movePlacing(e.lngLat.lat,e.lngLat.lng);return;}
+  if(e.originalEvent&&e.originalEvent.__hit)return;
   var pad=18,box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]],fs=[];
   try{fs=map.queryRenderedFeatures(box);}catch(_){}
   var best=null,bd=1e9;
