@@ -46,15 +46,17 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-5",
-          hasKey: !!k.key,          // キーが見つかったか
-          keySource: k.src,         // env / d1 / none のどれか
+          build: "api-6",
+          hasKey: !!k.key,          // ホットペッパー
+          keySource: k.src,
+          hasRakuten: !!(await cfg(env, "rakuten_id")),
           hasDB: !!env.DB,
           hasR2: !!env.PHOTOS,
           firebase: env.FIREBASE_PROJECT_ID || null
         }));
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, env));
+      if (p === "/api/rakuten")   return cors(await rakuten(url, env));
 
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
@@ -553,15 +555,19 @@ async function blockUser(request, env, me) {
  *  2. D1 の app_config テーブル  ← デプロイで消えない
  * 同じ isolate の中では覚えておき、毎回D1を読まないようにする。
  */
-let keyCache = null;
+const cfgCache = {};
+async function cfg(env, key) {
+  if (cfgCache[key] !== undefined) return cfgCache[key];
+  try {
+    const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?").bind(key).first();
+    cfgCache[key] = (r && r.v) ? r.v : null;
+  } catch (e) { cfgCache[key] = null; }
+  return cfgCache[key];
+}
 async function getHpKey(env) {
   if (env.HOTPEPPER_KEY) return { key: env.HOTPEPPER_KEY, src: "env" };
-  if (keyCache) return { key: keyCache, src: "d1(cache)" };
-  try {
-    const r = await env.DB.prepare("SELECT v FROM app_config WHERE k='hotpepper_key'").first();
-    if (r && r.v) { keyCache = r.v; return { key: r.v, src: "d1" }; }
-  } catch (e) {}
-  return { key: null, src: "none" };
+  const v = await cfg(env, "hotpepper_key");
+  return { key: v, src: v ? "d1" : "none" };
 }
 
 async function hotpepper(url, env) {
@@ -639,4 +645,64 @@ function cors(res) {
   h.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
   h.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   return new Response(res.body, { status: res.status, headers: h });
+}
+
+
+/* ============================================================
+   楽天トラベル / 施設検索
+   アプリIDは D1 の app_config に入れる。
+   応答に含めないので、外には出ない。
+   ============================================================ */
+const RK = "https://app.rakuten.co.jp/services/api/Travel/SimpleHotelSearch/20170426";
+
+async function rakuten(url, env) {
+  const id = await cfg(env, "rakuten_id");
+  if (!id) return json({ error: "楽天のアプリIDが未設定です" }, 500);
+
+  const lat = url.searchParams.get("lat");
+  const lng = url.searchParams.get("lng");
+  if (!lat || !lng) return json({ error: "lat / lng が必要です" }, 400);
+
+  // 楽天の searchRadius は km 単位。0.1〜3.0
+  let km = Number(url.searchParams.get("km") || 3);
+  km = Math.min(3, Math.max(0.1, km));
+
+  const api = new URL(RK);
+  api.searchParams.set("applicationId", id);
+  api.searchParams.set("format", "json");
+  api.searchParams.set("datumType", "1");        // 世界測地系
+  api.searchParams.set("latitude", lat);
+  api.searchParams.set("longitude", lng);
+  api.searchParams.set("searchRadius", String(km));
+  api.searchParams.set("hits", "30");
+  api.searchParams.set("responseType", "small");
+
+  const res = await fetch(api.toString(), { cf: { cacheTtl: 3600 } });
+  if (!res.ok) {
+    if (res.status === 404) return json({ count: 0, hotels: [] });  // 該当なし
+    return json({ error: "楽天トラベル HTTP " + res.status }, 502);
+  }
+
+  const body = await res.json();
+  if (body.error) return json({ error: "楽天: " + (body.error_description || body.error) }, 502);
+
+  const hotels = [];
+  (body.hotels || []).forEach(function (h) {
+    const info = h.hotel && h.hotel[0] && h.hotel[0].hotelBasicInfo;
+    if (!info) return;
+    const la = Number(info.latitude), ln = Number(info.longitude);
+    if (!isFinite(la) || !isFinite(ln)) return;
+    hotels.push({
+      id: String(info.hotelNo || ""),
+      n: info.hotelName || "",
+      lat: la,
+      lng: ln,
+      addr: [info.address1, info.address2].filter(Boolean).join(""),
+      photo: info.hotelImageUrl || info.hotelThumbnailUrl || "",
+      min: info.hotelMinCharge || null,
+      url: info.hotelInformationUrl || ""
+    });
+  });
+
+  return json({ count: hotels.length, hotels: hotels });
 }
