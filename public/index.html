@@ -169,17 +169,6 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 .pad{padding:0 16px}
 
 /* ---------- 場所の確認 ---------- */
-.live{position:relative;cursor:pointer}
-.live i{display:flex;align-items:center;justify-content:center;
-  width:34px;height:34px;border-radius:50%;background:#1E88E5;color:#fff;
-  font-size:14px;font-weight:700;border:2.5px solid var(--ring);box-shadow:var(--sh)}
-.live u{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-17px 0 0 -17px;
-  border-radius:50%;background:rgba(30,136,229,.28);animation:pulse 2.4s ease-out infinite}
-@keyframes pulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(2.8);opacity:0}}
-.live .nm{position:absolute;left:50%;top:calc(100% + 4px);transform:translateX(-50%);
-  font-size:10.5px;font-weight:600;white-space:nowrap;color:var(--ink);
-  text-shadow:0 0 3px var(--bg),0 0 7px var(--bg),0 0 11px var(--bg)}
-
 .focus{pointer-events:none}
 .focus i{display:block;width:15px;height:15px;border-radius:50%;background:var(--btn);
   border:3px solid var(--ring);box-shadow:var(--sh)}
@@ -264,7 +253,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v30';
+var BUILD='v31';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -1212,140 +1201,7 @@ async function syncDown(){
   }catch(e){}finally{ fetching=false; }
 }
 let others={};
-let liveMarks={}, sharing=false;
 
-/* ============================================================
-   いまの場所の共有（WebSocket）
-
-   繋ぎっぱなしにするので、何度も問い合わせに行かない。
-   自分が動いたときだけ送り、相手が動いたときだけ届く。
-   ============================================================ */
-const liveAnim={};
-let ws=null, wsTimer=null, wsAlive=false;
-
-/* 受け取った位置まで滑らかに動かす */
-function glide(uid,toLat,toLng,dur){
-  var m=liveMarks[uid]; if(!m)return;
-  var from=m.getLngLat();
-  var a=liveAnim[uid];
-  if(a&&a.raf)cancelAnimationFrame(a.raf);
-  var t0=performance.now(); dur=dur||1200;
-  function step(t){
-    var k=Math.min(1,(t-t0)/dur);
-    var e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
-    m.setLngLat([from.lng+(toLng-from.lng)*e, from.lat+(toLat-from.lat)*e]);
-    if(k<1) liveAnim[uid]={raf:requestAnimationFrame(step)};
-  }
-  liveAnim[uid]={raf:requestAnimationFrame(step)};
-}
-
-function putLiveMark(u){
-  var m=liveMarks[u.user_id];
-  if(!m){
-    var d=document.createElement('div');
-    d.className='live';
-    d.innerHTML='<u></u><i>'+esc((u.name||'?').trim().charAt(0))+'</i>'+
-      '<span class="nm">'+esc(u.name||'')+'</span>';
-    d.onclick=function(){
-      var ago=Math.round((Date.now()-(u.at||Date.now()))/60000);
-      setTip((u.name||'フレンド')+'　'+(ago<1?'いま':ago+'分前')+
-        (u.acc?('　誤差 約'+Math.round(u.acc)+'m'):''));
-    };
-    m=new maplibregl.Marker({element:d,anchor:'center'})
-      .setLngLat([u.lng,u.lat]).addTo(map);
-    liveMarks[u.user_id]=m;
-  }else{
-    glide(u.user_id,u.lat,u.lng);
-  }
-}
-function dropLiveMark(uid){
-  if(liveAnim[uid]&&liveAnim[uid].raf)cancelAnimationFrame(liveAnim[uid].raf);
-  if(liveMarks[uid]){liveMarks[uid].remove();delete liveMarks[uid];}
-  delete liveAnim[uid];
-}
-
-async function connectLive(){
-  if(!fbUser)return;
-  if(ws&&(ws.readyState===0||ws.readyState===1))return;
-  try{
-    var t=await fbUser.getIdToken();
-    var proto=location.protocol==='https:'?'wss':'ws';
-    ws=new WebSocket(proto+'://'+location.host+'/api/live/ws?t='+encodeURIComponent(t));
-
-    ws.onopen=function(){
-      wsAlive=true;
-      if(wsTimer)clearInterval(wsTimer);
-      wsTimer=setInterval(function(){
-        if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'ping'}));
-      },45000);                       // 繋ぎっぱなしを保つ
-      if(sharing)beginWatch();
-    };
-
-    ws.onmessage=function(ev){
-      var m=null; try{ m=JSON.parse(ev.data); }catch(e){ return; }
-      if(m.type==='init'){ (m.live||[]).forEach(putLiveMark); }
-      if(m.type==='pos'){ putLiveMark(m); }
-      if(m.type==='gone'){ dropLiveMark(m.user_id); }
-    };
-
-    ws.onclose=function(){
-      wsAlive=false;
-      if(wsTimer){clearInterval(wsTimer);wsTimer=null;}
-      // 落ちたら少し待って繋ぎ直す
-      setTimeout(function(){ if(fbUser)connectLive(); },4000);
-    };
-    ws.onerror=function(){};
-  }catch(e){}
-}
-
-/* 自分の位置を送る。動いたときだけ流す */
-let watchId=null, lastPos=null, lastSent=0;
-function beginWatch(){
-  if(watchId!=null)return;
-  if(!navigator.geolocation)return;
-  watchId=navigator.geolocation.watchPosition(function(p){
-    var now=Date.now();
-    var la=p.coords.latitude, ln=p.coords.longitude;
-
-    // ほとんど動いていなければ送らない（ただし60秒に1度は生存を知らせる）
-    if(lastPos){
-      var d=Math.hypot((la-lastPos.lat)*111000,(ln-lastPos.lng)*91000);
-      if(d<3 && now-lastSent<60000) return;
-      if(now-lastSent<700) return;        // 送りすぎを防ぐ最低限の間隔
-    }
-    lastPos={lat:la,lng:ln}; lastSent=now;
-    if(ws&&ws.readyState===1){
-      ws.send(JSON.stringify({type:'pos',lat:la,lng:ln,acc:p.coords.accuracy}));
-    }
-  },function(){},{enableHighAccuracy:true,maximumAge:0,timeout:20000});
-}
-function endWatch(){
-  if(watchId!=null){navigator.geolocation.clearWatch(watchId);watchId=null;}
-  lastPos=null;
-}
-
-function startSharing(){
-  if(!fbUser){setTip('ログインが必要です');return;}
-  if(!navigator.geolocation){setTip('この端末では使えません');return;}
-  sharing=true;
-  localStorage.setItem('mk_share','1');
-  connectLive();
-  beginWatch();
-  setTip('いまの場所をフレンドに共有しています');
-}
-function stopSharing(){
-  sharing=false;
-  localStorage.removeItem('mk_share');
-  endWatch();
-  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'off'}));
-  setTip('共有をやめました');
-}
-
-/* 画面を離れたら送るのを止める。戻ったら再開 */
-document.addEventListener('visibilitychange',function(){
-  if(document.hidden){ endWatch(); }
-  else{ if(fbUser){ connectLive(); if(sharing)beginWatch(); } }
-});
 
 /* ============================================================
    ログイン
@@ -1361,8 +1217,6 @@ try{ if(typeof firebase!=='undefined'){
     fbUser=u; var b=document.getElementById('btn-me');
     if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
       loadMe().then(function(){ syncUp(); syncDown();
-        connectLive();                       // 見るだけでも繋ぐ
-        if(localStorage.getItem('mk_share')==='1') startSharing();
       }); }
     else{ b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; meP=null; }
   });
@@ -1405,13 +1259,7 @@ function openMe(){
 
     '<button class="btn" id="fr">フレンド</button>'+
 
-    '<div class="lab" style="margin-top:20px">いまの場所を共有</div>'+
-    '<div class="chips" id="seg-live">'+
-      '<button class="chip '+(sharing?'':'on')+'" data-v="off">共有しない</button>'+
-      '<button class="chip '+(sharing?'on':'')+'" data-v="on">フレンドに共有</button>'+
-    '</div>'+
-    '<div style="font-size:11.5px;color:var(--dim);line-height:1.7;margin-bottom:4px">'+
-      'アプリを開いている間だけ送ります。15分たつと自動で消えます。</div>'+
+
 
     '<div class="lab" style="margin-top:20px">あなたのID</div>'+
     '<div style="display:flex;gap:8px">'+
@@ -1456,15 +1304,6 @@ function openMe(){
     s.querySelector('#myhandle').textContent=v;
     setTip('IDを決めました');
   };
-
-  var lv=s.querySelector('#seg-live');
-  if(lv) Array.prototype.forEach.call(lv.querySelectorAll('.chip'),function(b){
-    b.onclick=function(){
-      Array.prototype.forEach.call(lv.querySelectorAll('.chip'),function(x){x.classList.remove('on');});
-      b.classList.add('on');
-      if(b.dataset.v==='on') startSharing(); else stopSharing();
-    };
-  });
 
   [['seg-vis','default_visibility'],['seg-prec','public_precision']].forEach(function(pair){
     var box=s.querySelector('#'+pair[0]); if(!box)return;
