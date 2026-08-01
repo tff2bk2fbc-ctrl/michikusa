@@ -68,33 +68,13 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 
 
 /* ---------- 下：カード ---------- */
-.rail{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
-  z-index:35;display:flex;gap:10px;overflow-x:auto;padding:0 14px;scrollbar-width:none;
-  transition:transform .35s cubic-bezier(.2,.9,.25,1),opacity .3s}
-.rail::-webkit-scrollbar{display:none}
-.rail.hide{transform:translateY(150%);opacity:0;pointer-events:none}
-.rail.min{transform:translateY(calc(100% - 26px));opacity:.9}
-.rail.min .card{box-shadow:none}
-.railtab{position:fixed;left:50%;transform:translateX(-50%);z-index:36;
-  bottom:calc(env(safe-area-inset-bottom,0px) + 4px);width:44px;height:5px;border-radius:99px;
-  background:var(--dim);opacity:.45;display:none}
-.railtab.on{display:block}
-.card{flex:0 0 auto;width:176px;background:var(--sf);border-radius:14px;overflow:hidden;
-  box-shadow:var(--sh);transition:background .4s}
-.card i{display:block;width:100%;height:88px;background-size:cover;background-position:center;
-  background-color:var(--chip)}
-.card .tx{padding:8px 10px 10px}
-.card .tx b{display:block;font-size:13px;font-weight:600;margin-bottom:2px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .tx span{font-size:11px;color:var(--dim);
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
 
 /* ---------- 丸ボタン ---------- */
-.fabs{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 168px);
+.fabs{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);
   z-index:36;display:flex;flex-direction:column;gap:10px;align-items:flex-end;
   transition:transform .32s cubic-bezier(.2,.9,.25,1),opacity .28s}
 .fabs.hide{transform:translateX(140%);opacity:0;pointer-events:none}
-.fabpull{position:fixed;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 120px);
+.fabpull{position:fixed;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 30px);
   width:56px;height:220px;z-index:37;display:none}
 .fabpull.on{display:block}
 .fabpull b{position:absolute;right:6px;top:50%;transform:translateY(-50%);
@@ -108,7 +88,7 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 .fab.act svg{color:#1E88E5}
 
 .tip{position:fixed;left:50%;transform:translateX(-50%);z-index:38;
-  bottom:calc(env(safe-area-inset-bottom,0px) + 152px);font-size:11.5px;color:var(--ink);
+  bottom:calc(env(safe-area-inset-bottom,0px) + 96px);font-size:11.5px;color:var(--ink);
   background:var(--sf);box-shadow:var(--sh);padding:8px 14px;border-radius:999px;
   pointer-events:none;transition:opacity .4s;max-width:86vw;text-align:center}
 
@@ -199,7 +179,7 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 .cf-btns .y{background:var(--btn);color:var(--btnink)}
 .cf-cancel{width:100%;text-align:center;font-size:12px;color:var(--dim);margin-top:10px}
 .confirm.pick .cf-btns{display:none}
-body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{display:none}
+body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 
 .maplibregl-ctrl-attrib{font-size:9px!important}
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
@@ -224,16 +204,11 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 </div>
 <div class="results" id="results"></div>
 
-<div class="rail" id="rail"></div>
-<div class="railtab" id="railtab"></div>
 <div class="fabpull" id="fabpull"><b></b></div>
 
 <div class="fabs">
   <button class="fab" id="btn-3d">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2.8L3 7.4v9.2l9 4.6 9-4.6V7.4z"/><path d="M3 7.4l9 4.6 9-4.6M12 12v9.2"/></svg>
-  </button>
-  <button class="fab" id="btn-reload" title="この辺りを読み込む">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v6M8.5 7.5L12 4l3.5 3.5"/><path d="M4.5 12a7.5 7.5 0 1 0 3-6"/></svg>
   </button>
   <button class="fab" id="btn-loc">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
@@ -260,7 +235,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v37';
+var BUILD='v38';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -495,7 +470,8 @@ function pickIcon(cat){
 function fcOf(list,mine){
   var big=map.getZoom()>=PHOTO_ZOOM;
   return {type:'FeatureCollection',features:list.filter(valid)
-    .filter(function(p){ return !(big&&p.photo); })   // 写真で出すものは丸を出さない
+    // 自分の記録だけは写真で出すので、そのときは記号を出さない
+    .filter(function(p){ return !(big&&mine&&p.photo); })
     .map(function(p){
       return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
         properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0}};
@@ -510,17 +486,6 @@ function render(force){
   map.getSource('spot').setData(fcOf(pois,false));
   if(map.getSource('frnd'))
     map.getSource('frnd').setData(fcOf(Object.keys(others).map(function(k){return others[k];}),false));
-  var b=map.getBounds();
-  var inView=spots.filter(valid).filter(function(s){return b.contains([s.lng,s.lat]);})
-      .map(function(s){return {p:s,mine:true};})
-    .concat(pois.filter(valid).filter(function(p){return b.contains([p.lng,p.lat]);})
-      .map(function(p){return {p:p,mine:false};}));
-  var c=map.getCenter();
-  inView.sort(function(a,x){
-    if(a.mine!==x.mine)return a.mine?-1:1;
-    return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);});
-  var sig=inView.slice(0,14).map(function(o){return o.p.n;}).join(',');
-  if(force||sig!==lastSig){ lastSig=sig; drawRail(inView); }
   refreshPhotoSource();
  }catch(e){ showErr('[render] '+dump(e)); }
 }
@@ -540,7 +505,7 @@ function addPlaceLayers(){
   map.addLayer({id:'spot-dot',type:'circle',source:'spot',minzoom:14,paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
     'circle-color':night?'#242424':'#E9E6E0',
-    'circle-stroke-width':0,'circle-opacity':.9}});
+    'circle-stroke-width':0,'circle-opacity':.92}});
   map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],14,.55,17,.72],
@@ -697,12 +662,17 @@ function photoFeatures(){
   if(map.getZoom()<PHOTO_ZOOM)return out;
   var b=map.getBounds(), c=map.getCenter(), list=[];
 
+  // 地図に写真で出るのは、自分が撮ったものだけ。
+  // 店の宣材写真を並べると「グルメアプリ」になってしまう。
+  // ここはアルバムなので、写っているのは自分の記録だけでいい。
   spots.filter(valid).forEach(function(s){
     if(b.contains([s.lng,s.lat])&&s.photo)list.push({p:s,mine:true,img:s.photo});
   });
-  pois.filter(valid).forEach(function(p){
-    if(b.contains([p.lng,p.lat])&&p.photo)list.push({p:p,mine:false,img:p.photo});
+  Object.keys(others).forEach(function(k){
+    var o=others[k];
+    if(valid(o)&&b.contains([o.lng,o.lat])&&o.photo)list.push({p:o,mine:false,img:o.photo});
   });
+
   list.sort(function(a,x){
     if(a.mine!==x.mine)return a.mine?-1:1;
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
@@ -722,41 +692,6 @@ function refreshPhotoSource(){
     map.getSource('photo').setData({type:'FeatureCollection',features:photoFeatures()});
 }
 
-/* ---------- 下のカード ---------- */
-function drawRail(inView){
-  var rail=document.getElementById('rail');
-  var list=inView.filter(function(o){return o.mine||photoOf(o.p);}).slice(0,12);
-  if(!list.length){rail.innerHTML='';return;}
-  rail.innerHTML='';
-  list.forEach(function(o){
-    var p=o.p,img=photoOf(p);
-    var sub=o.mine?(p.tag||p.place||'自分の記録'):(p.gname||p.c||'');
-    var card=el('<div class="card"><i'+(img?' style="background-image:url('+
-      JSON.stringify(img).replace(/"/g,'&quot;')+')"':'')+'></i>'+
-      '<div class="tx"><b>'+esc(p.n)+'</b><span>'+esc(sub)+'</span></div></div>');
-    card.onclick=function(){ focusPlace(p,o.mine); };
-    rail.appendChild(card);
-  });
-}
-
-
-/* カードから選んだとき：地図をそこへ動かして、印を出してから詳細を開く */
-let focusM=null;
-function focusPlace(p,mine){
-  try{
-    if(!valid(p))return;
-    if(focusM){focusM.remove();focusM=null;}
-    var d=document.createElement('div');
-    d.className='focus';
-    d.innerHTML='<i></i><u></u>';
-    focusM=new maplibregl.Marker({element:d,anchor:'center'})
-      .setLngLat([p.lng,p.lat]).addTo(map);
-    map.easeTo({center:[p.lng,p.lat],zoom:Math.max(map.getZoom(),16.5),duration:620});
-    setTimeout(function(){ openPlace(p,mine); },640);
-  }catch(e){ openPlace(p,mine); }
-}
-function clearFocus(){ if(focusM){focusM.remove();focusM=null;} }
-
 /* ============================================================
    場所のシート
    ============================================================ */
@@ -766,7 +701,6 @@ function closeSheet(){
   if(sheetEl){var s=sheetEl;sheetEl=null;s.classList.remove('on');
     setTimeout(function(){s.remove();},420);}
   scrim.classList.remove('on');
-  document.getElementById('rail').classList.remove('hide');
   clearFocus();
 }
 scrim.onclick=closeSheet;
@@ -776,7 +710,6 @@ function showSheet(html){
   document.body.appendChild(s);
   sheetEl=s; void s.offsetWidth; s.classList.add('on');
   scrim.classList.add('on');
-  document.getElementById('rail').classList.add('hide');
   return s;
 }
 
@@ -1161,10 +1094,6 @@ function shrink(file,cb){
 }
 
 const GERR={1:'許可されていません',2:'位置を特定できません（屋内など）',3:'時間内に取得できませんでした'};
-document.getElementById('btn-reload').onclick=function(){
-  setTip('この辺りを読み込んでいます…');
-  autoLoad(true);
-};
 document.getElementById('btn-loc').onclick=function(){
   var btn=this;
   if(!navigator.geolocation){setTip('この端末では取得できません');return;}
@@ -1555,48 +1484,19 @@ async function openFriends(){
    ・右のボタン：素早く上へ払うと隠れる。下へ払うと戻る
    ============================================================ */
 (function(){
-  var rail=document.getElementById('rail');
-  var tab=document.getElementById('railtab');
   var fabs=document.querySelector('.fabs');
   var pull=document.getElementById('fabpull');
 
-  function railMin(v){
-    rail.classList.toggle('min',v);
-    tab.classList.toggle('on',v);
-  }
-
-  // --- 下のカード ---
-  var y0=0,t0=0,moved=false;
-  rail.addEventListener('touchstart',function(e){
-    y0=e.touches[0].clientY; t0=Date.now(); moved=false;
-  },{passive:true});
-  rail.addEventListener('touchmove',function(e){
-    if(Math.abs(e.touches[0].clientY-y0)>10)moved=true;
-  },{passive:true});
-  rail.addEventListener('touchend',function(e){
-    if(!moved)return;
-    var dy=e.changedTouches[0].clientY-y0, dt=Date.now()-t0;
-    if(dy>36||(dy>18&&dt<260)) railMin(true);
-    else if(dy<-36||(dy<-18&&dt<260)) railMin(false);
-  },{passive:true});
-  tab.addEventListener('click',function(){ railMin(false); });
-  rail.addEventListener('click',function(){ if(rail.classList.contains('min'))railMin(false); },true);
-
-  // --- 右のボタン ---
   function setFabs(hide){
     fabs.classList.toggle('hide',hide);
-    pull.classList.toggle('on',hide);      // 隠したら、戻すための取っ手を出す
+    pull.classList.toggle('on',hide);
   }
   var fy=0,ft=0,fmoved=false;
   function onStart(e){ fy=e.touches[0].clientY; ft=Date.now(); fmoved=false; }
   function onMove(e){ if(Math.abs(e.touches[0].clientY-fy)>8)fmoved=true; }
   function onEnd(e){
     var dy=e.changedTouches[0].clientY-fy, dt=Date.now()-ft;
-    if(!fmoved){
-      // 取っ手を軽く触ったときは、それだけで戻す
-      if(fabs.classList.contains('hide')) setFabs(false);
-      return;
-    }
+    if(!fmoved){ if(fabs.classList.contains('hide')) setFabs(false); return; }
     var fast=dt<420;
     if(dy<-30&&fast) setFabs(true);
     if(dy> 30&&fast) setFabs(false);
@@ -1607,7 +1507,6 @@ async function openFriends(){
     el2.addEventListener('touchend',onEnd,{passive:true});
   });
   pull.addEventListener('click',function(){ setFabs(false); });
-  // パソコンでも戻せるように
   pull.addEventListener('mousedown',function(){ setFabs(false); });
 })();
 
