@@ -257,7 +257,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v33';
+var BUILD='v34';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -625,40 +625,55 @@ const PHOTO_ZOOM=16.8;         // これ以上寄ったら写真にする
 const madeIcons={};            // 作った画像の名前
 const makingIcons={};          // 作っている途中のもの
 
+let photoDiag={try:0,ok:0,ngLoad:0,ngAdd:0,last:''};
+
 /** 写真を丸く切り抜いて、地図に登録する */
 function makeRoundIcon(url,mine,key){
   if(madeIcons[key]||makingIcons[key])return;
   makingIcons[key]=1;
+  photoDiag.try++;
+
   var im=new Image();
-  im.crossOrigin='anonymous';
+  // 外のサーバーの画像はCanvasが汚れて取り出せなくなるので、許可を求める
+  if(!/^data:/.test(url)) im.crossOrigin='anonymous';
+
   im.onload=function(){
     try{
-      var S=128, R=S/2, ring=8;
+      var S=128,R=S/2,ring=7;
       var cv=document.createElement('canvas');
       cv.width=S; cv.height=S;
-      var x=cv.getContext('2d');
+      var x=cv.getContext('2d',{willReadFrequently:true});
 
-      // 縁
       x.beginPath(); x.arc(R,R,R-1,0,Math.PI*2);
-      x.fillStyle = mine ? (night?'#FAFAFA':'#111111') : (night?'#000000':'#FFFFFF');
+      x.fillStyle = mine ? (night?'#FAFAFA':'#111111') : (night?'#101010':'#FFFFFF');
       x.fill();
 
-      // 写真を丸く切り抜いて中に置く
       x.save();
       x.beginPath(); x.arc(R,R,R-ring,0,Math.PI*2); x.clip();
       var s=Math.min(im.width,im.height);
       x.drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,ring,ring,S-ring*2,S-ring*2);
       x.restore();
 
-      if(!map.hasImage(key)){
-        map.addImage(key,{width:S,height:S,data:x.getImageData(0,0,S,S).data},{pixelRatio:2});
-      }
+      var dat=x.getImageData(0,0,S,S);
+      if(map.hasImage(key))map.removeImage(key);
+      // ImageData をそのまま渡すのが一番確実
+      map.addImage(key,dat,{pixelRatio:2});
+
       madeIcons[key]=1;
       delete makingIcons[key];
+      photoDiag.ok++;
       refreshPhotoSource();
-    }catch(e){ delete makingIcons[key]; }
+    }catch(e){
+      delete makingIcons[key];
+      photoDiag.ngAdd++;
+      photoDiag.last=String(e&&e.message||e);
+    }
   };
-  im.onerror=function(){ delete makingIcons[key]; };
+  im.onerror=function(){
+    delete makingIcons[key];
+    photoDiag.ngLoad++;
+    photoDiag.last='画像を読めない: '+String(url).slice(0,60);
+  };
   im.src=url;
 }
 
