@@ -260,7 +260,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v36';
+var BUILD='v37';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -625,7 +625,7 @@ function addPlaceLayers(){
    そこで写真を丸く切り抜いた画像を作り、地図に登録して使う。
    地図の記号と同じ扱いになるので、ずれようがない。
    ============================================================ */
-const PHOTO_ZOOM=16.8;         // これ以上寄ったら写真にする
+const PHOTO_ZOOM=16.2;         // これ以上寄ったら写真にする
 const madeIcons={};            // 作った画像の名前
 const makingIcons={};          // 作っている途中のもの
 
@@ -638,8 +638,12 @@ function makeRoundIcon(url,mine,key){
   photoDiag.try++;
 
   var im=new Image();
-  // 外のサーバーの画像はCanvasが汚れて取り出せなくなるので、許可を求める
-  if(!/^data:/.test(url)) im.crossOrigin='anonymous';
+  var src=url;
+  if(!/^data:/.test(url)){
+    // よその画像は自分のサーバーを通す。そうしないとCanvasで加工できない
+    src='/api/img?u='+encodeURIComponent(url);
+    im.crossOrigin='anonymous';
+  }
 
   im.onload=function(){
     try{
@@ -678,7 +682,7 @@ function makeRoundIcon(url,mine,key){
     photoDiag.ngLoad++;
     photoDiag.last='画像を読めない: '+String(url).slice(0,60);
   };
-  im.src=url;
+  im.src=src;
 }
 
 function photoKey(p,mine){
