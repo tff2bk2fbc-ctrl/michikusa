@@ -94,8 +94,12 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
   z-index:36;display:flex;flex-direction:column;gap:10px;align-items:flex-end;
   transition:transform .32s cubic-bezier(.2,.9,.25,1),opacity .28s}
 .fabs.hide{transform:translateX(140%);opacity:0;pointer-events:none}
-.fabpull{position:fixed;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 150px);
-  width:26px;height:120px;z-index:35}
+.fabpull{position:fixed;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 120px);
+  width:56px;height:220px;z-index:37;display:none}
+.fabpull.on{display:block}
+.fabpull b{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  width:5px;height:56px;border-radius:99px;background:var(--dim);opacity:.5}
+.fabpull:active b{opacity:.9}
 .fab{width:44px;height:44px;border-radius:50%;background:var(--sf);box-shadow:var(--sh);
   display:flex;align-items:center;justify-content:center;transition:background .4s}
 .fab svg{width:19px;height:19px}
@@ -169,6 +173,15 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 .pad{padding:0 16px}
 
 /* ---------- 場所の確認 ---------- */
+.photopin{position:relative;cursor:pointer}
+.photopin i{display:block;width:52px;height:52px;border-radius:50%;
+  background-size:cover;background-position:center;background-color:var(--chip);
+  border:3px solid var(--ring);box-shadow:var(--sh)}
+.photopin.mine i{border-color:var(--btn);width:58px;height:58px}
+.photopin::after{content:'';position:absolute;left:50%;bottom:-4px;width:9px;height:9px;
+  background:var(--ring);transform:translateX(-50%) rotate(45deg);border-radius:1px;z-index:-1}
+.photopin.mine::after{background:var(--btn)}
+
 .focus{pointer-events:none}
 .focus i{display:block;width:15px;height:15px;border-radius:50%;background:var(--btn);
   border:3px solid var(--ring);box-shadow:var(--sh)}
@@ -222,7 +235,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 
 <div class="rail" id="rail"></div>
 <div class="railtab" id="railtab"></div>
-<div class="fabpull" id="fabpull"></div>
+<div class="fabpull" id="fabpull"><b></b></div>
 
 <div class="fabs">
   <button class="fab" id="btn-3d">
@@ -253,7 +266,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v31';
+var BUILD='v32';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -484,10 +497,13 @@ function pickIcon(cat){
 }
 
 function fcOf(list,mine){
-  return {type:'FeatureCollection',features:list.filter(valid).map(function(p){
-    return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
-      properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0}};
-  })};
+  var big=map.getZoom()>=PHOTO_ZOOM;
+  return {type:'FeatureCollection',features:list.filter(valid)
+    .filter(function(p){ return !(big&&p.photo); })   // 写真で出すものは丸を出さない
+    .map(function(p){
+      return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
+        properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0}};
+    })};
 }
 
 let lastSig='';
@@ -509,6 +525,7 @@ function render(force){
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);});
   var sig=inView.slice(0,14).map(function(o){return o.p.n;}).join(',');
   if(force||sig!==lastSig){ lastSig=sig; drawRail(inView); }
+  drawPhotoPins();
  }catch(e){ showErr('[render] '+dump(e)); }
 }
 map.on('moveend',function(){render();autoLoad();syncDown();});
@@ -530,13 +547,16 @@ function addPlaceLayers(){
   map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],14,.55,17,.72],
-    'icon-allow-overlap':false,'icon-optional':true,
-    'text-field':['get','n'],'text-size':10.5,'text-offset':[0,1.0],'text-anchor':'top',
-    'text-optional':true,'text-max-width':9
+    'icon-allow-overlap':true,'icon-optional':true,
+    // 名前を出さないと、丸だけが浮いて見える
+    'text-field':['get','n'],
+    'text-size':['interpolate',['linear'],['zoom'],14,10,17,11.5],
+    'text-offset':[0,1.05],'text-anchor':'top','text-optional':true,'text-max-width':8,
+    'text-padding':2,'text-allow-overlap':false
   },paint:{
-    'text-color':night?'#C0C0C0':'#5A5A5A',
-    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.4,
-    'icon-opacity':.7,'text-opacity':.85}});
+    'text-color':night?'#D2D2D2':'#3E3E3E',
+    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.6,
+    'icon-opacity':.8}});
 
   // フレンドの思い出
   map.addLayer({id:'frnd-ring',type:'circle',source:'frnd',paint:{
@@ -583,6 +603,55 @@ function addPlaceLayers(){
       if(f)openPlace(f,mine);
     });
   });
+}
+
+
+/* ============================================================
+   よく拡大したとき、丸を大きくして写真をはめる
+
+   地図の中では画像を扱えないので、ここだけHTMLで重ねる。
+   数を絞れば重くならない。
+   ============================================================ */
+const PHOTO_ZOOM=16.8;      // これ以上に拡大したら写真にする
+let photoMarks={};
+
+function drawPhotoPins(){
+ try{
+  var z=map.getZoom();
+  if(z<PHOTO_ZOOM){
+    Object.keys(photoMarks).forEach(function(k){photoMarks[k].remove();});
+    photoMarks={};
+    return;
+  }
+  var b=map.getBounds(), c=map.getCenter();
+  var list=[];
+  spots.filter(valid).forEach(function(s){
+    if(b.contains([s.lng,s.lat])&&s.photo)list.push({k:'m'+s.id,p:s,mine:true,img:s.photo});
+  });
+  pois.filter(valid).forEach(function(p){
+    if(b.contains([p.lng,p.lat])&&p.photo)list.push({k:'p'+p.n+p.lat.toFixed(5),p:p,mine:false,img:p.photo});
+  });
+  // 画面の中心に近いものを優先。数を絞って軽さを保つ
+  list.sort(function(a,x){
+    return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
+  });
+  list=list.slice(0,28);
+
+  var keep={};
+  list.forEach(function(o){
+    keep[o.k]=1;
+    if(photoMarks[o.k])return;
+    var d=document.createElement('div');
+    d.className='photopin'+(o.mine?' mine':'');
+    d.innerHTML='<i style="background-image:url('+JSON.stringify(o.img)+')"></i>';
+    d.onclick=function(ev){ev.stopPropagation();openPlace(o.p,o.mine);};
+    photoMarks[o.k]=new maplibregl.Marker({element:d,anchor:'bottom'})
+      .setLngLat([o.p.lng,o.p.lat]).addTo(map);
+  });
+  Object.keys(photoMarks).forEach(function(k){
+    if(!keep[k]){photoMarks[k].remove();delete photoMarks[k];}
+  });
+ }catch(e){}
 }
 
 /* ---------- 下のカード ---------- */
@@ -771,8 +840,10 @@ function baseCat(p){
   return '景';
 }
 map.on('click',function(e){
-  if(placing){movePlacing(e.lngLat.lat,e.lngLat.lng);return;}
-  if(e.originalEvent&&e.originalEvent.__hit)return;
+  if(placing){ movePlacing(e.lngLat.lat,e.lngLat.lng); return; }
+  if(e.originalEvent&&e.originalEvent.__hit)return;   // ピンを押したときは何もしない
+
+  // 地図に元から描かれている店を押したか調べる
   var pad=18,box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]],fs=[];
   try{fs=map.queryRenderedFeatures(box);}catch(_){}
   var best=null,bd=1e9;
@@ -783,12 +854,18 @@ map.on('click',function(e){
     var d=Math.hypot(q.x-e.point.x,q.y-e.point.y);
     if(d<bd){bd=d;best=f;}
   });
+
   if(best){
+    // 店を押したときは、確認バーではなく詳細を開く
     var pr=best.properties,c=best.geometry.coordinates;
-    startPlacing(c[1],c[0],{known:pr['name:ja']||pr.name,cat:baseCat(pr),
-      gname:pr.subclass||pr.class||''});
+    var nm=pr['name:ja']||pr.name;
+    var known=pois.filter(function(x){return x.n===nm;})[0];
+    openPlace(known||{n:nm,c:baseCat(pr),lat:c[1],lng:c[0],
+      gname:pr.subclass||pr.class||''},false);
     return;
   }
+
+  // 何もない場所を押したときだけ、場所の確認を出す
   startPlacing(e.lngLat.lat,e.lngLat.lng,{});
 });
 
@@ -1402,7 +1479,6 @@ async function openFriends(){
     rail.classList.toggle('min',v);
     tab.classList.toggle('on',v);
   }
-  function fabHide(v){ fabs.classList.toggle('hide',v); }
 
   // --- 下のカード ---
   var y0=0,t0=0,moved=false;
@@ -1422,23 +1498,32 @@ async function openFriends(){
   rail.addEventListener('click',function(){ if(rail.classList.contains('min'))railMin(false); },true);
 
   // --- 右のボタン ---
+  function setFabs(hide){
+    fabs.classList.toggle('hide',hide);
+    pull.classList.toggle('on',hide);      // 隠したら、戻すための取っ手を出す
+  }
   var fy=0,ft=0,fmoved=false;
   function onStart(e){ fy=e.touches[0].clientY; ft=Date.now(); fmoved=false; }
-  function onMove(e){ if(Math.abs(e.touches[0].clientY-fy)>10)fmoved=true; }
+  function onMove(e){ if(Math.abs(e.touches[0].clientY-fy)>8)fmoved=true; }
   function onEnd(e){
-    if(!fmoved)return;
     var dy=e.changedTouches[0].clientY-fy, dt=Date.now()-ft;
-    var fast=dt<320;
-    if(dy<-34&&fast) fabHide(true);
-    if(dy>34&&fast)  fabHide(false);
+    if(!fmoved){
+      // 取っ手を軽く触ったときは、それだけで戻す
+      if(fabs.classList.contains('hide')) setFabs(false);
+      return;
+    }
+    var fast=dt<420;
+    if(dy<-30&&fast) setFabs(true);
+    if(dy> 30&&fast) setFabs(false);
   }
   [fabs,pull].forEach(function(el2){
     el2.addEventListener('touchstart',onStart,{passive:true});
     el2.addEventListener('touchmove',onMove,{passive:true});
     el2.addEventListener('touchend',onEnd,{passive:true});
   });
-  // 画面の右端を触ったら戻す（隠したまま迷子にならないように）
-  pull.addEventListener('click',function(){ fabHide(false); });
+  pull.addEventListener('click',function(){ setFabs(false); });
+  // パソコンでも戻せるように
+  pull.addEventListener('mousedown',function(){ setFabs(false); });
 })();
 
 /* ---------- 起動 ---------- */
