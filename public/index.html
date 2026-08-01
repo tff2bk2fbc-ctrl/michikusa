@@ -236,9 +236,10 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <div class="scrim" id="scrim"></div>
 <input type="file" accept="image/*" capture="environment" hidden id="in-cam">
 <input type="file" accept="image/*" multiple hidden id="in-lib">
+<input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v40';
+var BUILD='v41';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
