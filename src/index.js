@@ -46,7 +46,7 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-8",
+          build: "api-9",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
@@ -682,11 +682,18 @@ async function rakuten(url, env) {
   api.searchParams.set("searchRadius", km.toFixed(1));
   api.searchParams.set("hits", "30");
 
+  // 新方式は送信元の申告にも厳しい。登録した許可サイトと一致させる
+  const site = (await cfg(env, "rakuten_site")) || url.origin;
+  api.searchParams.set("httpReferer", site);
+
   const res = await fetch(api.toString(), {
     cf: { cacheTtl: 3600 },
     headers: {
       "accessKey": String(ak).trim(),        // 新方式で必須
-      "User-Agent": "michikusa/1.0"
+      "Referer": site,
+      "Origin": site,
+      "User-Agent": "michikusa/1.0",
+      "Accept": "application/json"
     }
   });
 
@@ -698,7 +705,10 @@ async function rakuten(url, env) {
     if (res.status === 404) return json({ count: 0, hotels: [] });   // 該当なし
     return json({
       error: "楽天トラベル HTTP " + res.status,
-      detail: body ? (body.error_description || body.error) : text.slice(0, 300)
+      detail: body ? (body.error_description || body.error) : text.slice(0, 400),
+      sentSite: site,
+      idLen: String(id).trim().length,
+      keyLen: String(ak).trim().length
     }, 502);
   }
   if (body && body.error) {
