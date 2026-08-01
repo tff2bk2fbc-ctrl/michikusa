@@ -230,7 +230,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v24';
+var BUILD='v26';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -476,6 +476,8 @@ function render(force){
   if(!map.getSource('mine'))return;
   map.getSource('mine').setData(fcOf(spots,true));
   map.getSource('spot').setData(fcOf(pois,false));
+  if(map.getSource('frnd'))
+    map.getSource('frnd').setData(fcOf(Object.keys(others).map(function(k){return others[k];}),false));
   var b=map.getBounds();
   var inView=spots.filter(valid).filter(function(s){return b.contains([s.lng,s.lat]);})
       .map(function(s){return {p:s,mine:true};})
@@ -489,12 +491,13 @@ function render(force){
   if(force||sig!==lastSig){ lastSig=sig; drawRail(inView); }
  }catch(e){ showErr('[render] '+dump(e)); }
 }
-map.on('moveend',function(){render();autoLoad();});
+map.on('moveend',function(){render();autoLoad();syncDown();});
 
 /* 地図の中にレイヤーを積む */
 function addPlaceLayers(){
   if(map.getSource('spot'))return;
   map.addSource('spot',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addSource('frnd',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('mine',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
 
   // まだ思い出のない場所
@@ -513,6 +516,21 @@ function addPlaceLayers(){
     'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.6,
     'icon-opacity':.95}});
 
+  // フレンドの思い出
+  map.addLayer({id:'frnd-ring',type:'circle',source:'frnd',paint:{
+    'circle-radius':['interpolate',['linear'],['zoom'],12,4,15,6.5,18,9],
+    'circle-color':'#1E88E5',
+    'circle-stroke-color':night?'#000000':'#FFFFFF','circle-stroke-width':2.2}});
+  map.addLayer({id:'frnd-ic',type:'symbol',source:'frnd',minzoom:14,layout:{
+    'icon-image':['get','icon'],
+    'icon-size':['interpolate',['linear'],['zoom'],14,.8,17,1.05],
+    'icon-allow-overlap':true,'icon-optional':true,'icon-offset':[0,-24],
+    'text-field':['get','n'],'text-size':11,'text-offset':[0,1.4],'text-anchor':'top',
+    'text-optional':true,'text-max-width':9
+  },paint:{
+    'text-color':night?'#BBD9F5':'#1A5FA8',
+    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.7}});
+
   // 自分の思い出がある場所
   map.addLayer({id:'mine-ring',type:'circle',source:'mine',paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],12,5,15,8,18,11],
@@ -528,13 +546,18 @@ function addPlaceLayers(){
     'text-color':night?'#FFFFFF':'#000000',
     'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.8}});
 
-  ['mine-ring','mine-ic','spot-dot','spot-ic'].forEach(function(id){
+  ['mine-ring','mine-ic','frnd-ring','frnd-ic','spot-dot','spot-ic'].forEach(function(id){
     map.on('click',id,function(e){
       var pr=e.features[0].properties;
       e.originalEvent.__hit=1;
       var mine=String(pr.mine)==='1';
-      var list=mine?spots:pois;
-      var f=list.filter(function(x){return x.n===pr.n;})[0];
+      var f=null;
+      if(mine){ f=spots.filter(function(x){return x.n===pr.n;})[0]; }
+      else{
+        f=pois.filter(function(x){return x.n===pr.n;})[0];
+        if(!f){ var ks=Object.keys(others);
+          for(var i=0;i<ks.length;i++){ if(others[ks[i]].n===pr.n){f=others[ks[i]];break;} } }
+      }
       if(f)openPlace(f,mine);
     });
   });
@@ -597,6 +620,15 @@ function openPlace(p,mine){
   if(photos.length){
     html+='<div class="grid">'+photos.slice(0,9).map(function(u){
       return '<i style="background-image:url('+JSON.stringify(u).replace(/"/g,'&quot;')+')"></i>';
+    }).join('')+'</div>';
+  }
+  var frnd=Object.keys(others).map(function(k){return others[k];})
+    .filter(function(o){return o.n===p.n&&o.tag;});
+  if(frnd.length){
+    html+='<div class="posts">'+frnd.map(function(o){
+      return '<div class="post"><div class="av2"></div><div class="b"><b>'+
+        esc(o.author&&o.author.name||'フレンド')+'</b>'+
+        '<p>'+esc(o.tag)+'</p></div></div>';
     }).join('')+'</div>';
   }
   if(mySpots.length){
@@ -1001,9 +1033,132 @@ function openAdd(p){
       tag:ft.value.trim(),d:p.date||new Date().toISOString().slice(0,10),photo:p.photo||''};
     spots.push(rec); dbPut('spots',rec);
     closeSheet(); render(true); setTip('追加しました');
+    if(fbUser) pushOne(rec).then(function(o){ if(o)render(true); });
   };
   if(!p.known&&!p.photo)setTimeout(function(){nm.focus();},340);
 }
+
+
+/* ============================================================
+   サーバーとの同期
+
+   これまでは端末の中だけに置いていた。
+   Safariは7日開かないと消してしまうので、思い出が消える。
+   ログインしたら、サーバーへ預けて、どの端末からでも戻るようにする。
+   ============================================================ */
+
+/* 写真をサーバーへ。原本と表示用を別々に持つ */
+async function uploadPhoto(postId, dataUrl){
+  try{
+    var blob=await (await fetch(dataUrl)).blob();
+    var pid=nid();
+    // 原本
+    await api('/api/photo?post_id='+postId+'&photo_id='+pid+'&kind=orig',
+      {method:'PUT',headers:{'Content-Type':blob.type||'image/jpeg'},body:blob});
+    // 表示用（軽くしたもの）
+    var view=await resize(dataUrl,1600,.86);
+    if(view){
+      var vb=await (await fetch(view)).blob();
+      await api('/api/photo?post_id='+postId+'&photo_id='+pid+'&kind=view',
+        {method:'PUT',headers:{'Content-Type':'image/jpeg'},body:vb});
+    }
+    var th=await resize(dataUrl,400,.8);
+    if(th){
+      var tb=await (await fetch(th)).blob();
+      await api('/api/photo?post_id='+postId+'&photo_id='+pid+'&kind=thumb',
+        {method:'PUT',headers:{'Content-Type':'image/jpeg'},body:tb});
+    }
+    return pid;
+  }catch(e){ return null; }
+}
+function resize(dataUrl,max,q){
+  return new Promise(function(res){
+    var im=new Image();
+    im.onload=function(){
+      var sc=Math.min(1,max/Math.max(im.width,im.height));
+      var cv=document.createElement('canvas');
+      cv.width=Math.round(im.width*sc); cv.height=Math.round(im.height*sc);
+      var cx=cv.getContext('2d'); cx.imageSmoothingQuality='high';
+      cx.drawImage(im,0,0,cv.width,cv.height);
+      res(cv.toDataURL('image/jpeg',q));
+    };
+    im.onerror=function(){res(null);};
+    im.src=dataUrl;
+  });
+}
+
+/* 1件をサーバーへ送る */
+async function pushOne(rec){
+  try{
+    var r=await api('/api/posts',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        title:rec.n, category:rec.c, tag:rec.tag||'', place_name:rec.place||'',
+        lat:rec.lat, lng:rec.lng,
+        taken_at:rec.d?Date.parse(rec.d):null,
+        visibility:rec.visibility||null
+      })});
+    if(!r.ok)return false;
+    var j=await r.json();
+    rec.server_id=j.id;
+    rec.visibility=j.visibility;
+    if(rec.photo) await uploadPhoto(j.id, rec.photo);
+    rec.synced=1;
+    await dbPut('spots',rec);
+    return true;
+  }catch(e){ return false; }
+}
+
+/* まだ送っていないものをまとめて送る */
+let syncing=false;
+async function syncUp(){
+  if(!fbUser||syncing)return;
+  var todo=spots.filter(function(s){return !s.synced;});
+  if(!todo.length)return;
+  syncing=true;
+  setTip('思い出をサーバーへ預けています…（'+todo.length+'件）');
+  var ok=0;
+  for(var i=0;i<todo.length;i++){ if(await pushOne(todo[i]))ok++; }
+  syncing=false;
+  setTip(ok?(ok+'件を預けました'):'預けられませんでした');
+  render(true);
+}
+
+/* サーバーから取り込む。他人のぶんも含む */
+let fetching=false;
+async function syncDown(){
+  if(!fbUser||fetching)return;
+  fetching=true;
+  try{
+    var b=map.getBounds();
+    var r=await api('/api/posts?s='+b.getSouth()+'&w='+b.getWest()+
+      '&n='+b.getNorth()+'&e='+b.getEast()+'&limit=300');
+    if(!r.ok)return;
+    var j=await r.json();
+    var mineIds={}; spots.forEach(function(s){ if(s.server_id)mineIds[s.server_id]=1; });
+    var added=0;
+    (j.posts||[]).forEach(function(p){
+      if(p.mine){
+        if(mineIds[p.id])return;                 // すでに手元にある
+        var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
+          tag:p.tag||'',place:p.place_name||'',lat:p.lat,lng:p.lng,
+          d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
+          photo:'',visibility:p.visibility};
+        spots.push(rec); dbPut('spots',rec); added++;
+      }else{
+        // 他人の思い出。地図には出すが端末には残さない
+        var k=p.id;
+        if(others[k])return;
+        others[k]={n:p.title,c:p.category,lat:p.lat,lng:p.lng,
+          gname:(p.author&&p.author.name?p.author.name+' の思い出':''),
+          tag:p.tag||'',author:p.author,precision:p.precision,friend:true};
+        added++;
+      }
+    });
+    if(added)render(true);
+  }catch(e){}finally{ fetching=false; }
+}
+let others={};
 
 /* ============================================================
    ログイン
@@ -1017,7 +1172,8 @@ try{ if(typeof firebase!=='undefined'){
   firebase.initializeApp(FB);
   firebase.auth().onAuthStateChanged(function(u){
     fbUser=u; var b=document.getElementById('btn-me');
-    if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>'; loadMe(); }
+    if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
+      loadMe().then(function(){ syncUp(); syncDown(); }); }
     else{ b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; meP=null; }
   });
   firebase.auth().getRedirectResult().catch(function(){});
@@ -1028,59 +1184,161 @@ async function api(path,opt){
   return fetch(path,Object.assign({},opt,{headers:h}));
 }
 async function loadMe(){try{var r=await api('/api/me');if(r.ok)meP=await r.json();}catch(e){}}
-document.getElementById('btn-me').onclick=function(){
+document.getElementById('btn-me').onclick=function(){ openMe(); };
+
+function openMe(){
   var html='<div class="grab"></div><div class="pad" style="padding-top:18px">';
   if(!fbUser){
     html+='<div style="font-size:19px;font-weight:700;margin-bottom:8px">ログイン</div>'+
       '<div style="font-size:13.5px;color:var(--dim);line-height:1.8;margin-bottom:18px">'+
-      '思い出がこの端末から離れて残るようになります。機種を変えても戻ってきます。</div>'+
+      '思い出がこの端末から離れて残るようになります。機種を変えても戻ってきます。<br>'+
+      'フレンドと見せあうこともできます。</div>'+
       '<button class="btn" id="g">Googleでログイン</button>'+
-      '<button class="btn g" id="x" style="margin-top:8px">あとで</button>';
-  }else{
-    html+='<div style="font-size:19px;font-weight:700">'+esc(fbUser.displayName||'名前未設定')+'</div>'+
-      '<div style="font-size:12.5px;color:var(--dim);margin:4px 0 18px;word-break:break-all">'+
-      esc(fbUser.email||'')+(meP?'<br>ID: '+esc(meP.id||''):'<br>サーバーと未接続')+'</div>'+
-      '<button class="btn g" id="out">ログアウト</button>'+
-      '<button class="btn g" id="x" style="margin-top:8px">とじる</button>';
+      '<button class="btn g" id="x" style="margin-top:8px">あとで</button></div>';
+    var s0=showSheet(html);
+    s0.querySelector('#x').onclick=closeSheet;
+    s0.querySelector('#g').onclick=function(){closeSheet();
+      var pv=new firebase.auth.GoogleAuthProvider();
+      firebase.auth().signInWithPopup(pv).catch(function(e){
+        if(e&&/popup/i.test(e.code||''))firebase.auth().signInWithRedirect(pv);
+        else setTip('ログイン失敗: '+(e&&e.code||e));});};
+    return;
   }
-  html+='</div>';
+
+  var st=(meP&&meP.settings)||{};
+  var unsynced=spots.filter(function(s){return !s.synced;}).length;
+  html+='<div style="font-size:19px;font-weight:700">'+esc(fbUser.displayName||'名前未設定')+'</div>'+
+    '<div style="font-size:12.5px;color:var(--dim);margin:4px 0 4px">'+
+      spots.length+' の思い出'+(unsynced?('　未保存 '+unsynced+'件'):'　すべて保存済み')+'</div>'+
+    '<div style="font-size:12px;color:var(--dim);margin-bottom:16px">'+
+      'あなたのID：<b id="myhandle">'+esc((meP&&meP.handle)||'（未設定）')+'</b></div>'+
+
+    '<button class="btn" id="fr">フレンド</button>'+
+
+    '<div class="lab" style="margin-top:20px">あなたのID</div>'+
+    '<div style="display:flex;gap:8px">'+
+      '<input class="fld" id="f-handle" placeholder="damo など" style="margin:0" value="'+
+        esc((meP&&meP.handle)||'')+'">'+
+      '<button class="btn" id="save-handle" style="width:auto;padding:0 18px;margin:0">決定</button>'+
+    '</div>'+
+    '<div style="font-size:11.5px;color:var(--dim);margin-top:6px;line-height:1.7">'+
+      'フレンドはこのIDであなたを探します。</div>'+
+
+    '<div class="lab" style="margin-top:22px">新しい思い出をだれに見せるか</div>'+
+    '<div class="chips" id="seg-vis">'+
+      [['private','自分だけ'],['friends','フレンド'],['public','みんな']].map(function(o){
+        return '<button class="chip '+(st.default_visibility===o[0]?'on':'')+'" data-v="'+o[0]+'">'+o[1]+'</button>';
+      }).join('')+'</div>'+
+
+    '<div class="lab">みんなに見せるときの場所</div>'+
+    '<div class="chips" id="seg-prec">'+
+      [['exact','正確に'],['approx','だいたい'],['area','エリアだけ'],['hidden','出さない']].map(function(o){
+        return '<button class="chip '+(st.public_precision===o[0]?'on':'')+'" data-v="'+o[0]+'">'+o[1]+'</button>';
+      }).join('')+'</div>'+
+    '<div style="font-size:11.5px;color:var(--dim);line-height:1.7;margin-bottom:4px">'+
+      'フレンドには正確な場所が見えます。それ以外の人には、この設定が使われます。</div>'+
+
+    '<button class="btn g" id="out" style="margin-top:20px">ログアウト</button>'+
+    '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>';
+
   var s=showSheet(html);
   s.querySelector('#x').onclick=closeSheet;
-  var g=s.querySelector('#g');
-  if(g)g.onclick=function(){closeSheet();
-    var pv=new firebase.auth.GoogleAuthProvider();
-    firebase.auth().signInWithPopup(pv).catch(function(e){
-      if(e&&/popup/i.test(e.code||''))firebase.auth().signInWithRedirect(pv);
-      else setTip('ログイン失敗: '+(e&&e.code||e));});};
-  var o=s.querySelector('#out');
-  if(o)o.onclick=function(){firebase.auth().signOut();closeSheet();setTip('ログアウトしました');};
-};
+  s.querySelector('#fr').onclick=function(){openFriends();};
+  s.querySelector('#out').onclick=function(){
+    firebase.auth().signOut();closeSheet();setTip('ログアウトしました');};
 
+  s.querySelector('#save-handle').onclick=async function(){
+    var v=s.querySelector('#f-handle').value.trim().replace(/[^A-Za-z0-9_]/g,'');
+    if(v.length<3){setTip('3文字以上の英数字で');return;}
+    var r=await api('/api/me',{method:'PATCH',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:v})});
+    if(r.status===409){setTip('そのIDは使われています');return;}
+    if(!r.ok){setTip('保存できませんでした');return;}
+    if(meP)meP.handle=v;
+    s.querySelector('#myhandle').textContent=v;
+    setTip('IDを決めました');
+  };
 
-/* 診断：地図が持っている絵の名前を確かめる。
-   検索窓を長押しすると出る */
-(function(){
-  var q=document.getElementById('q'), t=null;
-  function show(){
-    scanSprite();
-    var all=Object.keys(SPRITE||{}).sort();
-    var picks=CATS.map(function(c){return c+' → '+(pickIcon(c)||'（無し）');}).join('<br>');
-    var list=all.slice(0,300).join(', ');
-    showSheet('<div class="grab"></div><div class="pad" style="padding-top:16px">'+
-      '<div style="font-size:17px;font-weight:700;margin-bottom:10px">診断</div>'+
-      '<div style="font-size:12.5px;line-height:1.9;margin-bottom:14px">'+
-      'BUILD '+BUILD+'<br>絵の総数 '+all.length+'</div>'+
-      '<div style="font-size:12.5px;line-height:2;margin-bottom:14px">'+picks+'</div>'+
-      '<div style="font-size:10px;line-height:1.7;color:var(--dim);word-break:break-all;'+
-      'max-height:34vh;overflow:auto">'+esc(list)+'</div>'+
-      '<button class="btn g" id="x" style="margin-top:14px">とじる</button></div>')
-      .querySelector('#x').onclick=closeSheet;
+  [['seg-vis','default_visibility'],['seg-prec','public_precision']].forEach(function(pair){
+    var box=s.querySelector('#'+pair[0]); if(!box)return;
+    Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(b){
+      b.onclick=async function(){
+        Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(x){x.classList.remove('on');});
+        b.classList.add('on');
+        var body={}; body[pair[1]]=b.dataset.v;
+        await api('/api/me',{method:'PATCH',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+        if(meP&&meP.settings)meP.settings[pair[1]]=b.dataset.v;
+        setTip('設定を保存しました');
+      };
+    });
+  });
+}
+
+/* ============================================================
+   フレンド
+   ============================================================ */
+async function openFriends(){
+  var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
+    '<div style="font-size:19px;font-weight:700;margin-bottom:14px">フレンド</div>'+
+    '<div id="fbody" style="font-size:13px;color:var(--dim)">読み込んでいます…</div>'+
+    '</div>');
+  var body=s.querySelector('#fbody');
+  var r=await api('/api/friends');
+  if(!r.ok){body.textContent='読み込めませんでした';return;}
+  var j=await r.json();
+
+  var html='<div style="display:flex;gap:8px;margin-bottom:6px">'+
+    '<input class="fld" id="f-add" placeholder="相手のID" style="margin:0">'+
+    '<button class="btn" id="b-add" style="width:auto;padding:0 18px;margin:0">申請</button></div>'+
+    '<div style="font-size:11.5px;color:var(--dim);margin-bottom:18px;line-height:1.7">'+
+    'お互いが承認すると、正確な場所つきで思い出が見えるようになります。</div>';
+
+  if((j.incoming||[]).length){
+    html+='<div class="lab">届いている申請</div>';
+    j.incoming.forEach(function(u){
+      html+='<div class="post" style="align-items:center"><div class="av2"></div>'+
+        '<div class="b"><b>'+esc(u.display_name||u.handle||'')+'</b>'+
+        '<span>@'+esc(u.handle||'')+'</span></div>'+
+        '<button class="chip on" data-ok="'+esc(u.id)+'" style="flex:0 0 auto">承認</button></div>';
+    });
   }
-  q.addEventListener('touchstart',function(){t=setTimeout(show,900);},{passive:true});
-  q.addEventListener('touchend',function(){clearTimeout(t);});
-  q.addEventListener('mousedown',function(){t=setTimeout(show,900);});
-  q.addEventListener('mouseup',function(){clearTimeout(t);});
-})();
+
+  html+='<div class="lab" style="margin-top:18px">フレンド '+((j.friends||[]).length)+'人</div>';
+  if((j.friends||[]).length){
+    j.friends.forEach(function(u){
+      html+='<div class="post" style="align-items:center"><div class="av2"></div>'+
+        '<div class="b"><b>'+esc(u.display_name||u.handle||'')+'</b>'+
+        '<span>@'+esc(u.handle||'')+'</span></div></div>';
+    });
+  }else{
+    html+='<div class="empty" style="padding:16px 0">まだいません。<br>'+
+      '相手のIDを入れて申請してみてください。</div>';
+  }
+  html+='<button class="btn g" id="back" style="margin-top:18px">もどる</button>';
+  body.innerHTML=html;
+
+  body.querySelector('#back').onclick=openMe;
+  body.querySelector('#b-add').onclick=async function(){
+    var v=body.querySelector('#f-add').value.trim().replace(/^@/,'');
+    if(!v){setTip('相手のIDを入れてください');return;}
+    var rr=await api('/api/friends/request',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:v})});
+    var jj=await rr.json();
+    if(jj.error){setTip(jj.error);return;}
+    setTip(jj.status==='accepted'?'フレンドになりました':'申請しました');
+    openFriends();
+  };
+  Array.prototype.forEach.call(body.querySelectorAll('[data-ok]'),function(b){
+    b.onclick=async function(){
+      await api('/api/friends/accept',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({user_id:b.dataset.ok})});
+      setTip('フレンドになりました');
+      openFriends(); syncDown();
+    };
+  });
+}
 
 /* ---------- 起動 ---------- */
 (async function(){
