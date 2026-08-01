@@ -173,15 +173,6 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 .pad{padding:0 16px}
 
 /* ---------- 場所の確認 ---------- */
-.photopin{position:relative;cursor:pointer}
-.photopin i{display:block;width:52px;height:52px;border-radius:50%;
-  background-size:cover;background-position:center;background-color:var(--chip);
-  border:3px solid var(--ring);box-shadow:var(--sh)}
-.photopin.mine i{border-color:var(--btn);width:58px;height:58px}
-.photopin::after{content:'';position:absolute;left:50%;bottom:-4px;width:9px;height:9px;
-  background:var(--ring);transform:translateX(-50%) rotate(45deg);border-radius:1px;z-index:-1}
-.photopin.mine::after{background:var(--btn)}
-
 .focus{pointer-events:none}
 .focus i{display:block;width:15px;height:15px;border-radius:50%;background:var(--btn);
   border:3px solid var(--ring);box-shadow:var(--sh)}
@@ -266,7 +257,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v32';
+var BUILD='v33';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -423,6 +414,7 @@ function afterStyle(){
   }
   SPRITE=null;
   Object.keys(ICON_CACHE).forEach(function(k){delete ICON_CACHE[k];});
+  Object.keys(madeIcons).forEach(function(k){delete madeIcons[k];});
   addPlaceLayers();
   render(true);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
@@ -525,7 +517,7 @@ function render(force){
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);});
   var sig=inView.slice(0,14).map(function(o){return o.p.n;}).join(',');
   if(force||sig!==lastSig){ lastSig=sig; drawRail(inView); }
-  drawPhotoPins();
+  refreshPhotoSource();
  }catch(e){ showErr('[render] '+dump(e)); }
 }
 map.on('moveend',function(){render();autoLoad();syncDown();});
@@ -536,6 +528,7 @@ function addPlaceLayers(){
   map.addSource('spot',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('frnd',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('mine',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addSource('photo',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
 
   // まだ思い出のない場所。
   // 地図が元から描いている店（薄い丸に絵）と、大きさも濃さも揃える
@@ -588,7 +581,20 @@ function addPlaceLayers(){
     'text-color':night?'#FFFFFF':'#000000',
     'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.8}});
 
-  ['mine-ring','mine-ic','frnd-ring','frnd-ic','spot-dot','spot-ic'].forEach(function(id){
+  // 写真の丸。地図の中に描くので、ズームしてもずれない
+  map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,layout:{
+    'icon-image':['get','icon'],
+    'icon-size':['interpolate',['linear'],['zoom'],
+       PHOTO_ZOOM,['case',['==',['get','mine'],1],0.44,0.40],
+       19,        ['case',['==',['get','mine'],1],0.60,0.54]],
+    'icon-allow-overlap':true,'icon-anchor':'bottom','icon-offset':[0,6],
+    'text-field':['get','n'],'text-size':11,'text-offset':[0,0.7],'text-anchor':'top',
+    'text-optional':true,'text-max-width':8
+  },paint:{
+    'text-color':night?'#FFFFFF':'#111111',
+    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.7}});
+
+  ['photo-ic','mine-ring','mine-ic','frnd-ring','frnd-ic','spot-dot','spot-ic'].forEach(function(id){
     map.on('click',id,function(e){
       var pr=e.features[0].properties;
       e.originalEvent.__hit=1;
@@ -607,51 +613,90 @@ function addPlaceLayers(){
 
 
 /* ============================================================
-   よく拡大したとき、丸を大きくして写真をはめる
+   写真を地図そのものに描く
 
-   地図の中では画像を扱えないので、ここだけHTMLで重ねる。
-   数を絞れば重くならない。
+   HTMLの要素を重ねると、拡大縮小のあいだ地図と別々に動いてしまう。
+   （地図はcanvasの中で描かれ、HTMLはその外側で追いかけるため）
+
+   そこで写真を丸く切り抜いた画像を作り、地図に登録して使う。
+   地図の記号と同じ扱いになるので、ずれようがない。
    ============================================================ */
-const PHOTO_ZOOM=16.8;      // これ以上に拡大したら写真にする
-let photoMarks={};
+const PHOTO_ZOOM=16.8;         // これ以上寄ったら写真にする
+const madeIcons={};            // 作った画像の名前
+const makingIcons={};          // 作っている途中のもの
 
-function drawPhotoPins(){
- try{
-  var z=map.getZoom();
-  if(z<PHOTO_ZOOM){
-    Object.keys(photoMarks).forEach(function(k){photoMarks[k].remove();});
-    photoMarks={};
-    return;
-  }
-  var b=map.getBounds(), c=map.getCenter();
-  var list=[];
+/** 写真を丸く切り抜いて、地図に登録する */
+function makeRoundIcon(url,mine,key){
+  if(madeIcons[key]||makingIcons[key])return;
+  makingIcons[key]=1;
+  var im=new Image();
+  im.crossOrigin='anonymous';
+  im.onload=function(){
+    try{
+      var S=128, R=S/2, ring=8;
+      var cv=document.createElement('canvas');
+      cv.width=S; cv.height=S;
+      var x=cv.getContext('2d');
+
+      // 縁
+      x.beginPath(); x.arc(R,R,R-1,0,Math.PI*2);
+      x.fillStyle = mine ? (night?'#FAFAFA':'#111111') : (night?'#000000':'#FFFFFF');
+      x.fill();
+
+      // 写真を丸く切り抜いて中に置く
+      x.save();
+      x.beginPath(); x.arc(R,R,R-ring,0,Math.PI*2); x.clip();
+      var s=Math.min(im.width,im.height);
+      x.drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,ring,ring,S-ring*2,S-ring*2);
+      x.restore();
+
+      if(!map.hasImage(key)){
+        map.addImage(key,{width:S,height:S,data:x.getImageData(0,0,S,S).data},{pixelRatio:2});
+      }
+      madeIcons[key]=1;
+      delete makingIcons[key];
+      refreshPhotoSource();
+    }catch(e){ delete makingIcons[key]; }
+  };
+  im.onerror=function(){ delete makingIcons[key]; };
+  im.src=url;
+}
+
+function photoKey(p,mine){
+  // 名前と座標から、重ならない名前をつくる
+  return 'ph_'+(mine?'m':'o')+'_'+
+    String(p.n||'').replace(/[^A-Za-z0-9]/g,'').slice(0,12)+'_'+
+    p.lat.toFixed(5)+'_'+p.lng.toFixed(5);
+}
+
+function photoFeatures(){
+  var out=[];
+  if(map.getZoom()<PHOTO_ZOOM)return out;
+  var b=map.getBounds(), c=map.getCenter(), list=[];
+
   spots.filter(valid).forEach(function(s){
-    if(b.contains([s.lng,s.lat])&&s.photo)list.push({k:'m'+s.id,p:s,mine:true,img:s.photo});
+    if(b.contains([s.lng,s.lat])&&s.photo)list.push({p:s,mine:true,img:s.photo});
   });
   pois.filter(valid).forEach(function(p){
-    if(b.contains([p.lng,p.lat])&&p.photo)list.push({k:'p'+p.n+p.lat.toFixed(5),p:p,mine:false,img:p.photo});
+    if(b.contains([p.lng,p.lat])&&p.photo)list.push({p:p,mine:false,img:p.photo});
   });
-  // 画面の中心に近いものを優先。数を絞って軽さを保つ
   list.sort(function(a,x){
+    if(a.mine!==x.mine)return a.mine?-1:1;
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
   });
-  list=list.slice(0,28);
+  list=list.slice(0,30);
 
-  var keep={};
   list.forEach(function(o){
-    keep[o.k]=1;
-    if(photoMarks[o.k])return;
-    var d=document.createElement('div');
-    d.className='photopin'+(o.mine?' mine':'');
-    d.innerHTML='<i style="background-image:url('+JSON.stringify(o.img)+')"></i>';
-    d.onclick=function(ev){ev.stopPropagation();openPlace(o.p,o.mine);};
-    photoMarks[o.k]=new maplibregl.Marker({element:d,anchor:'bottom'})
-      .setLngLat([o.p.lng,o.p.lat]).addTo(map);
+    var key=photoKey(o.p,o.mine);
+    if(!madeIcons[key]){ makeRoundIcon(o.img,o.mine,key); return; }
+    out.push({type:'Feature',geometry:{type:'Point',coordinates:[o.p.lng,o.p.lat]},
+      properties:{n:o.p.n,mine:o.mine?1:0,icon:key}});
   });
-  Object.keys(photoMarks).forEach(function(k){
-    if(!keep[k]){photoMarks[k].remove();delete photoMarks[k];}
-  });
- }catch(e){}
+  return out;
+}
+function refreshPhotoSource(){
+  if(map.getSource('photo'))
+    map.getSource('photo').setData({type:'FeatureCollection',features:photoFeatures()});
 }
 
 /* ---------- 下のカード ---------- */
