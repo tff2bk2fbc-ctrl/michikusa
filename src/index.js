@@ -46,7 +46,7 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-12",
+          build: "api-13",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
@@ -58,6 +58,7 @@ export default {
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, env));
       if (p === "/api/rakuten")   return cors(await rakuten(url, env));
+      if (p === "/api/img")       return await proxyImage(url);
 
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
@@ -737,4 +738,52 @@ async function rakuten(url, env) {
   });
 
   return json({ count: hotels.length, hotels: hotels });
+}
+
+
+/* ============================================================
+   画像の中継
+
+   よその画像をそのまま Canvas で加工しようとすると、
+   ブラウザが安全のために止めてしまう。
+   一度こちらを通せば自分の画像として扱えるので、加工できる。
+   ============================================================ */
+const IMG_OK = [
+  "img.travel.rakuten.co.jp",
+  "imgfp.hotp.jp",
+  "imgfp.hotp.jp.",
+  "upload.wikimedia.org",
+  "img.hotp.jp"
+];
+
+async function proxyImage(url) {
+  const src = url.searchParams.get("u");
+  if (!src) return new Response("u が必要です", { status: 400 });
+
+  let t;
+  try { t = new URL(src); } catch (e) { return new Response("URLが不正です", { status: 400 }); }
+  if (t.protocol !== "https:") return new Response("https だけです", { status: 400 });
+
+  // 決めた場所からの画像だけ通す（何でも中継すると踏み台にされる）
+  const okHost = IMG_OK.some(function (d) {
+    return t.hostname === d || t.hostname.endsWith("." + d);
+  });
+  if (!okHost) return new Response("その場所は許可していません", { status: 403 });
+
+  const res = await fetch(t.toString(), {
+    cf: { cacheTtl: 86400, cacheEverything: true },
+    headers: { "User-Agent": "michikusa/1.0" }
+  });
+  if (!res.ok) return new Response("取得できません " + res.status, { status: 502 });
+
+  const ct = res.headers.get("Content-Type") || "";
+  if (!ct.startsWith("image/")) return new Response("画像ではありません", { status: 415 });
+
+  return new Response(res.body, {
+    headers: {
+      "Content-Type": ct,
+      "Cache-Control": "public, max-age=604800",
+      "Access-Control-Allow-Origin": "*"
+    }
+  });
 }
