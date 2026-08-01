@@ -213,6 +213,9 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
   <button class="fab" id="btn-loc">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
   </button>
+  <button class="fab" id="btn-bulk" title="カメラロールからまとめて">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 3.5h14v14H7z"/><path d="M17 17.5v3H3v-14h3"/><path d="M7 14l4-3.5 3 2.5 2.5-2 4.5 4"/></svg>
+  </button>
   <button class="fab" id="btn-lib">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.4"/></svg>
   </button>
@@ -232,10 +235,10 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 
 <div class="scrim" id="scrim"></div>
 <input type="file" accept="image/*" capture="environment" hidden id="in-cam">
-<input type="file" accept="image/*" hidden id="in-lib">
+<input type="file" accept="image/*" multiple hidden id="in-lib">
 
 <script>
-var BUILD='v38';
+var BUILD='v40';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -1129,6 +1132,142 @@ document.getElementById('btn-night').onclick=function(){
 /* ============================================================
    記録する
    ============================================================ */
+/* ============================================================
+   カメラロールからまとめて取り込む
+
+   写真には撮った場所と日時が埋まっている。
+   それを読めば、選ぶだけで地図が埋まる。
+   1枚ずつ記録させると続かないので、ここが要になる。
+   ============================================================ */
+function readAsData(file){
+  return new Promise(function(res){
+    var r=new FileReader();
+    r.onload=function(){res(r.result);};
+    r.onerror=function(){res(null);};
+    r.readAsDataURL(file);
+  });
+}
+
+document.getElementById('btn-bulk').onclick=function(){
+  document.getElementById('in-bulk').click();
+};
+
+document.getElementById('in-bulk').onchange=async function(e){
+  var files=Array.prototype.slice.call(e.target.files||[]);
+  e.target.value='';
+  if(!files.length)return;
+  if(typeof exifr==='undefined'){ setTip('写真を読む部品がありません'); return; }
+
+  var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
+    '<div style="font-size:18px;font-weight:700;margin-bottom:6px">写真を読んでいます</div>'+
+    '<div id="bmsg" style="font-size:13px;color:var(--dim);line-height:1.9">'+
+      files.length+' 枚を調べています…</div>'+
+    '<div id="blist" style="margin-top:14px"></div>'+
+    '<div id="bfoot"></div></div>');
+  var msg=s.querySelector('#bmsg'), foot=s.querySelector('#bfoot');
+
+  var found=[], noGeo=0;
+  for(var i=0;i<files.length;i++){
+    msg.textContent=(i+1)+' / '+files.length+' 枚を調べています…';
+    var f=files[i];
+    try{
+      var g=await exifr.gps(f).catch(function(){return null;});
+      if(!g||g.latitude==null){ noGeo++; continue; }
+      var pp=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(function(){return null;});
+      var dt=pp&&(pp.DateTimeOriginal||pp.CreateDate);
+      found.push({file:f,lat:g.latitude,lng:g.longitude,
+        d:dt?new Date(dt).toISOString().slice(0,10):'',
+        at:dt?new Date(dt).getTime():(f.lastModified||Date.now())});
+    }catch(err){ noGeo++; }
+  }
+
+  if(!found.length){
+    msg.innerHTML='位置情報のある写真が見つかりませんでした。<br>'+
+      '<span style="font-size:12px">iPhoneなら「設定 → プライバシーとセキュリティ → '+
+      '位置情報サービス → カメラ」をオンにしてください。</span>';
+    foot.innerHTML='<button class="btn g" id="x" style="margin-top:16px">とじる</button>';
+    foot.querySelector('#x').onclick=closeSheet;
+    return;
+  }
+
+  // 近くて時間も近いものを、ひとつの場所にまとめる
+  found.sort(function(a,b){return a.at-b.at;});
+  var groups=[];
+  found.forEach(function(p){
+    var g=groups[groups.length-1];
+    if(g){
+      var d=Math.hypot((p.lat-g.lat)*111000,(p.lng-g.lng)*91000);
+      var dt=Math.abs(p.at-g.at)/3600000;
+      if(d<120&&dt<3){ g.items.push(p); return; }
+    }
+    groups.push({lat:p.lat,lng:p.lng,at:p.at,d:p.d,items:[p]});
+  });
+
+  msg.innerHTML='<b>'+found.length+' 枚</b>から <b>'+groups.length+' か所</b>が見つかりました。'+
+    (noGeo?('<br><span style="font-size:12px">位置情報のない '+noGeo+' 枚は除きました。</span>'):'');
+
+  var list=s.querySelector('#blist');
+  list.innerHTML='<div style="font-size:12px;color:var(--dim)">場所を調べています…</div>';
+  for(var k=0;k<groups.length;k++){
+    var r=await revGeo(groups[k].lat,groups[k].lng);
+    groups[k].place=r.name;
+    groups[k].name=(r.near&&r.near.n)||r.name;
+    groups[k].cat=(r.near&&r.near.c)||'景';
+  }
+
+  list.innerHTML=groups.map(function(g,i){
+    return '<div class="post" style="align-items:center">'+
+      '<div class="av2" id="bth'+i+'"></div>'+
+      '<div class="b"><b>'+esc(g.name)+'</b>'+
+      '<span>'+esc(g.d||'')+' ・ '+g.items.length+'枚</span></div>'+
+      '<button class="chip on" data-skip="'+i+'" style="flex:0 0 auto">入れる</button></div>';
+  }).join('');
+
+  groups.forEach(function(g,i){
+    var r2=new FileReader();
+    r2.onload=function(){
+      var e2=document.getElementById('bth'+i);
+      if(e2)e2.style.backgroundImage='url('+JSON.stringify(r2.result)+')';
+    };
+    r2.readAsDataURL(g.items[0].file);
+  });
+
+  var skip={};
+  Array.prototype.forEach.call(list.querySelectorAll('[data-skip]'),function(b){
+    b.onclick=function(){
+      var i=b.dataset.skip;
+      skip[i]=!skip[i];
+      b.classList.toggle('on',!skip[i]);
+      b.textContent=skip[i]?'入れない':'入れる';
+    };
+  });
+
+  foot.innerHTML='<button class="btn" id="go" style="margin-top:16px">'+
+      'この '+groups.length+' か所を地図に置く</button>'+
+    '<button class="btn g" id="x" style="margin-top:8px">やめる</button>';
+  foot.querySelector('#x').onclick=closeSheet;
+
+  foot.querySelector('#go').onclick=async function(){
+    var btn=this; btn.disabled=true;
+    var use=groups.filter(function(g,i){return !skip[i];});
+    var done=0;
+    for(var i=0;i<use.length;i++){
+      var g=use[i];
+      btn.textContent=(i+1)+' / '+use.length+' を置いています…';
+      var url=await readAsData(g.items[0].file);
+      var rec={id:nid(),n:g.name,c:g.cat,lat:g.lat,lng:g.lng,place:g.place||'',
+        tag:'',d:g.d||new Date(g.at).toISOString().slice(0,10),photo:url||''};
+      spots.push(rec);
+      await dbPut('spots',rec);
+      if(fbUser) pushOne(rec);
+      done++;
+    }
+    closeSheet(); render(true);
+    setTip(done+' か所を地図に置きました');
+    if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
+  };
+};
+
 function openAdd(p){
   var cat=p.cat||CATS[0];
   var html='<div class="grab"></div><div class="pad" style="padding-top:16px">'+
