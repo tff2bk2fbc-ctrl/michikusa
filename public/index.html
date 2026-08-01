@@ -232,6 +232,9 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
   <button class="fab" id="btn-3d">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2.8L3 7.4v9.2l9 4.6 9-4.6V7.4z"/><path d="M3 7.4l9 4.6 9-4.6M12 12v9.2"/></svg>
   </button>
+  <button class="fab" id="btn-reload" title="この辺りを読み込む">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v6M8.5 7.5L12 4l3.5 3.5"/><path d="M4.5 12a7.5 7.5 0 1 0 3-6"/></svg>
+  </button>
   <button class="fab" id="btn-loc">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
   </button>
@@ -257,7 +260,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v35';
+var BUILD='v36';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -417,6 +420,7 @@ function afterStyle(){
   Object.keys(madeIcons).forEach(function(k){delete madeIcons[k];});
   addPlaceLayers();
   render(true);
+  setTimeout(function(){ autoLoad(true); },400);   // 開いた時点で一度読む
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
 
@@ -963,19 +967,32 @@ const TAGS=[['amenity','public_bath','湯'],['shop','bakery','喫茶'],['shop','
   ['leisure','park','園'],['amenity','place_of_worship','社'],
   ['tourism','attraction','景'],['tourism','viewpoint','景'],['tourism','museum','景']];
 const OVER=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
-let busy=false; const cells={};
+let busy=false;
+const cells={};
+let loadLog={run:0,hp:0,wiki:0,rk:0,err:''};
 
-async function autoLoad(){
+/* この辺りのデータを取りに行く。
+   同じところを何度も叩かないよう、約1km四方の区画で覚えておく */
+async function autoLoad(force){
   try{
     if(busy||placing)return;
-    if(map.getZoom()<15)return;
-    var c=map.getCenter(),cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
-    if(cells[cell])return; cells[cell]=1; busy=true;
-    var n=await loadHP(); var w=await loadWiki(); var rk=await loadRakuten();
+    if(map.getZoom()<14.5)return;
+    var c=map.getCenter(), cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
+    if(!force&&cells[cell])return;
+    cells[cell]=1; busy=true; loadLog.run++;
+
+    var n=await loadHP();
+    var w=await loadWiki();
+    var rk=await loadRakuten();
+    loadLog.hp+=n; loadLog.wiki+=w; loadLog.rk+=rk;
+
     var t=n+w+rk;
-    if(t){render(true);setTip('この辺りを '+t+' 件 読み込みました');}
-  }catch(e){}finally{busy=false;}
+    if(t){ render(true); setTip('この辺りを '+t+' 件 読み込みました'); }
+    else if(force){ setTip('この辺りには見つかりませんでした'); }
+  }catch(e){ loadLog.err=String(e&&e.message||e); }
+  finally{ busy=false; }
 }
+
 function dedupe(){var s={};pois.forEach(function(p){s[p.n+p.lat.toFixed(4)]=1;});return s;}
 
 async function loadHP(){
@@ -1140,6 +1157,10 @@ function shrink(file,cb){
 }
 
 const GERR={1:'許可されていません',2:'位置を特定できません（屋内など）',3:'時間内に取得できませんでした'};
+document.getElementById('btn-reload').onclick=function(){
+  setTip('この辺りを読み込んでいます…');
+  autoLoad(true);
+};
 document.getElementById('btn-loc').onclick=function(){
   var btn=this;
   if(!navigator.geolocation){setTip('この端末では取得できません');return;}
@@ -1602,7 +1623,11 @@ function showDiag(){
       '<div style="font-size:13px;line-height:2.1;margin-bottom:14px">'+
         'BUILD '+BUILD+'<br>'+
         'ズーム <b>'+map.getZoom().toFixed(2)+'</b>（写真は '+PHOTO_ZOOM+' 以上）<br>'+
-        '思い出 '+spots.length+' 件／読み込んだ場所 '+pois.length+' 件<br>'+
+        '思い出 '+spots.length+' 件／読み込んだ場所 <b>'+pois.length+'</b> 件<br>'+
+        '取得：実行 '+loadLog.run+' 回／飲食 '+loadLog.hp+'／名所 '+loadLog.wiki+
+          '／宿 '+loadLog.rk+
+        (loadLog.err?('<br><span style="color:var(--warn)">取得エラー：'+
+          esc(loadLog.err)+'</span>'):'')+'<br>'+
         '写真つきの場所 <b>'+withPhoto+'</b> 件<br>'+
         '写真の丸：作成 <b>'+photoDiag.try+'</b>／成功 <b>'+photoDiag.ok+'</b>'+
           '／読込失敗 <b>'+photoDiag.ngLoad+'</b>／登録失敗 <b>'+photoDiag.ngAdd+'</b>'+
