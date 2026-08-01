@@ -230,7 +230,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v22';
+var BUILD='v24';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -248,11 +248,12 @@ if(typeof maplibregl==='undefined'){ showErr('地図の読み込みに失敗し�
 else{ try{
 
 const STYLE='https://tiles.openfreemap.org/styles/liberty';
-const CATS=['喫茶','食','酒','湯','社','園','景','本'];
+const CATS=['喫茶','食','酒','湯','宿','社','園','景','本'];
 const ASK={'喫茶':['何を飲んだ / 食べた？','クリームソーダ'],'食':['何を食べた？','味玉らーめん'],
   '酒':['何を飲んだ？','レモンサワー'],'湯':['ひとこと','外気浴の椅子が最高'],
   '社':['どう撮った？','夕方、参道から'],'園':['どう撮った？','桜、朝いちばん'],
-  '景':['どう撮った？','対岸から、日没20分前'],'本':['ひとこと','2階の奥がいい']};
+  '景':['どう撮った？','対岸から、日没20分前'],'本':['ひとこと','2階の奥がいい'],
+  '宿':['どんな宿だった？','露天風呂つき／朝ごはんが良い']};
 function ask(c){return ASK[c]||['ひとこと',''];}
 const HP_CAT={G001:'酒',G002:'酒',G011:'酒',G012:'酒',G014:'喫茶'};
 
@@ -384,6 +385,8 @@ function afterStyle(){
       }catch(e){}
     }
   }
+  SPRITE=null;
+  Object.keys(ICON_CACHE).forEach(function(k){delete ICON_CACHE[k];});
   addPlaceLayers();
   render(true);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
@@ -422,24 +425,42 @@ const ICON_ALT={
   '社'  :['place_of_worship','shinto','buddhist','monument'],
   '園'  :['park','garden','tree','forest'],
   '景'  :['attraction','viewpoint','monument','museum'],
-  '本'  :['library','books','shop']
+  '本'  :['library','books','shop'],
+  '宿'  :['lodging','hotel','hostel','shelter']
 };
-let iconOK=null;
-function pickIcon(cat){
-  if(!iconOK){
-    iconOK={};
-    try{
-      var st=map.getStyle();
-      var sp=(st&&st.sprite)||'';
-      // 使える絵は map.hasImage で確かめる
-    }catch(e){}
-  }
-  var list=ICON_ALT[cat]||ICON_ALT['景'];
-  for(var i=0;i<list.length;i++){
-    if(map.hasImage&&map.hasImage(list[i]))return list[i];
-    if(map.hasImage&&map.hasImage(list[i]+'_11'))return list[i]+'_11';
+/* 地図が実際に持っている絵の名前を調べる。
+   名前は地図の作り手が決めるので、こちらで決め打ちにすると外れる */
+let SPRITE=null;
+function scanSprite(){
+  SPRITE={};
+  try{
+    // MapLibre が読み込み済みの絵の名前を全部もらう
+    var names=(map.style&&map.style.imageManager&&map.style.imageManager.images)
+      ? Object.keys(map.style.imageManager.images) : [];
+    if(!names.length&&map.listImages) names=map.listImages();
+    names.forEach(function(n){ SPRITE[n]=1; });
+  }catch(e){}
+  return SPRITE;
+}
+function findIcon(words){
+  if(!SPRITE)scanSprite();
+  var keys=Object.keys(SPRITE);
+  for(var i=0;i<words.length;i++){
+    var w=words[i];
+    if(SPRITE[w])return w;
+    // 部分一致（cafe_11 / cafe-15 などに対応）
+    for(var k=0;k<keys.length;k++){
+      if(keys[k].indexOf(w)===0)return keys[k];
+    }
   }
   return '';
+}
+const ICON_CACHE={};
+function pickIcon(cat){
+  if(ICON_CACHE[cat]!==undefined)return ICON_CACHE[cat];
+  var v=findIcon(ICON_ALT[cat]||ICON_ALT['景']);
+  ICON_CACHE[cat]=v;
+  return v;
 }
 
 function fcOf(list,mine){
@@ -739,8 +760,9 @@ async function autoLoad(){
     if(map.getZoom()<15)return;
     var c=map.getCenter(),cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
     if(cells[cell])return; cells[cell]=1; busy=true;
-    var n=await loadHP(); var w=await loadWiki();
-    if(n+w){render(true);setTip('この辺りを '+(n+w)+' 件 読み込みました');}
+    var n=await loadHP(); var w=await loadWiki(); var rk=await loadRakuten();
+    var t=n+w+rk;
+    if(t){render(true);setTip('この辺りを '+t+' 件 読み込みました');}
   }catch(e){}finally{busy=false;}
 }
 function dedupe(){var s={};pois.forEach(function(p){s[p.n+p.lat.toFixed(4)]=1;});return s;}
@@ -781,6 +803,25 @@ async function loadWiki(){
       var key=p.title+Number(co.lat).toFixed(4); if(seen[key])return; seen[key]=1;
       pois.push({n:p.title,c:wikiCat(p.title+ds),lat:Number(co.lat),lng:Number(co.lon),
         gname:ds,photo:p.thumbnail?p.thumbnail.source:'',src:'wiki'});n++;});
+    return n;
+  }catch(e){return 0;}
+}
+
+
+/* 楽天トラベルの宿 */
+async function loadRakuten(){
+  try{
+    var c=map.getCenter(),b=map.getBounds();
+    var km=Math.min(3,Math.max(0.3,Math.abs(b.getNorth()-c.lat)*111));
+    var r=await fetch('/api/rakuten?lat='+c.lat+'&lng='+c.lng+'&km='+km.toFixed(1));
+    var j=await r.json(); if(j.error)return 0;
+    var seen=dedupe(),n=0;
+    (j.hotels||[]).forEach(function(x){
+      if(!isFinite(x.lat)||!isFinite(x.lng))return;
+      var k=x.n+x.lat.toFixed(4); if(seen[k])return; seen[k]=1;
+      pois.push({n:x.n,c:'宿',lat:x.lat,lng:x.lng,
+        gname:x.min?('1泊 '+Number(x.min).toLocaleString()+'円〜'):'宿',
+        photo:x.photo||'',addr:x.addr||'',src:'rk'});n++;});
     return n;
   }catch(e){return 0;}
 }
@@ -1014,6 +1055,32 @@ document.getElementById('btn-me').onclick=function(){
   var o=s.querySelector('#out');
   if(o)o.onclick=function(){firebase.auth().signOut();closeSheet();setTip('ログアウトしました');};
 };
+
+
+/* 診断：地図が持っている絵の名前を確かめる。
+   検索窓を長押しすると出る */
+(function(){
+  var q=document.getElementById('q'), t=null;
+  function show(){
+    scanSprite();
+    var all=Object.keys(SPRITE||{}).sort();
+    var picks=CATS.map(function(c){return c+' → '+(pickIcon(c)||'（無し）');}).join('<br>');
+    var list=all.slice(0,300).join(', ');
+    showSheet('<div class="grab"></div><div class="pad" style="padding-top:16px">'+
+      '<div style="font-size:17px;font-weight:700;margin-bottom:10px">診断</div>'+
+      '<div style="font-size:12.5px;line-height:1.9;margin-bottom:14px">'+
+      'BUILD '+BUILD+'<br>絵の総数 '+all.length+'</div>'+
+      '<div style="font-size:12.5px;line-height:2;margin-bottom:14px">'+picks+'</div>'+
+      '<div style="font-size:10px;line-height:1.7;color:var(--dim);word-break:break-all;'+
+      'max-height:34vh;overflow:auto">'+esc(list)+'</div>'+
+      '<button class="btn g" id="x" style="margin-top:14px">とじる</button></div>')
+      .querySelector('#x').onclick=closeSheet;
+  }
+  q.addEventListener('touchstart',function(){t=setTimeout(show,900);},{passive:true});
+  q.addEventListener('touchend',function(){clearTimeout(t);});
+  q.addEventListener('mousedown',function(){t=setTimeout(show,900);});
+  q.addEventListener('mouseup',function(){clearTimeout(t);});
+})();
 
 /* ---------- 起動 ---------- */
 (async function(){
