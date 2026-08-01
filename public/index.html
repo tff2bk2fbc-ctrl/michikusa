@@ -257,7 +257,7 @@ body.placing .rail,body.placing .fabs,body.placing .tip,body.placing .top{displa
 <input type="file" accept="image/*" hidden id="in-lib">
 
 <script>
-var BUILD='v34';
+var BUILD='v35';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -1584,6 +1584,48 @@ async function openFriends(){
   pull.addEventListener('click',function(){ setFabs(false); });
   // パソコンでも戻せるように
   pull.addEventListener('mousedown',function(){ setFabs(false); });
+})();
+
+/* ============================================================
+   診断画面
+   ・URL の末尾に ?diag=1 を付けると出る
+   ・画面の左上を3回続けて叩いても出る
+   ============================================================ */
+function showDiag(){
+  try{
+    var all=[]; try{ scanSprite(); all=Object.keys(SPRITE||{}).sort(); }catch(e){}
+    var picks=CATS.map(function(c){return c+' → '+(pickIcon(c)||'（無し）');}).join('<br>');
+    var withPhoto=spots.filter(function(s){return s.photo;}).length+
+                  pois.filter(function(p){return p.photo;}).length;
+    var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:16px">'+
+      '<div style="font-size:17px;font-weight:700;margin-bottom:12px">診断</div>'+
+      '<div style="font-size:13px;line-height:2.1;margin-bottom:14px">'+
+        'BUILD '+BUILD+'<br>'+
+        'ズーム <b>'+map.getZoom().toFixed(2)+'</b>（写真は '+PHOTO_ZOOM+' 以上）<br>'+
+        '思い出 '+spots.length+' 件／読み込んだ場所 '+pois.length+' 件<br>'+
+        '写真つきの場所 <b>'+withPhoto+'</b> 件<br>'+
+        '写真の丸：作成 <b>'+photoDiag.try+'</b>／成功 <b>'+photoDiag.ok+'</b>'+
+          '／読込失敗 <b>'+photoDiag.ngLoad+'</b>／登録失敗 <b>'+photoDiag.ngAdd+'</b>'+
+        (photoDiag.last?('<br><span style="color:var(--warn)">直近のエラー：'+
+          esc(photoDiag.last)+'</span>'):'')+
+        '<br>地図の絵の総数 '+all.length+
+      '</div>'+
+      '<div style="font-size:12.5px;line-height:2;margin-bottom:14px">'+picks+'</div>'+
+      '<button class="btn g" id="x">とじる</button></div>');
+    s.querySelector('#x').onclick=closeSheet;
+  }catch(e){ showErr('[diag] '+dump(e)); }
+}
+if(location.search.indexOf('diag=1')>=0) setTimeout(showDiag,1500);
+
+(function(){
+  var n=0,t=0;
+  document.addEventListener('click',function(e){
+    if(e.clientY>150||e.clientX>130){n=0;return;}
+    var now=Date.now();
+    if(now-t>900)n=0;
+    t=now; n++;
+    if(n>=3){n=0;showDiag();}
+  },true);
 })();
 
 /* ---------- 起動 ---------- */
