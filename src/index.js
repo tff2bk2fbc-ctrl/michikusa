@@ -46,7 +46,7 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-9",
+          build: "api-12",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
