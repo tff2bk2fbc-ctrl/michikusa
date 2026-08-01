@@ -46,10 +46,11 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-7",
+          build: "api-8",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
+          hasRakutenKey: !!(await cfg(env, "rakuten_key")),
           hasDB: !!env.DB,
           hasR2: !!env.PHOTOS,
           firebase: env.FIREBASE_PROJECT_ID || null
@@ -653,17 +654,21 @@ function cors(res) {
    アプリIDは D1 の app_config に入れる。
    応答に含めないので、外には出ない。
    ============================================================ */
-const RK = "https://app.rakuten.co.jp/services/api/Travel/SimpleHotelSearch/20170426";
+/* 2026年2月の刷新で、ドメイン・パス・認証方式がすべて変わった。
+   旧 app.rakuten.co.jp は5月14日に停止済み。
+   新方式では applicationId に加えて accessKey がヘッダーで必須。 */
+const RK = "https://openapi.rakuten.co.jp/engine/api/Travel/SimpleHotelSearch/20260731";
 
 async function rakuten(url, env) {
   const id = await cfg(env, "rakuten_id");
-  if (!id) return json({ error: "楽天のアプリIDが未設定です" }, 500);
+  const ak = await cfg(env, "rakuten_key");
+  if (!id) return json({ error: "楽天のアプリケーションIDが未設定です" }, 500);
+  if (!ak) return json({ error: "楽天のアクセスキーが未設定です（rakuten_key）" }, 500);
 
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
   if (!isFinite(lat) || !isFinite(lng)) return json({ error: "lat / lng が必要です" }, 400);
 
-  // searchRadius は 0.1〜3.0 km。小数第1位まで
   let km = Number(url.searchParams.get("km") || 3);
   if (!isFinite(km)) km = 3;
   km = Math.min(3, Math.max(0.1, Math.round(km * 10) / 10));
@@ -671,7 +676,7 @@ async function rakuten(url, env) {
   const api = new URL(RK);
   api.searchParams.set("applicationId", String(id).trim());
   api.searchParams.set("format", "json");
-  api.searchParams.set("datumType", "1");                 // 1 = 世界測地系（度）
+  api.searchParams.set("datumType", "1");            // 1 = 世界測地系（度）
   api.searchParams.set("latitude", lat.toFixed(6));
   api.searchParams.set("longitude", lng.toFixed(6));
   api.searchParams.set("searchRadius", km.toFixed(1));
@@ -679,7 +684,10 @@ async function rakuten(url, env) {
 
   const res = await fetch(api.toString(), {
     cf: { cacheTtl: 3600 },
-    headers: { "User-Agent": "michikusa/1.0" }
+    headers: {
+      "accessKey": String(ak).trim(),        // 新方式で必須
+      "User-Agent": "michikusa/1.0"
+    }
   });
 
   const text = await res.text();
@@ -687,16 +695,12 @@ async function rakuten(url, env) {
   try { body = JSON.parse(text); } catch (e) {}
 
   if (!res.ok) {
-    // 楽天は該当なしのときも 404 を返す
-    if (res.status === 404) return json({ count: 0, hotels: [] });
+    if (res.status === 404) return json({ count: 0, hotels: [] });   // 該当なし
     return json({
       error: "楽天トラベル HTTP " + res.status,
-      detail: body ? (body.error_description || body.error) : text.slice(0, 300),
-      // 診断用。アプリIDは伏せる
-      sent: { lat: lat.toFixed(6), lng: lng.toFixed(6), km: km.toFixed(1) }
+      detail: body ? (body.error_description || body.error) : text.slice(0, 300)
     }, 502);
   }
-
   if (body && body.error) {
     return json({ error: "楽天: " + (body.error_description || body.error) }, 502);
   }
@@ -714,8 +718,7 @@ async function rakuten(url, env) {
     hotels.push({
       id: String(info.hotelNo || ""),
       n: info.hotelName || "",
-      lat: la,
-      lng: ln,
+      lat: la, lng: ln,
       addr: [info.address1, info.address2].filter(Boolean).join(""),
       photo: info.hotelImageUrl || info.hotelThumbnailUrl || "",
       min: info.hotelMinCharge || null,
