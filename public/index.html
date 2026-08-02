@@ -18,9 +18,9 @@ body{--bg:#EFEDE8;--sf:#FFFFFF;--ink:#111111;--dim:#787878;--line:#E6E4E0;
   --sh:0 2px 10px rgba(0,0,0,.14);--sh2:0 -4px 26px rgba(0,0,0,.12);
   background:var(--bg);color:var(--ink);transition:background .4s,color .4s}
 /* 夜 */
-body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
-  --ring:#000000;--chip:#262626;--btn:#FAFAFA;--btnink:#000000;--warn:#FF6B60;
-  --sh:0 2px 10px rgba(0,0,0,.6);--sh2:0 -4px 30px rgba(0,0,0,.6)}
+body.dark{--bg:#1E2A29;--sf:#26332F;--ink:#F0F4F2;--dim:#9DAAA6;--line:#38443F;
+  --ring:#1E2A29;--chip:#36443F;--btn:#F0F4F2;--btnink:#1E2A29;--warn:#FF6B60;
+  --sh:0 2px 12px rgba(0,0,0,.55);--sh2:0 -4px 30px rgba(0,0,0,.55)}
 
 #map{position:fixed;inset:0}
 
@@ -275,7 +275,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v52';
+var BUILD='v53';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -368,54 +368,103 @@ function dbAll(s){return new Promise(function(r){if(!db)return r([]);
   try{var q=tx(s,'readonly').getAll();q.onsuccess=function(){r(q.result||[]);};q.onerror=function(){r([]);};}catch(e){r([]);}});}
 
 /* ============================================================
-   地図の色を作り替える
-   昼＝彩度を落として明るく（写真が主役になるよう地図を静かに）
-   夜＝明暗を反転して暗く
+   地図の配色
+
+   これまでは元の色を計算でずらしていたが、
+   夜に道路が背景へ沈んでしまう問題があった。
+   Apple Maps は夜でも道路が背景より明るい。そこが読みやすさの要。
+
+   そこで計算をやめ、地図の部品ごとに色を割り当てる方式にする。
    ============================================================ */
-function pc(c){
-  if(typeof c!=='string')return null;
-  var s=c.trim(),m=s.match(/^#([0-9a-f]{3,8})$/i);
-  if(m){var x=m[1];
-    if(x.length===3)x=x[0]+x[0]+x[1]+x[1]+x[2]+x[2];
-    if(x.length===6)x+='ff'; if(x.length!==8)return null;
-    return [parseInt(x.slice(0,2),16),parseInt(x.slice(2,4),16),
-            parseInt(x.slice(4,6),16),parseInt(x.slice(6,8),16)/255];}
-  m=s.match(/^rgba?\(([^)]+)\)$/i);
-  if(m){var p=m[1].split(',').map(parseFloat);
-    if(p.length<3)return null;return [p[0],p[1],p[2],p.length>3?p[3]:1];}
+const PALETTE={
+  night:{
+    land:      '#2C3B3B',   // 陸。黒ではなく、緑がかった暗いグレー
+    water:     '#1B3A6B',   // 水。しっかり青を残す
+    green:     '#28402F',   // 公園・林
+    road:      '#6E7C82',   // 大きな道。背景より明るくする
+    roadMinor: '#4E5C62',   // 細い道
+    roadCase:  '#22302F',   // 道のふち
+    rail:      '#3F4C52',
+    building:  '#33443F',
+    text:      '#E8EDEA',
+    textSub:   '#A8B6B2',
+    halo:      '#1E2A29',
+    border:    '#4A5A58'
+  },
+  day:{
+    land:      '#F2F0EA',
+    water:     '#A9CBE8',
+    green:     '#D6E4CE',
+    road:      '#FFFFFF',
+    roadMinor: '#FFFFFF',
+    roadCase:  '#E0DDD5',
+    rail:      '#D8D4CB',
+    building:  '#E6E2D9',
+    text:      '#3A3A38',
+    textSub:   '#7A7A76',
+    halo:      '#FFFFFF',
+    border:    '#D2CEC4'
+  }
+};
+
+/* 地図の部品の名前から、どの役割かを見分ける */
+function roleOf(L){
+  var id=(L.id||'').toLowerCase();
+  var sl=(L['source-layer']||'').toLowerCase();
+
+  if(L.type==='background')                       return 'land';
+  if(/water|ocean|sea|lake|river/.test(id+sl))    return 'water';
+  if(/park|wood|forest|grass|green|golf|cemetery|pitch/.test(id+sl)) return 'green';
+  if(/building/.test(id+sl))                      return 'building';
+  if(/rail|transit|aeroway/.test(id+sl))          return 'rail';
+  if(/boundary|admin/.test(id+sl))                return 'border';
+  if(/tunnel|bridge|road|highway|street|path|transportation/.test(id+sl)){
+    if(/case|outline|casing/.test(id))            return 'roadCase';
+    if(/motorway|trunk|primary|secondary/.test(id)) return 'road';
+    return 'roadMinor';
+  }
+  if(/landuse|landcover|earth|land/.test(id+sl))  return 'land';
   return null;
 }
-function hsl(r,g,b){r/=255;g/=255;b/=255;
-  var mx=Math.max(r,g,b),mn=Math.min(r,g,b),h=0,s=0,l=(mx+mn)/2,d=mx-mn;
-  if(d){s=l>.5?d/(2-mx-mn):d/(mx+mn);
-    h=mx===r?((g-b)/d+(g<b?6:0)):mx===g?((b-r)/d+2):((r-g)/d+4);h*=60;}
-  return [h,s,l];}
-function shift(c,kind){
-  var g=pc(c); if(!g)return c;
-  var a=hsl(g[0],g[1],g[2]),H=a[0],S=a[1],L=a[2],A=g[3],S2,L2;
-  if(night){
-    if(kind==='text'){L2=0.95-L*0.32;S2=Math.min(S,.2);}
-    else if(kind==='halo'){L2=0.02;S2=Math.min(S,.2);}
-    else{L2=0.04+(1-L)*0.22;S2=S*0.45;}
-  }else{
-    if(kind==='text'){L2=Math.min(L,.34);S2=S*0.2;}
-    else if(kind==='halo'){L2=0.99;S2=0;}
-    else{L2=0.74+L*0.24;S2=S*0.22;}
-  }
-  return 'hsla('+H.toFixed(0)+','+(S2*100).toFixed(0)+'%,'+(L2*100).toFixed(0)+'%,'+A+')';
-}
-function walk(v,k){if(typeof v==='string')return shift(v,k);
-  if(Array.isArray(v))return v.map(function(x){return walk(x,k);});return v;}
+
 function retint(st){
+  var C=PALETTE[night?'night':'day'];
   var s=JSON.parse(JSON.stringify(st));
+
   (s.layers||[]).forEach(function(L){
-    if(!L.paint)return;
-    Object.keys(L.paint).forEach(function(k){
-      if(!/color/i.test(k))return;
-      var kind=(k==='text-color'||k==='icon-color')?'text':(/halo/.test(k)?'halo':'fill');
-      L.paint[k]=walk(L.paint[k],kind);
-    });
+    if(!L.paint)L.paint={};
+
+    if(L.type==='symbol'){
+      // 文字は、地名の大きさで濃さを変える
+      var big=/place|city|town|country|state/.test((L.id||'')+(L['source-layer']||''));
+      L.paint['text-color']=big?C.text:C.textSub;
+      L.paint['text-halo-color']=C.halo;
+      L.paint['text-halo-width']=1.6;
+      return;
+    }
+
+    var role=roleOf(L);
+    if(!role)return;
+    var col=C[role];
+
+    if(L.type==='background') L.paint['background-color']=col;
+    if(L.type==='fill'){
+      L.paint['fill-color']=col;
+      if('fill-outline-color' in L.paint) L.paint['fill-outline-color']=C.roadCase;
+    }
+    if(L.type==='line'){
+      L.paint['line-color']=col;
+      // 夜は道路をわずかに太くする。細いと背景に沈んで見えなくなる
+      if(night && (role==='road'||role==='roadMinor') && L.paint['line-width']!==undefined){
+        var w=L.paint['line-width'];
+        if(typeof w==='number') L.paint['line-width']=w*1.25;
+        else if(Array.isArray(w)) L.paint['line-width']=['*',w,1.25];
+      }
+      if(night && role==='road') L.paint['line-opacity']=1;
+    }
+    if(L.type==='fill-extrusion') L.paint['fill-extrusion-color']=C.building;
   });
+
   return s;
 }
 
@@ -466,10 +515,10 @@ function afterStyle(){
       try{
         map.addLayer({id:'bld3d',type:'fill-extrusion',source:src,'source-layer':'building',
           minzoom:14,paint:{
-            'fill-extrusion-color':night?'#1C1C1C':'#E4E1DB',
+            'fill-extrusion-color':night?'#33443F':'#E6E2D9',
             'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],6],
             'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
-            'fill-extrusion-opacity':night?0.85:0.9}},firstSym);
+            'fill-extrusion-opacity':night?0.72:0.88}},firstSym);
       }catch(e){}
     }
   }
@@ -588,8 +637,8 @@ function addPlaceLayers(){
   // 地図が元から描いている店とまったく同じ大きさ・濃さにする
   map.addLayer({id:'spot-dot',type:'circle',source:'spot',minzoom:14,paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
-    'circle-color':night?'#242424':'#E9E6E0',
-    'circle-stroke-width':0,'circle-opacity':.92}});
+    'circle-color':night?'#44544F':'#E9E6E0',
+    'circle-stroke-width':0,'circle-opacity':.95}});
   map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],14,.55,17,.72],
@@ -623,7 +672,7 @@ function addPlaceLayers(){
   map.addLayer({id:'mine-ring',type:'circle',source:'mine',paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],12,5,15,8,18,11],
     'circle-color':night?'#FAFAFA':'#111111',
-    'circle-stroke-color':night?'#000000':'#FFFFFF','circle-stroke-width':2.4}});
+    'circle-stroke-color':night?'#1E2A29':'#FFFFFF','circle-stroke-width':2.4}});
   map.addLayer({id:'mine-ic',type:'symbol',source:'mine',minzoom:13.5,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],13.5,.85,17,1.15],
@@ -632,7 +681,7 @@ function addPlaceLayers(){
     'text-optional':true,'text-max-width':9
   },paint:{
     'text-color':night?'#FFFFFF':'#000000',
-    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.8}});
+    'text-halo-color':night?'#1E2A29':'#FFFFFF','text-halo-width':1.8}});
 
   // 写真の丸。地図の中に描くので、ズームしてもずれない
   map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,layout:{
