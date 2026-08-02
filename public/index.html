@@ -239,7 +239,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v44';
+var BUILD='v45';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -251,6 +251,25 @@ window.addEventListener('unhandledrejection',function(e){showErr('[promise] '+du
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+<script>
+/* 1つ目が届かなかったときの控え。順に試す */
+(function(){
+  if(typeof QRCode!=='undefined')return;
+  var list=[
+    'https://unpkg.com/qrcode@1.5.4/build/qrcode.min.js',
+    'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'
+  ];
+  var i=0;
+  (function next(){
+    if(i>=list.length||typeof QRCode!=='undefined')return;
+    var s=document.createElement('script');
+    s.src=list[i++];
+    s.onload=function(){ if(typeof QRCode==='undefined')next(); };
+    s.onerror=next;
+    document.head.appendChild(s);
+  })();
+})();
+</script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script>
@@ -1566,25 +1585,52 @@ function openMe(){
 
 /* --- 作る側 ---
    規格どおりのQRには誤り訂正が要る。自前で書くと読めないものができるので、
-   実績のある部品に任せる。 */
+   実績のある部品に任せる。届かない場合は、外の画像づくりに頼る。 */
 function qrInto(el2,text,px){
-  if(typeof QRCode==='undefined'){
-    el2.innerHTML='<div style="font-size:12px;color:var(--dim)">'+
-      'QRの部品を読み込めませんでした</div>';
-    return;
+  el2.innerHTML='<div style="font-size:12px;color:var(--dim)">QRを作っています…</div>';
+
+  function byLib(){
+    try{
+      if(typeof QRCode==='undefined')return false;
+      var cv=document.createElement('canvas');
+      // 版によって呼び方が違うので、両方試す
+      if(QRCode.toCanvas){
+        el2.innerHTML=''; el2.appendChild(cv);
+        QRCode.toCanvas(cv,text,{width:px,margin:2,errorCorrectionLevel:'M',
+          color:{dark:'#000000',light:'#FFFFFF'}},function(err){
+          if(err){ byImage(); return; }
+          cv.style.borderRadius='10px'; cv.style.display='block';
+        });
+        return true;
+      }
+      if(QRCode.toDataURL){
+        QRCode.toDataURL(text,{width:px,margin:2},function(err,url){
+          if(err){ byImage(); return; }
+          el2.innerHTML='<img src="'+url+'" width="'+px+'" height="'+px+
+            '" style="border-radius:10px;display:block">';
+        });
+        return true;
+      }
+      return false;
+    }catch(e){ return false; }
   }
-  var cv=document.createElement('canvas');
-  el2.innerHTML='';
-  el2.appendChild(cv);
-  QRCode.toCanvas(cv,text,{
-    width:px, margin:2,
-    errorCorrectionLevel:'M',
-    color:{dark:'#000000',light:'#FFFFFF'}
-  },function(err){
-    if(err) el2.innerHTML='<div style="font-size:12px;color:var(--dim)">'+
-      'QRを作れませんでした</div>';
-    else { cv.style.borderRadius='10px'; cv.style.display='block'; }
-  });
+
+  // 部品が無いときは、画像として作ってもらう
+  function byImage(){
+    var u='https://api.qrserver.com/v1/create-qr-code/?size='+px+'x'+px+
+      '&margin=8&data='+encodeURIComponent(text);
+    var im=new Image();
+    im.width=px; im.height=px;
+    im.style.cssText='border-radius:10px;display:block;background:#fff';
+    im.onload=function(){ el2.innerHTML=''; el2.appendChild(im); };
+    im.onerror=function(){
+      el2.innerHTML='<div style="font-size:12px;color:var(--dim);line-height:1.8">'+
+        'QRを作れませんでした。<br>下のIDを直接入れてもらってください。</div>';
+    };
+    im.src=u;
+  }
+
+  if(!byLib()) byImage();
 }
 
 /* --- 見せる --- */
