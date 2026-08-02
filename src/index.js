@@ -46,7 +46,7 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-15",
+          build: "api-16",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
@@ -60,6 +60,7 @@ export default {
       if (p === "/api/hotpepper") return cors(await hotpepper(url, env));
       if (p === "/api/rakuten")   return cors(await rakuten(url, env));
       if (p === "/api/gsearch")   return cors(await gsearch(url, env));
+      if (p === "/api/places")    return cors(await nearbyPlaces(url, env));
       if (p === "/api/img")       return await proxyImage(url);
 
       // ---- ここから先はログインが必要 ----
@@ -643,6 +644,12 @@ async function hotpepper(url, env) {
     }
     if (list.length < 100 || shops.length >= available) break;
   }
+  // 取ってきたものは、こちらにも残しておく
+  await savePlaces(env, shops.map(function (s) {
+    return { n: s.n, lat: s.lat, lng: s.lng, c: "食",
+             src: "hotpepper", sid: s.hpid, addr: s.addr, gname: s.gname, budget: s.budget };
+  }));
+
   return json({ count: shops.length, available, shops });
 }
 
@@ -758,6 +765,12 @@ async function rakuten(url, env) {
       url: info.hotelInformationUrl || ""
     });
   });
+
+  await savePlaces(env, hotels.map(function (x) {
+    return { n: x.n, lat: x.lat, lng: x.lng, c: "宿",
+             src: "user", sid: "rk_" + x.id, addr: x.addr,
+             gname: x.min ? ("1泊 " + Number(x.min).toLocaleString() + "円〜") : "宿" };
+  }));
 
   return json({ count: hotels.length, hotels: hotels });
 }
@@ -891,5 +904,76 @@ async function gsearch(url, env) {
     });
   });
 
+  await savePlaces(env, out.map(function (g) {
+    return { n: g.n, lat: g.lat, lng: g.lng, c: "景",
+             src: "user", sid: "g_" + g.gid, addr: g.addr, gname: g.gname };
+  }));
+
   return json({ count: out.length, places: out });
+}
+
+
+/* ============================================================
+   自前の場所マスタ
+
+   外から取ってきたものは、そのつど places に貯める。
+   同じところを二度取りに行かなくて済むし、
+   外のサービスが止まっても地図が空にならない。
+   ============================================================ */
+
+/** この範囲にある、貯めてある場所を返す */
+async function nearbyPlaces(url, env) {
+  const s = Number(url.searchParams.get("s"));
+  const w = Number(url.searchParams.get("w"));
+  const n = Number(url.searchParams.get("n"));
+  const e = Number(url.searchParams.get("e"));
+  if (![s, w, n, e].every(isFinite)) return json({ error: "範囲の指定が不正です" }, 400);
+
+  const limit = Math.min(400, Number(url.searchParams.get("limit") || 300));
+
+  const rows = await env.DB.prepare(`
+    SELECT id, name, lat, lng, category, genre, budget, address, source
+      FROM places
+     WHERE lat BETWEEN ?1 AND ?2 AND lng BETWEEN ?3 AND ?4
+     LIMIT ?5
+  `).bind(s, n, w, e, limit).all();
+
+  const out = (rows.results || []).map(function (r) {
+    return {
+      n: r.name, lat: r.lat, lng: r.lng,
+      c: r.category, gname: r.genre || "", budget: r.budget || "",
+      addr: r.address || "", src: r.source
+    };
+  });
+  return json({ count: out.length, places: out });
+}
+
+/** 取ってきたものを貯める。同じものは上書きしない */
+async function savePlaces(env, list) {
+  if (!list || !list.length) return 0;
+  const now = Date.now();
+  const stmts = [];
+  for (const p of list) {
+    if (!p.n || !isFinite(p.lat) || !isFinite(p.lng)) continue;
+    const sid = p.sid || (p.n + "_" + p.lat.toFixed(5) + "_" + p.lng.toFixed(5));
+    stmts.push(
+      env.DB.prepare(`
+        INSERT INTO places (id,name,lat,lng,category,source,source_id,address,genre,budget,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(source, source_id) DO NOTHING
+      `).bind(
+        crypto.randomUUID ? crypto.randomUUID() : ("p" + now + Math.random()),
+        p.n, p.lat, p.lng, p.c || "景", p.src || "user", sid,
+        p.addr || null, p.gname || null, p.budget || null, now
+      )
+    );
+  }
+  if (!stmts.length) return 0;
+  try {
+    // 一度に送れる数には限りがあるので、小分けにする
+    for (let i = 0; i < stmts.length; i += 50) {
+      await env.DB.batch(stmts.slice(i, i + 50));
+    }
+  } catch (e) { return 0; }
+  return stmts.length;
 }
