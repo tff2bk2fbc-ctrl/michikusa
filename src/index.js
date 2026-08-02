@@ -46,7 +46,7 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-13",
+          build: "api-14",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
@@ -231,6 +231,25 @@ async function patchMe(request, env, me) {
     public_precision:   ["exact", "approx", "area", "hidden"],
     publish_delay_sec: "int", profile_public: "int"
   };
+  // IDは一度決めたら変えられない。
+  // 配ったQRやリンクが死ぬのと、なりすましを防ぐため。
+  if ("handle" in b) {
+    if (me.handle) {
+      return json({ error: "IDは変更できません" }, 409);
+    }
+    const hd = String(b.handle || "").trim();
+    if (!/^[A-Za-z0-9_]{3,20}$/.test(hd)) {
+      return json({ error: "IDは英数字と_で3〜20文字にしてください" }, 400);
+    }
+    const taken = await env.DB
+      .prepare("SELECT 1 FROM users WHERE lower(handle)=lower(?) AND id<>?")
+      .bind(hd, me.id).first();
+    if (taken) {
+      return json({ error: "そのIDは既に使われています", code: "taken" }, 409);
+    }
+    b.handle = hd;
+  }
+
   const sets = [], vals = [];
   for (const k of Object.keys(allow)) {
     if (!(k in b)) continue;
@@ -246,7 +265,8 @@ async function patchMe(request, env, me) {
   try {
     await env.DB.prepare("UPDATE users SET " + sets.join(",") + " WHERE id=?").bind(...vals).run();
   } catch (e) {
-    if (String(e.message).includes("UNIQUE")) return json({ error: "そのIDは使われています" }, 409);
+    if (String(e.message).includes("UNIQUE"))
+      return json({ error: "そのIDは既に使われています", code: "taken" }, 409);
     throw e;
   }
   return json({ ok: true });
