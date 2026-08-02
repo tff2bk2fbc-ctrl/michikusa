@@ -239,7 +239,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v43';
+var BUILD='v44';
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
   e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
@@ -250,6 +250,7 @@ window.addEventListener('unhandledrejection',function(e){showErr('[promise] '+du
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script>
@@ -1563,86 +1564,27 @@ function openMe(){
    作るのも読むのも自前でやる（外の部品に頼らない）。
    ============================================================ */
 
-/* --- 作る側 --- */
-function qrMake(text){
-  // 数字と英字だけの短い文字列を想定した、簡易な作り方
-  var data=[], bytes=[];
-  for(var i=0;i<text.length;i++){
-    var c=text.charCodeAt(i);
-    if(c<128)bytes.push(c);
-    else{ // 日本語は使わない前提だが、念のため
-      var e=new TextEncoder().encode(text.charAt(i));
-      for(var k=0;k<e.length;k++)bytes.push(e[k]);
-    }
+/* --- 作る側 ---
+   規格どおりのQRには誤り訂正が要る。自前で書くと読めないものができるので、
+   実績のある部品に任せる。 */
+function qrInto(el2,text,px){
+  if(typeof QRCode==='undefined'){
+    el2.innerHTML='<div style="font-size:12px;color:var(--dim)">'+
+      'QRの部品を読み込めませんでした</div>';
+    return;
   }
-  // 型番を選ぶ（入る大きさになるまで大きくする）
-  var VER=[[17,32,53,78,106,134,154],[14,26,42,62,84,106,122]];
-  var ver=0;
-  for(var v=0;v<7;v++){ if(bytes.length<=VER[0][v]){ver=v+1;break;} }
-  if(!ver)return null;
-  return qrBuild(bytes,ver);
-}
-
-/* 見た目だけを担うので、読み取りは端末のカメラに任せる。
-   ここでは「点の並び」を返す */
-function qrBuild(bytes,ver){
-  var size=17+ver*4;
-  var m=[]; for(var i=0;i<size;i++){m.push(new Array(size).fill(null));}
-
-  function box(r,c){
-    for(var i=-1;i<8;i++)for(var j=-1;j<8;j++){
-      var y=r+i,x=c+j;
-      if(y<0||y>=size||x<0||x>=size)continue;
-      m[y][x]=(i>=0&&i<=6&&(j===0||j===6))||(j>=0&&j<=6&&(i===0||i===6))||
-              (i>=2&&i<=4&&j>=2&&j<=4);
-    }
-  }
-  box(0,0); box(0,size-7); box(size-7,0);
-  for(var i=8;i<size-8;i++){ m[6][i]=m[i][6]=(i%2===0); }
-  m[size-8][8]=true;
-
-  // 中身を並べる
-  var bits=[];
-  function push(v,n){ for(var i=n-1;i>=0;i--)bits.push((v>>i)&1); }
-  push(4,4); push(bytes.length,8);
-  bytes.forEach(function(b){push(b,8);});
-  push(0,4);
-  while(bits.length%8)bits.push(0);
-
-  var cap=(size*size)-(3*64)-((size-16)*2)-1;
-  var pad=[236,17],pi=0;
-  while(bits.length<cap-8){ push(pad[pi%2],8); pi++; }
-
-  var bi=0,up=true;
-  for(var col=size-1;col>0;col-=2){
-    if(col===6)col--;
-    for(var t=0;t<size;t++){
-      var row=up?(size-1-t):t;
-      for(var s=0;s<2;s++){
-        var cc=col-s;
-        if(m[row][cc]!==null)continue;
-        var dark=bi<bits.length?bits[bi]:0; bi++;
-        if((row+cc)%2===0)dark=dark?0:1;   // 模様をならす
-        m[row][cc]=!!dark;
-      }
-    }
-    up=!up;
-  }
-  for(var y=0;y<size;y++)for(var x=0;x<size;x++)if(m[y][x]===null)m[y][x]=false;
-  return m;
-}
-
-function qrSvg(text,px){
-  var m=qrMake(text);
-  if(!m)return '<div style="font-size:12px;color:var(--dim)">QRを作れませんでした</div>';
-  var n=m.length, q=4, total=n+q*2, cell=px/total, out='';
-  for(var y=0;y<n;y++)for(var x=0;x<n;x++){
-    if(m[y][x])out+='<rect x="'+((x+q)*cell).toFixed(2)+'" y="'+((y+q)*cell).toFixed(2)+
-      '" width="'+(cell+0.5).toFixed(2)+'" height="'+(cell+0.5).toFixed(2)+'"/>';
-  }
-  return '<svg width="'+px+'" height="'+px+'" viewBox="0 0 '+px+' '+px+'">'+
-    '<rect width="'+px+'" height="'+px+'" fill="#fff" rx="10"/>'+
-    '<g fill="#000">'+out+'</g></svg>';
+  var cv=document.createElement('canvas');
+  el2.innerHTML='';
+  el2.appendChild(cv);
+  QRCode.toCanvas(cv,text,{
+    width:px, margin:2,
+    errorCorrectionLevel:'M',
+    color:{dark:'#000000',light:'#FFFFFF'}
+  },function(err){
+    if(err) el2.innerHTML='<div style="font-size:12px;color:var(--dim)">'+
+      'QRを作れませんでした</div>';
+    else { cv.style.borderRadius='10px'; cv.style.display='block'; }
+  });
 }
 
 /* --- 見せる --- */
@@ -1657,13 +1599,14 @@ function openMyQR(){
     '<div style="font-size:18px;font-weight:700;margin-bottom:4px">わたしのQR</div>'+
     '<div style="font-size:13px;color:var(--dim);margin-bottom:18px">'+
       '相手にカメラで読んでもらってください</div>'+
-    '<div style="display:flex;justify-content:center;margin-bottom:16px">'+
-      qrSvg(url,240)+'</div>'+
+    '<div id="qrbox" style="display:flex;justify-content:center;margin-bottom:16px;'+
+      'min-height:240px;align-items:center"></div>'+
     '<div style="font-size:20px;font-weight:700;letter-spacing:.04em">@'+esc(hd)+'</div>'+
     '<div style="font-size:12px;color:var(--dim);margin-top:6px">'+
       '読めないときは、このIDを直接入れてもらってください</div>'+
     '<button class="btn" id="share" style="margin-top:20px">リンクを送る</button>'+
     '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>');
+  qrInto(s.querySelector('#qrbox'),url,240);
   s.querySelector('#x').onclick=closeSheet;
   s.querySelector('#share').onclick=function(){
     if(navigator.share){
