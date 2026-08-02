@@ -275,7 +275,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v56';
+var BUILD='v58';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -1353,6 +1353,43 @@ async function whereAmI(){
   });
 }
 
+
+/* ============================================================
+   通知
+
+   フレンドが新しい場所を記録したときに知らせる。
+   アプリのときだけ。断られても普通に使える。
+   ============================================================ */
+async function setupPush(){
+  try{
+    if(!isApp)return;
+    var P=plugin('PushNotifications');
+    if(!P)return;
+
+    var st=await P.checkPermissions();
+    if(st.receive==='prompt'||st.receive==='prompt-with-rationale'){
+      st=await P.requestPermissions();
+    }
+    if(st.receive!=='granted')return;
+
+    await P.register();
+
+    P.addListener('registration',function(t){
+      // この端末の宛先をサーバーへ預ける
+      api('/api/push/token',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token:t.value,platform:'ios'})}).catch(function(){});
+    });
+    P.addListener('pushNotificationActionPerformed',function(ev){
+      // 通知から開いたとき、その場所へ飛ぶ
+      var d=(ev&&ev.notification&&ev.notification.data)||{};
+      if(d.lat&&d.lng){
+        map.easeTo({center:[Number(d.lng),Number(d.lat)],zoom:16.5,duration:800});
+      }
+    });
+  }catch(e){}
+}
+
 /* ============================================================
    起動したら、まず自分のいる場所を映す
    ・許可されていなければ、ここで初めて尋ねる
@@ -1652,6 +1689,7 @@ function openAdd(p){
     '<input class="fld" id="f-n" placeholder="場所の名前" value="'+esc(p.known||'')+'">'+
     '<div class="lab" id="lab">'+ask(cat)[0]+'</div>'+
     '<input class="fld" id="f-t" placeholder="'+ask(cat)[1]+'">'+
+    '<div class="chips" id="sug" style="margin:-4px 0 12px;display:none"></div>'+
     (!p.photo?'<div class="photorow">'+
       '<label class="pick" id="p1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg><span>撮る</span></label>'+
       '<label class="pick" id="p2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/></svg><span>カメラロール</span></label>'+
@@ -1669,6 +1707,31 @@ function openAdd(p){
   var nm=s.querySelector('#f-n'),ok=s.querySelector('#ok');
   function sync(){ok.disabled=!nm.value.trim();} nm.oninput=sync; sync();
   s.querySelector('#ng').onclick=closeSheet;
+
+  /* 写真から、ひとことの候補を出してもらう */
+  (function(){
+    if(!p.photo)return;
+    var box=s.querySelector('#sug'); if(!box)return;
+    var img=String(p.photo);
+    if(img.length>3000000)return;               // 大きすぎるものは送らない
+    fetch(SERVER+'/api/suggest',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({image:img,category:cat})})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var items=(j&&j.items)||[];
+        if(!items.length)return;
+        box.innerHTML=items.map(function(t){
+          return '<button class="chip" data-t="'+esc(t)+'">'+esc(t)+'</button>';
+        }).join('');
+        box.style.display='flex';
+        Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(b){
+          b.onclick=function(){ ft.value=b.dataset.t; ft.focus(); };
+        });
+      }).catch(function(){});
+  })();
+
+
   var p1=s.querySelector('#p1'),p2=s.querySelector('#p2');
   if(p1)p1.onclick=function(){closeSheet();document.getElementById('in-cam').click();};
   if(p2)p2.onclick=function(){closeSheet();document.getElementById('in-lib').click();};
@@ -1735,6 +1798,19 @@ function resize(dataUrl,max,q){
 /* 1件をサーバーへ送る */
 async function pushOne(rec){
   try{
+    // 他人に見せるものは、先に写真を確かめる
+    if(rec.photo && rec.visibility!=='private'){
+      try{
+        var vr=await fetch(SERVER+'/api/vision',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({image:String(rec.photo)})});
+        var vj=await vr.json();
+        if(vj && vj.ok===false){
+          rec.visibility='private';       // 出さずに、自分だけのものにする
+          setTip('この写真は自分だけの記録にしました');
+        }
+      }catch(e){}
+    }
     var r=await api('/api/posts',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
@@ -1820,7 +1896,7 @@ try{ if(typeof firebase!=='undefined'){
   firebase.auth().onAuthStateChanged(function(u){
     fbUser=u; var b=document.getElementById('btn-me');
     if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
-      loadMe().then(function(){ syncUp(); syncDown(); askHandle(); }); }
+      loadMe().then(function(){ syncUp(); syncDown(); askHandle(); setupPush(); }); }
     else{ b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; meP=null; }
   });
   firebase.auth().getRedirectResult().then(function(r){
