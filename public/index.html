@@ -267,7 +267,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v47';
+var BUILD='v48';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -1126,53 +1126,145 @@ function draw(list,note){
 }
 
 
+
+/* ============================================================
+   アプリとして動いているときは、iOSの仕組みを使う
+
+   HTMLの入力欄はアプリの中だと制限がある。
+   Capacitorの部品があればそちらを使い、
+   無ければ（ブラウザなら）今まで通りの方法にする。
+   ============================================================ */
+const isApp = !!(window.Capacitor && window.Capacitor.isNativePlatform &&
+                 window.Capacitor.isNativePlatform());
+
+function plugin(name){
+  return (window.Capacitor && window.Capacitor.Plugins &&
+          window.Capacitor.Plugins[name]) || null;
+}
+
+/** 写真を1枚。撮るか、選ぶか */
+async function pickPhoto(fromCamera){
+  var Camera=plugin('Camera');
+  if(!isApp||!Camera){
+    document.getElementById(fromCamera?'in-cam':'in-lib').click();
+    return null;
+  }
+  try{
+    var r=await Camera.getPhoto({
+      quality:100,
+      allowEditing:false,
+      resultType:'dataUrl',
+      source:fromCamera?'CAMERA':'PHOTOS',
+      saveToGallery:false
+    });
+    return r&&r.dataUrl?r.dataUrl:null;
+  }catch(e){ return null; }   // 途中でやめた場合もここに来る
+}
+
+/** まとめて選ぶ */
+async function pickPhotos(){
+  var Camera=plugin('Camera');
+  if(!isApp||!Camera||!Camera.pickImages){
+    document.getElementById('in-bulk').click();
+    return null;
+  }
+  try{
+    var r=await Camera.pickImages({quality:100,limit:0});
+    return (r&&r.photos)||[];
+  }catch(e){ return null; }
+}
+
+/** 現在地。アプリなら許可を先に尋ねる */
+async function whereAmI(){
+  var Geo=plugin('Geolocation');
+  if(isApp&&Geo){
+    try{
+      var st=await Geo.checkPermissions();
+      if(st.location!=='granted'){
+        st=await Geo.requestPermissions();
+      }
+      if(st.location!=='granted') return null;
+      var p=await Geo.getCurrentPosition({enableHighAccuracy:true,timeout:15000});
+      return {lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy};
+    }catch(e){ return null; }
+  }
+  return new Promise(function(res){
+    if(!navigator.geolocation)return res(null);
+    navigator.geolocation.getCurrentPosition(function(p){
+      res({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy});
+    },function(){ res(null); },
+      {enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+  });
+}
+
 /* ============================================================
    起動したら、まず自分のいる場所を映す
    ・許可されていなければ、ここで初めて尋ねる
    ・断られても地図は普通に使える
    ============================================================ */
 let locDone=false;
-function goHome(quiet){
-  if(!navigator.geolocation)return;
-  navigator.geolocation.getCurrentPosition(function(p){
-    locDone=true;
-    var lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy;
-    map.easeTo({center:[lng,lat],zoom:acc>2000?14:16.4,duration:900});
-    if(meM)meM.remove();
-    var d=document.createElement('div');
-    d.style.cssText='width:15px;height:15px;border-radius:50%;background:#1E88E5;'+
-      'border:2.5px solid #fff;box-shadow:0 0 0 6px rgba(30,136,229,.22),0 2px 8px rgba(0,0,0,.35)';
-    meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
-    setTimeout(function(){ autoLoad(true); },600);
-  },function(err){
-    if(!quiet) setTip('現在地を使うと、いまいる場所から始められます');
-  },{enableHighAccuracy:true,timeout:12000,maximumAge:60000});
+function showMe(lat,lng,acc){
+  if(meM)meM.remove();
+  var d=document.createElement('div');
+  d.style.cssText='width:15px;height:15px;border-radius:50%;background:#1E88E5;'+
+    'border:2.5px solid #fff;box-shadow:0 0 0 6px rgba(30,136,229,.22),0 2px 8px rgba(0,0,0,.35)';
+  meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
+}
+async function goHome(quiet){
+  var p=await whereAmI();
+  if(!p){
+    if(!quiet) setTip('現在地を使えません。設定から許可してください');
+    return;
+  }
+  locDone=true;
+  map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.4,duration:900});
+  showMe(p.lat,p.lng,p.acc);
+  setTimeout(function(){ autoLoad(true); },600);
 }
 
 /* ============================================================
    写真 / 現在地 / 昼夜
    ============================================================ */
-document.getElementById('btn-cam').onclick=function(){document.getElementById('in-cam').click();};
-document.getElementById('btn-lib').onclick=function(){document.getElementById('in-lib').click();};
+document.getElementById('btn-cam').onclick=async function(){
+  var url=await pickPhoto(true);
+  if(url) afterPhoto(url,null);
+};
+document.getElementById('btn-lib').onclick=async function(){
+  var url=await pickPhoto(false);
+  if(url) afterPhoto(url,null);
+};
+
+/* 写真を受け取ったあとの流れ。位置は写真から読む */
+async function afterPhoto(dataUrl,file){
+  var gps=null,date=null;
+  try{
+    if(typeof exifr!=='undefined'){
+      var target=file||dataUrl;
+      var g=await exifr.gps(target).catch(function(){return null;});
+      if(g&&g.latitude!=null)gps={lat:g.latitude,lng:g.longitude};
+      var pp=await exifr.parse(target,{pick:['DateTimeOriginal','CreateDate']})
+        .catch(function(){return null;});
+      var d=pp&&(pp.DateTimeOriginal||pp.CreateDate);
+      if(d)date=new Date(d).toISOString().slice(0,10);
+    }
+  }catch(e){}
+  if(!gps){
+    var here=await whereAmI();
+    if(here)gps={lat:here.lat,lng:here.lng};
+  }
+  var c=map.getCenter();
+  startPlacing(gps?gps.lat:c.lat, gps?gps.lng:c.lng, {photo:dataUrl,date:date});
+  if(!gps)setTimeout(function(){
+    cfAsk.textContent='写真に位置情報がありません。場所を選んでください';},900);
+}
 ['in-cam','in-lib'].forEach(function(id){
   document.getElementById(id).onchange=async function(e){
     var f=e.target.files[0]; if(!f)return; e.target.value='';
     setTip('写真を読み込んでいます…');
-    var gps=null,date=null;
-    try{ if(typeof exifr!=='undefined'){
-      var g=await exifr.gps(f).catch(function(){return null;});
-      if(g&&g.latitude!=null)gps={lat:g.latitude,lng:g.longitude};
-      var pp=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(function(){return null;});
-      var d=pp&&(pp.DateTimeOriginal||pp.CreateDate);
-      if(d)date=new Date(d).toISOString().slice(0,10);}
-    }catch(_){}
-    shrink(f,function(url){
-      var c=map.getCenter();
-      startPlacing(gps?gps.lat:c.lat,gps?gps.lng:c.lng,{photo:url,date:date});
-      if(!gps)setTimeout(function(){cfAsk.textContent='写真に位置情報がありません。場所を選んでください';},900);
-    });
+    shrink(f,function(url){ if(url) afterPhoto(url,f); });
   };
 });
+
 function shrink(file,cb){
   // 圧縮しない。原本をそのまま持つ。
   // 一度落とした画質は戻らないので、ここでケチらない。
@@ -1182,25 +1274,16 @@ function shrink(file,cb){
   r.readAsDataURL(file);
 }
 
-const GERR={1:'許可されていません',2:'位置を特定できません（屋内など）',3:'時間内に取得できませんでした'};
-document.getElementById('btn-loc').onclick=function(){
+document.getElementById('btn-loc').onclick=async function(){
   var btn=this;
-  if(!navigator.geolocation){setTip('この端末では取得できません');return;}
-  btn.classList.add('act');setTip('現在地を取得しています…');
-  function ok(p){
-    var lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy;
-    map.easeTo({center:[lng,lat],zoom:acc>2000?14:16.6,duration:850});
-    if(meM)meM.remove();
-    var d=document.createElement('div');
-    d.style.cssText='width:15px;height:15px;border-radius:50%;background:#1E88E5;'+
-      'border:2.5px solid #fff;box-shadow:0 0 0 6px rgba(30,136,229,.22),0 2px 8px rgba(0,0,0,.35)';
-    meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
-    setTip('現在地　誤差 約'+Math.round(acc)+'m');btn.classList.remove('act');}
-  function ng(e){btn.classList.remove('act');setTip('取得失敗 ['+e.code+'] '+(GERR[e.code]||e.message));}
-  navigator.geolocation.getCurrentPosition(function(p){locDone=true;ok(p);},function(){
-    navigator.geolocation.getCurrentPosition(function(p){locDone=true;ok(p);},ng,
-      {enableHighAccuracy:false,timeout:25000,maximumAge:600000});},
-    {enableHighAccuracy:true,timeout:30000,maximumAge:0});
+  btn.classList.add('act'); setTip('現在地を取得しています…');
+  var p=await whereAmI();
+  btn.classList.remove('act');
+  if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
+  locDone=true;
+  map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
+  showMe(p.lat,p.lng,p.acc);
+  setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
 };
 
 document.getElementById('btn-night').onclick=function(){
@@ -1227,13 +1310,30 @@ function readAsData(file){
   });
 }
 
-document.getElementById('btn-bulk').onclick=function(){
-  document.getElementById('in-bulk').click();
+document.getElementById('btn-bulk').onclick=async function(){
+  var got=await pickPhotos();
+  if(got===null)return;              // ブラウザなら入力欄が開く
+  if(!got.length){ setTip('選ばれませんでした'); return; }
+  // Capacitorから来たものは、読み込んでからいつもの流れへ
+  var files=[];
+  for(var i=0;i<got.length;i++){
+    try{
+      var r=await fetch(got[i].webPath||got[i].path);
+      var b=await r.blob();
+      files.push(new File([b],'p'+i+'.jpg',{type:b.type||'image/jpeg'}));
+    }catch(e){}
+  }
+  if(!files.length){ setTip('写真を読めませんでした'); return; }
+  handleBulk(files);
 };
 
-document.getElementById('in-bulk').onchange=async function(e){
+document.getElementById('in-bulk').onchange=function(e){
   var files=Array.prototype.slice.call(e.target.files||[]);
   e.target.value='';
+  handleBulk(files);
+};
+
+async function handleBulk(files){
   if(!files.length)return;
   if(typeof exifr==='undefined'){ setTip('写真を読む部品がありません'); return; }
 
@@ -1345,7 +1445,7 @@ document.getElementById('in-bulk').onchange=async function(e){
     setTip(done+' か所を地図に置きました');
     if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
   };
-};
+}
 
 function openAdd(p){
   var cat=p.cat||CATS[0];
