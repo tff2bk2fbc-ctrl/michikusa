@@ -46,12 +46,13 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-16",
+          build: "api-19",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
           hasRakutenKey: !!(await cfg(env, "rakuten_key")),
           hasGoogle: !!(await cfg(env, "google_key")),
+          quota: await quotaState(env),
           hasDB: !!env.DB,
           hasR2: !!env.PHOTOS,
           firebase: env.FIREBASE_PROJECT_ID || null
@@ -61,6 +62,9 @@ export default {
       if (p === "/api/rakuten")   return cors(await rakuten(url, env));
       if (p === "/api/gsearch")   return cors(await gsearch(url, env));
       if (p === "/api/places")    return cors(await nearbyPlaces(url, env));
+      if (p === "/api/vision" && request.method === "POST") return cors(await vision(request, env));
+      if (p === "/api/suggest" && request.method === "POST") return cors(await suggest(request, env));
+      if (p === "/api/push/token" && request.method === "POST") return cors(await saveToken(request, env, me));
       if (p === "/api/img")       return await proxyImage(url);
 
       // ---- ここから先はログインが必要 ----
@@ -841,6 +845,10 @@ async function gsearch(url, env) {
   const q = (url.searchParams.get("q") || "").trim();
   if (!q) return json({ error: "探す言葉が必要です" }, 400);
 
+  if (!(await useQuota(env, "gsearch"))) {
+    return json({ count: 0, places: [], capped: true });   // 上限。黙って空を返す
+  }
+
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
 
@@ -976,4 +984,167 @@ async function savePlaces(env, list) {
     }
   } catch (e) { return 0; }
   return stmts.length;
+}
+
+
+/* ============================================================
+   使いすぎを止める仕組み
+
+   Google Cloud の予算アラートは「知らせる」だけで、止めてはくれない。
+   そこで、こちら側で回数を数えて上限で打ち切る。
+   金額ではなく回数で管理すれば、構造的に超えない。
+
+   月あたりの上限（無料枠に収まる数）
+     Places 検索  … 4,500 回（無料枠 5,000 の手前で止める）
+     Vision 判定  … 900 枚（無料枠 1,000 の手前）
+     Gemini       … 1,200 回
+   ============================================================ */
+const LIMITS = { gsearch: 4500, vision: 900, gemini: 1200 };
+
+function monthKey() {
+  const d = new Date();
+  return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+}
+
+/** 1回ぶん使う。上限を超えていたら false */
+async function useQuota(env, name) {
+  const k = "q_" + name + "_" + monthKey();
+  try {
+    const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?").bind(k).first();
+    const used = r ? Number(r.v) || 0 : 0;
+    if (used >= (LIMITS[name] || 0)) return false;
+    await env.DB.prepare(
+      "INSERT INTO app_config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=?"
+    ).bind(k, String(used + 1), String(used + 1)).run();
+    return true;
+  } catch (e) {
+    return false;   // 数えられないときは使わせない（安全側）
+  }
+}
+
+async function quotaState(env) {
+  const out = {};
+  for (const name of Object.keys(LIMITS)) {
+    try {
+      const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?")
+        .bind("q_" + name + "_" + monthKey()).first();
+      out[name] = { used: r ? Number(r.v) || 0 : 0, limit: LIMITS[name] };
+    } catch (e) { out[name] = { used: -1, limit: LIMITS[name] }; }
+  }
+  return out;
+}
+
+
+/* ============================================================
+   写真を見て判断する
+
+   ① 安全確認（Vision）… 不適切な画像を弾く。公開する以上、必須
+   ② ひとことの提案（Gemini）… 「何を食べた？」の候補を出す
+
+   どちらも回数の上限つき。超えたら黙って何もしない。
+   ============================================================ */
+
+const VISION = "https://vision.googleapis.com/v1/images:annotate";
+const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+
+/** 写真が出しても大丈夫かを確かめる */
+async function vision(request, env) {
+  const key = await cfg(env, "google_key");
+  if (!key) return json({ ok: true, skipped: "キー未設定" });
+
+  const b = await request.json();
+  const img = String(b.image || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!img) return json({ error: "画像が必要です" }, 400);
+
+  if (!(await useQuota(env, "vision"))) return json({ ok: true, skipped: "上限" });
+
+  const res = await fetch(VISION + "?key=" + encodeURIComponent(key), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requests: [{
+        image: { content: img },
+        features: [
+          { type: "SAFE_SEARCH_DETECTION" },
+          { type: "LABEL_DETECTION", maxResults: 6 }
+        ]
+      }]
+    })
+  });
+
+  if (!res.ok) return json({ ok: true, skipped: "HTTP " + res.status });
+  const j = await res.json();
+  const r = (j.responses && j.responses[0]) || {};
+  const ss = r.safeSearchAnnotation || {};
+
+  const bad = ["LIKELY", "VERY_LIKELY"];
+  const ng = bad.includes(ss.adult) || bad.includes(ss.violence) ||
+             bad.includes(ss.racy) || bad.includes(ss.medical);
+
+  const labels = (r.labelAnnotations || []).map(function (x) { return x.description; });
+
+  return json({ ok: !ng, reason: ng ? "不適切な内容の可能性" : null, labels: labels });
+}
+
+/** 写真を見て、ひとことの候補を出す */
+async function suggest(request, env) {
+  const key = await cfg(env, "google_key");
+  if (!key) return json({ items: [] });
+
+  const b = await request.json();
+  const img = String(b.image || "").replace(/^data:image\/\w+;base64,/, "");
+  if (!img) return json({ items: [] });
+
+  if (!(await useQuota(env, "gemini"))) return json({ items: [] });
+
+  const cat = String(b.category || "");
+  const ask = (cat === "景" || cat === "社" || cat === "園")
+    ? "この写真をどう撮ったかを短く言い表す言葉を3つ。例：夕方、対岸から／桜、朝いちばん"
+    : "この写真に写っている料理や飲みものの名前を3つ。例：味玉らーめん／クリームソーダ";
+
+  const res = await fetch(GEMINI + "?key=" + encodeURIComponent(key), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { text: ask + "\n日本語で、それぞれ12文字以内。JSONの配列だけを返してください。説明は不要です。" },
+          { inline_data: { mime_type: "image/jpeg", data: img } }
+        ]
+      }],
+      generationConfig: { temperature: 0.4, maxOutputTokens: 120 }
+    })
+  });
+
+  if (!res.ok) return json({ items: [] });
+  const j = await res.json();
+  let text = "";
+  try {
+    text = j.candidates[0].content.parts[0].text || "";
+  } catch (e) { return json({ items: [] }); }
+
+  text = text.replace(/```json|```/g, "").trim();
+  let items = [];
+  try { items = JSON.parse(text); } catch (e) {
+    items = text.split(/[\n、,]/).map(function (s) { return s.trim(); });
+  }
+  items = (items || []).filter(function (s) {
+    return typeof s === "string" && s.length > 0 && s.length <= 16;
+  }).slice(0, 3);
+
+  return json({ items: items });
+}
+
+
+/** 通知の宛先を預かる */
+async function saveToken(request, env, me) {
+  const b = await request.json();
+  const t = String(b.token || "").trim();
+  if (!t) return json({ error: "宛先が必要です" }, 400);
+  await env.DB.prepare(`
+    INSERT INTO push_tokens (token, user_id, platform, updated_at)
+    VALUES (?,?,?,?)
+    ON CONFLICT(token) DO UPDATE SET user_id=excluded.user_id, updated_at=excluded.updated_at
+  `).bind(t, me.id, b.platform || "ios", Date.now()).run();
+  return json({ ok: true });
 }
