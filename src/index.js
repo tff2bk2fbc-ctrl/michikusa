@@ -46,11 +46,12 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-14",
+          build: "api-15",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
           hasRakutenKey: !!(await cfg(env, "rakuten_key")),
+          hasGoogle: !!(await cfg(env, "google_key")),
           hasDB: !!env.DB,
           hasR2: !!env.PHOTOS,
           firebase: env.FIREBASE_PROJECT_ID || null
@@ -58,6 +59,7 @@ export default {
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, env));
       if (p === "/api/rakuten")   return cors(await rakuten(url, env));
+      if (p === "/api/gsearch")   return cors(await gsearch(url, env));
       if (p === "/api/img")       return await proxyImage(url);
 
       // ---- ここから先はログインが必要 ----
@@ -806,4 +808,88 @@ async function proxyImage(url) {
       "Access-Control-Allow-Origin": "*"
     }
   });
+}\n
+
+/* ============================================================
+   Google の場所検索
+
+   使うのは検索だけ。地図の表示には使わない。
+   （地図は自前のものを使い続ける。見た目が資産なので）
+
+   料金は「取り出す項目の種類」で段階が変わる。
+   必要な項目だけを指定して、安い段階に収める。
+   ============================================================ */
+const GPLACES = "https://places.googleapis.com/v1/places:searchText";
+
+async function gsearch(url, env) {
+  const key = await cfg(env, "google_key");
+  if (!key) return json({ error: "Googleのキーが未設定です" }, 500);
+
+  const q = (url.searchParams.get("q") || "").trim();
+  if (!q) return json({ error: "探す言葉が必要です" }, 400);
+
+  const lat = Number(url.searchParams.get("lat"));
+  const lng = Number(url.searchParams.get("lng"));
+
+  const body = {
+    textQuery: q,
+    languageCode: "ja",
+    regionCode: "JP",
+    maxResultCount: 10
+  };
+  // 近くを優先する。位置が分かるときだけ
+  if (isFinite(lat) && isFinite(lng)) {
+    body.locationBias = {
+      circle: { center: { latitude: lat, longitude: lng }, radius: 30000 }
+    };
+  }
+
+  // 取り出す項目を絞る。ここを増やすと段階が上がって高くなる
+  const fields = [
+    "places.id",
+    "places.displayName",
+    "places.formattedAddress",
+    "places.location",
+    "places.primaryTypeDisplayName",
+    "places.types"
+  ].join(",");
+
+  const res = await fetch(GPLACES, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": key,
+      "X-Goog-FieldMask": fields
+    },
+    body: JSON.stringify(body),
+    cf: { cacheTtl: 3600, cacheEverything: true }
+  });
+
+  const text = await res.text();
+  let j = null;
+  try { j = JSON.parse(text); } catch (e) {}
+
+  if (!res.ok) {
+    return json({
+      error: "Google HTTP " + res.status,
+      detail: (j && j.error && j.error.message) || text.slice(0, 300)
+    }, 502);
+  }
+
+  const out = [];
+  ((j && j.places) || []).forEach(function (p) {
+    const loc = p.location || {};
+    if (!isFinite(loc.latitude) || !isFinite(loc.longitude)) return;
+    out.push({
+      gid: p.id || "",
+      n: (p.displayName && p.displayName.text) || "",
+      lat: loc.latitude,
+      lng: loc.longitude,
+      addr: p.formattedAddress || "",
+      gname: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || "",
+      types: p.types || []
+    });
+  });
+
+  return json({ count: out.length, places: out });
 }
