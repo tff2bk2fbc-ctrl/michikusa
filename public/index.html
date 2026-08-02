@@ -84,25 +84,28 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 /* ---------- 下：カード ---------- */
 
 /* ---------- 丸ボタン ---------- */
-.fabs{position:fixed;right:14px;bottom:calc(env(safe-area-inset-bottom,0px) + 22px);
-  z-index:36;display:flex;flex-direction:column;gap:10px;align-items:flex-end;
+.fabs{position:fixed;left:0;right:0;bottom:0;z-index:36;
+  display:flex;align-items:flex-end;justify-content:center;gap:22px;
+  padding:0 20px calc(env(safe-area-inset-bottom,0px) + 14px);
   transition:transform .32s cubic-bezier(.2,.9,.25,1),opacity .28s}
-.fabs.hide{transform:translateX(140%);opacity:0;pointer-events:none}
-.fabpull{position:fixed;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 30px);
-  width:56px;height:220px;z-index:37;display:none}
+.fabs.hide{transform:translateY(150%);opacity:0;pointer-events:none}
+.fabpull{position:fixed;left:0;right:0;bottom:0;height:56px;z-index:37;display:none}
 .fabpull.on{display:block}
-.fabpull b{position:absolute;right:6px;top:50%;transform:translateY(-50%);
-  width:5px;height:56px;border-radius:99px;background:var(--dim);opacity:.5}
+.fabpull b{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);
+  transform:translateX(-50%);width:52px;height:5px;border-radius:99px;background:var(--dim);opacity:.5}
 .fabpull:active b{opacity:.9}
-.fab{width:44px;height:44px;border-radius:50%;background:var(--sf);box-shadow:var(--sh);
-  display:flex;align-items:center;justify-content:center;transition:background .4s}
-.fab svg{width:19px;height:19px}
-.fab.main{width:56px;height:56px;background:var(--btn);color:var(--btnink)}
-.fab.main svg{width:24px;height:24px}
+.fab{width:46px;height:46px;border-radius:50%;background:var(--sf);box-shadow:var(--sh);
+  display:flex;align-items:center;justify-content:center;transition:background .4s,transform .15s;
+  flex:0 0 auto}
+.fab:active{transform:scale(.92)}
+.fab svg{width:20px;height:20px}
+.fab.main{width:72px;height:72px;background:var(--btn);color:var(--btnink);
+  box-shadow:0 6px 22px rgba(0,0,0,.32)}
+.fab.main svg{width:30px;height:30px}
 .fab.act svg{color:#1E88E5}
 
 .tip{position:fixed;left:50%;transform:translateX(-50%);z-index:38;
-  bottom:calc(env(safe-area-inset-bottom,0px) + 96px);font-size:11.5px;color:var(--ink);
+  bottom:calc(env(safe-area-inset-bottom,0px) + 104px);font-size:11.5px;color:var(--ink);
   background:var(--sf);box-shadow:var(--sh);padding:8px 14px;border-radius:999px;
   pointer-events:none;transition:opacity .4s;max-width:86vw;text-align:center}
 
@@ -175,11 +178,12 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 @keyframes ping{0%{transform:scale(1);opacity:.8}100%{transform:scale(3.4);opacity:0}}
 
 .drop{pointer-events:none}
-.drop .im{width:13px;height:13px;border-radius:50%;background:var(--btn);
-  border:2.5px solid var(--ring);box-shadow:var(--sh)}
+/* 置こうとしている場所の印。地図を隠さないよう、輪郭だけにする */
+.drop .im{width:16px;height:16px;border-radius:50%;background:transparent;
+  border:2.5px solid var(--btn);box-shadow:none}
 .drop .tl{display:none}
-.drop::after{content:'';position:absolute;left:50%;top:50%;width:34px;height:34px;
-  margin:-17px 0 0 -17px;border-radius:50%;border:1.5px solid var(--btn);opacity:.35}
+.drop::after{content:'';position:absolute;left:50%;top:50%;width:38px;height:38px;
+  margin:-19px 0 0 -19px;border-radius:50%;border:1.5px solid var(--btn);opacity:.3}
 .confirm{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);
   z-index:80;background:var(--sf);border-radius:18px;padding:16px;box-shadow:var(--sh2);
   display:none}
@@ -225,29 +229,26 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
   <button class="rb" id="btn-night">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></svg>
   </button>
-  <button class="rb" id="btn-me">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
-  </button>
 </div>
 <div class="results" id="results"></div>
 
 <div class="fabpull" id="fabpull"><b></b></div>
 
 <div class="fabs">
-  <button class="fab" id="btn-3d">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 2.8L3 7.4v9.2l9 4.6 9-4.6V7.4z"/><path d="M3 7.4l9 4.6 9-4.6M12 12v9.2"/></svg>
-  </button>
-  <button class="fab" id="btn-loc">
+  <button class="fab" id="btn-loc" title="現在地">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
   </button>
   <button class="fab" id="btn-bulk" title="カメラロールからまとめて">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 3.5h14v14H7z"/><path d="M17 17.5v3H3v-14h3"/><path d="M7 14l4-3.5 3 2.5 2.5-2 4.5 4"/></svg>
   </button>
-  <button class="fab" id="btn-lib">
+  <button class="fab main" id="btn-cam" title="撮る">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
+  </button>
+  <button class="fab" id="btn-lib" title="カメラロール">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.4"/></svg>
   </button>
-  <button class="fab main" id="btn-cam">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
+  <button class="fab" id="btn-me" title="アカウント">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
   </button>
 </div>
 
@@ -266,7 +267,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v46';
+var BUILD='v47';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -460,7 +461,7 @@ function afterStyle(){
   addPlaceLayers();
   render(true);
   hideSplash();
-  setTimeout(function(){ autoLoad(true); },400);   // 開いた時点で一度読む
+  if(!locDone) goHome(false);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
 
@@ -1124,6 +1125,30 @@ function draw(list,note){
   });
 }
 
+
+/* ============================================================
+   起動したら、まず自分のいる場所を映す
+   ・許可されていなければ、ここで初めて尋ねる
+   ・断られても地図は普通に使える
+   ============================================================ */
+let locDone=false;
+function goHome(quiet){
+  if(!navigator.geolocation)return;
+  navigator.geolocation.getCurrentPosition(function(p){
+    locDone=true;
+    var lat=p.coords.latitude,lng=p.coords.longitude,acc=p.coords.accuracy;
+    map.easeTo({center:[lng,lat],zoom:acc>2000?14:16.4,duration:900});
+    if(meM)meM.remove();
+    var d=document.createElement('div');
+    d.style.cssText='width:15px;height:15px;border-radius:50%;background:#1E88E5;'+
+      'border:2.5px solid #fff;box-shadow:0 0 0 6px rgba(30,136,229,.22),0 2px 8px rgba(0,0,0,.35)';
+    meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
+    setTimeout(function(){ autoLoad(true); },600);
+  },function(err){
+    if(!quiet) setTip('現在地を使うと、いまいる場所から始められます');
+  },{enableHighAccuracy:true,timeout:12000,maximumAge:60000});
+}
+
 /* ============================================================
    写真 / 現在地 / 昼夜
    ============================================================ */
@@ -1172,19 +1197,12 @@ document.getElementById('btn-loc').onclick=function(){
     meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
     setTip('現在地　誤差 約'+Math.round(acc)+'m');btn.classList.remove('act');}
   function ng(e){btn.classList.remove('act');setTip('取得失敗 ['+e.code+'] '+(GERR[e.code]||e.message));}
-  navigator.geolocation.getCurrentPosition(ok,function(){
-    navigator.geolocation.getCurrentPosition(ok,ng,
+  navigator.geolocation.getCurrentPosition(function(p){locDone=true;ok(p);},function(){
+    navigator.geolocation.getCurrentPosition(function(p){locDone=true;ok(p);},ng,
       {enableHighAccuracy:false,timeout:25000,maximumAge:600000});},
     {enableHighAccuracy:true,timeout:30000,maximumAge:0});
 };
 
-document.getElementById('btn-3d').onclick=function(){
-  is3D=!is3D; this.classList.toggle('act',is3D);
-  if(map.getLayer('bld3d'))map.setLayoutProperty('bld3d','visibility',is3D?'visible':'none');
-  else if(is3D)afterStyle();
-  map.easeTo({pitch:is3D?48:0,duration:520});
-  setTip(is3D?'3D':'2D');
-};
 document.getElementById('btn-night').onclick=function(){
   night=!night; document.body.classList.toggle('dark',night);
   applyTint(); setTip(night?'夜':'昼');
@@ -1820,8 +1838,8 @@ async function openFriends(){
     var dy=e.changedTouches[0].clientY-fy, dt=Date.now()-ft;
     if(!fmoved){ if(fabs.classList.contains('hide')) setFabs(false); return; }
     var fast=dt<420;
-    if(dy<-30&&fast) setFabs(true);
-    if(dy> 30&&fast) setFabs(false);
+    if(dy> 30&&fast) setFabs(true);    // 下へ払うと隠す
+    if(dy<-30&&fast) setFabs(false);   // 上へ払うと戻す
   }
   [fabs,pull].forEach(function(el2){
     el2.addEventListener('touchstart',onStart,{passive:true});
