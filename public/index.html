@@ -267,7 +267,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v48';
+var BUILD='v49';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -1622,6 +1622,7 @@ const FB={apiKey:"AIzaSyAJFFjRk6zvAA_L9-1O7Y7Q43Yw86QQtxM",
 let fbUser=null,meP=null;
 try{ if(typeof firebase!=='undefined'){
   firebase.initializeApp(FB);
+  try{ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
   firebase.auth().onAuthStateChanged(function(u){
     fbUser=u; var b=document.getElementById('btn-me');
     if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
@@ -1629,7 +1630,11 @@ try{ if(typeof firebase!=='undefined'){
       }); }
     else{ b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; meP=null; }
   });
-  firebase.auth().getRedirectResult().catch(function(){});
+  firebase.auth().getRedirectResult().then(function(r){
+    if(r&&r.user) setTip('ログインしました');
+  }).catch(function(e){
+    if(e&&e.code&&e.code!=='auth/no-auth-event') setTip('ログイン失敗: '+e.code);
+  });
 }}catch(e){}
 async function api(path,opt){
   opt=opt||{}; var h=Object.assign({},opt.headers||{});
@@ -1638,6 +1643,32 @@ async function api(path,opt){
 }
 async function loadMe(){try{var r=await api('/api/me');if(r.ok)meP=await r.json();}catch(e){}}
 document.getElementById('btn-me').onclick=function(){ openMe(); };
+
+/* ============================================================
+   ログイン
+
+   アプリの中では別窓（ポップアップ）が開けないので、
+   画面ごと移って戻ってくる方式にする。
+   ============================================================ */
+function doLogin(){
+  if(typeof firebase==='undefined'){ setTip('ログインの部品がありません'); return; }
+  var pv=new firebase.auth.GoogleAuthProvider();
+  pv.setCustomParameters({prompt:'select_account'});
+
+  if(isApp){
+    firebase.auth().signInWithRedirect(pv).catch(function(e){
+      setTip('ログイン失敗: '+(e&&e.code||e));
+    });
+    return;
+  }
+  firebase.auth().signInWithPopup(pv).catch(function(e){
+    if(e&&/popup|blocked|cancel/i.test(e.code||'')){
+      firebase.auth().signInWithRedirect(pv);
+    }else{
+      setTip('ログイン失敗: '+(e&&e.code||e));
+    }
+  });
+}
 
 function openMe(){
   var html='<div class="grab"></div><div class="pad" style="padding-top:18px">';
@@ -1650,11 +1681,7 @@ function openMe(){
       '<button class="btn g" id="x" style="margin-top:8px">あとで</button></div>';
     var s0=showSheet(html);
     s0.querySelector('#x').onclick=closeSheet;
-    s0.querySelector('#g').onclick=function(){closeSheet();
-      var pv=new firebase.auth.GoogleAuthProvider();
-      firebase.auth().signInWithPopup(pv).catch(function(e){
-        if(e&&/popup/i.test(e.code||''))firebase.auth().signInWithRedirect(pv);
-        else setTip('ログイン失敗: '+(e&&e.code||e));});};
+    s0.querySelector('#g').onclick=function(){ closeSheet(); doLogin(); };
     return;
   }
 
