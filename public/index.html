@@ -170,6 +170,14 @@ body.dark{--bg:#000000;--sf:#141414;--ink:#FAFAFA;--dim:#A0A0A0;--line:#262626;
 .pad{padding:0 16px}
 
 /* ---------- 場所の確認 ---------- */
+.zoombar{position:fixed;right:9px;top:50%;transform:translateY(-50%);
+  width:5px;height:150px;border-radius:99px;background:rgba(128,128,128,.22);
+  z-index:39;opacity:0;transition:opacity .2s;pointer-events:none;
+  display:flex;align-items:flex-end;overflow:hidden}
+.zoombar.on{opacity:1}
+.zoombar b{display:block;width:100%;background:var(--ink);border-radius:99px;
+  opacity:.75;transition:height .06s linear}
+
 .focus{pointer-events:none}
 .focus i{display:block;width:15px;height:15px;border-radius:50%;background:var(--btn);
   border:3px solid var(--ring);box-shadow:var(--sh)}
@@ -267,7 +275,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v51';
+var BUILD='v52';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -639,21 +647,8 @@ function addPlaceLayers(){
     'text-color':night?'#FFFFFF':'#111111',
     'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.7}});
 
-  ['photo-ic','mine-ring','mine-ic','frnd-ring','frnd-ic','spot-dot','spot-ic'].forEach(function(id){
-    map.on('click',id,function(e){
-      var pr=e.features[0].properties;
-      e.originalEvent.__hit=1;
-      var mine=String(pr.mine)==='1';
-      var f=null;
-      if(mine){ f=spots.filter(function(x){return x.n===pr.n;})[0]; }
-      else{
-        f=pois.filter(function(x){return x.n===pr.n;})[0];
-        if(!f){ var ks=Object.keys(others);
-          for(var i=0;i<ks.length;i++){ if(others[ks[i]].n===pr.n){f=others[ks[i]];break;} } }
-      }
-      if(f)openPlace(f,mine);
-    });
-  });
+  /* 押したときの判定は、地図のクリック処理側で一括して行う。
+     レイヤーごとに受けると、順番の都合で二重に開いてしまう */
 }
 
 
@@ -917,22 +912,55 @@ function baseCat(p){
 }
 map.on('click',function(e){
   if(placing){ movePlacing(e.lngLat.lat,e.lngLat.lng); return; }
-  if(e.originalEvent&&e.originalEvent.__hit)return;   // ピンを押したときは何もしない
 
-  // 地図に元から描かれている店を押したか調べる
-  var pad=18,box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]],fs=[];
-  try{fs=map.queryRenderedFeatures(box);}catch(_){}
+  var pad=20,box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]],fs=[];
+  try{ fs=map.queryRenderedFeatures(box); }catch(_){}
+
+  /* 優先順位をはっきり決める。
+     ① 自分の思い出　② フレンド　③ 読み込んだ場所　④ 地図に元からある店
+     上のものが見つかったら、そこで打ち止め。
+     こうしないと、記録を押したのに「この場所でいいですか」も一緒に出てしまう */
+  function nearest(list){
+    var best=null,bd=1e9;
+    fs.forEach(function(f){
+      if(!f.layer||list.indexOf(f.layer.id)<0)return;
+      if(!f.geometry||f.geometry.type!=='Point')return;
+      var q=map.project(f.geometry.coordinates);
+      var d=Math.hypot(q.x-e.point.x,q.y-e.point.y);
+      if(d<bd){bd=d;best=f;}
+    });
+    return best;
+  }
+
+  var f=nearest(['photo-ic','mine-ring','mine-ic']);
+  if(f){
+    var s=spots.filter(function(x){return x.n===f.properties.n;})[0];
+    if(s){ openPlace(s,true); return; }
+  }
+
+  f=nearest(['frnd-ring','frnd-ic']);
+  if(f){
+    var ks=Object.keys(others);
+    for(var i=0;i<ks.length;i++){
+      if(others[ks[i]].n===f.properties.n){ openPlace(others[ks[i]],false); return; }
+    }
+  }
+
+  f=nearest(['spot-dot','spot-ic']);
+  if(f){
+    var p3=pois.filter(function(x){return x.n===f.properties.n;})[0];
+    if(p3){ openPlace(p3,false); return; }
+  }
+
   var best=null,bd=1e9;
-  fs.forEach(function(f){
-    if(!f.geometry||f.geometry.type!=='Point')return;
-    if(f.sourceLayer!=='poi'||!f.properties||!f.properties.name)return;
-    var q=map.project(f.geometry.coordinates);
+  fs.forEach(function(x){
+    if(!x.geometry||x.geometry.type!=='Point')return;
+    if(x.sourceLayer!=='poi'||!x.properties||!x.properties.name)return;
+    var q=map.project(x.geometry.coordinates);
     var d=Math.hypot(q.x-e.point.x,q.y-e.point.y);
-    if(d<bd){bd=d;best=f;}
+    if(d<bd){bd=d;best=x;}
   });
-
   if(best){
-    // 店を押したときは、確認バーではなく詳細を開く
     var pr=best.properties,c=best.geometry.coordinates;
     var nm=pr['name:ja']||pr.name;
     var known=pois.filter(function(x){return x.n===nm;})[0];
@@ -941,7 +969,6 @@ map.on('click',function(e){
     return;
   }
 
-  // 何もない場所を押したときだけ、場所の確認を出す
   startPlacing(e.lngLat.lat,e.lngLat.lng,{});
 });
 
@@ -2121,6 +2148,70 @@ async function openFriends(){
   });
   pull.addEventListener('click',function(){ setFabs(false); });
   pull.addEventListener('mousedown',function(){ setFabs(false); });
+})();
+
+
+/* ============================================================
+   片手ズーム
+
+   画面の右端を上下になぞると、拡大・縮小できる。
+   両手が使えないときのため。
+   ・上へ → 寄る
+   ・下へ → 引く
+   縦に動いたときだけ効かせて、地図を動かす操作と喧嘩しないようにする。
+   ============================================================ */
+(function(){
+  var el2=document.getElementById('map');
+  var W=44;                 // 右端からこの幅の中で始めたときだけ
+  var on=false, y0=0, z0=0, moved=0;
+  var hint=null;
+
+  function edge(x){ return x > window.innerWidth - W; }
+
+  function showBar(v){
+    if(!hint){
+      hint=document.createElement('div');
+      hint.className='zoombar';
+      hint.innerHTML='<b></b>';
+      document.body.appendChild(hint);
+    }
+    hint.classList.toggle('on',v);
+  }
+  function setBar(z){
+    if(!hint)return;
+    var t=(z-map.getMinZoom())/(map.getMaxZoom()-map.getMinZoom());
+    hint.querySelector('b').style.height=Math.max(4,t*100)+'%';
+  }
+
+  el2.addEventListener('touchstart',function(e){
+    if(e.touches.length!==1)return;
+    if(!edge(e.touches[0].clientX))return;
+    on=true; moved=0;
+    y0=e.touches[0].clientY;
+    z0=map.getZoom();
+    showBar(true); setBar(z0);
+  },{passive:true});
+
+  el2.addEventListener('touchmove',function(e){
+    if(!on||e.touches.length!==1)return;
+    var dy=y0-e.touches[0].clientY;         // 上へ動かすと正
+    moved=Math.max(moved,Math.abs(dy));
+    if(moved<6)return;
+    e.preventDefault();                      // 地図の移動を止める
+    // 画面の高さいっぱいで、およそ6段階ぶん
+    var z=z0 + (dy/window.innerHeight)*6;
+    z=Math.min(map.getMaxZoom(),Math.max(map.getMinZoom(),z));
+    map.setZoom(z);
+    setBar(z);
+  },{passive:false});
+
+  function end(){
+    if(!on)return;
+    on=false;
+    showBar(false);
+  }
+  el2.addEventListener('touchend',end,{passive:true});
+  el2.addEventListener('touchcancel',end,{passive:true});
 })();
 
 /* ============================================================
