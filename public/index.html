@@ -18,9 +18,9 @@ body{--bg:#EFEDE8;--sf:#FFFFFF;--ink:#111111;--dim:#787878;--line:#E6E4E0;
   --sh:0 2px 10px rgba(0,0,0,.14);--sh2:0 -4px 26px rgba(0,0,0,.12);
   background:var(--bg);color:var(--ink);transition:background .4s,color .4s}
 /* 夜 */
-body.dark{--bg:#1E2A29;--sf:#26332F;--ink:#F0F4F2;--dim:#9DAAA6;--line:#38443F;
-  --ring:#1E2A29;--chip:#36443F;--btn:#F0F4F2;--btnink:#1E2A29;--warn:#FF6B60;
-  --sh:0 2px 12px rgba(0,0,0,.55);--sh2:0 -4px 30px rgba(0,0,0,.55)}
+body.dark{--bg:#121214;--sf:#1E1E22;--ink:#F2F2F4;--dim:#9E9EA4;--line:#32323A;
+  --ring:#121214;--chip:#2C2C33;--btn:#F2F2F4;--btnink:#121214;--warn:#FF6B60;
+  --sh:0 2px 12px rgba(0,0,0,.6);--sh2:0 -4px 30px rgba(0,0,0,.6)}
 
 #map{position:fixed;inset:0}
 
@@ -275,7 +275,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v55';
+var BUILD='v56';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -378,18 +378,18 @@ function dbAll(s){return new Promise(function(r){if(!db)return r([]);
    ============================================================ */
 const PALETTE={
   night:{
-    land:      '#2C3B3B',   // 陸。黒ではなく、緑がかった暗いグレー
-    water:     '#1B3A6B',   // 水。しっかり青を残す
-    green:     '#28402F',   // 公園・林
-    road:      '#6E7C82',   // 大きな道。背景より明るくする
-    roadMinor: '#4E5C62',   // 細い道
-    roadCase:  '#22302F',   // 道のふち
-    rail:      '#3F4C52',
-    building:  '#33443F',
-    text:      '#E8EDEA',
-    textSub:   '#A8B6B2',
-    halo:      '#1E2A29',
-    border:    '#4A5A58'
+    land:      '#1C1C1E',   // 陸。落ち着いた黒に近いグレー
+    water:     '#16305C',   // 水。青は残す
+    green:     '#1F2A22',   // 公園・林。ほんのり緑
+    road:      '#6B6B70',   // 大きな道。背景よりはっきり明るく
+    roadMinor: '#48484D',   // 細い道
+    roadCase:  '#141416',   // 道のふち
+    rail:      '#3A3A3E',
+    building:  '#2A2A2E',
+    text:      '#F0F0F2',
+    textSub:   '#A8A8AE',
+    halo:      '#121214',
+    border:    '#4A4A50'
   },
   day:{
     land:      '#F2F0EA',
@@ -528,7 +528,7 @@ function afterStyle(){
       try{
         map.addLayer({id:'bld3d',type:'fill-extrusion',source:src,'source-layer':'building',
           minzoom:14,paint:{
-            'fill-extrusion-color':night?'#33443F':'#E6E2D9',
+            'fill-extrusion-color':night?'#2A2A2E':'#E6E2D9',
             'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],6],
             'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
             'fill-extrusion-opacity':night?0.72:0.88}},firstSym);
@@ -650,7 +650,7 @@ function addPlaceLayers(){
   // 地図が元から描いている店とまったく同じ大きさ・濃さにする
   map.addLayer({id:'spot-dot',type:'circle',source:'spot',minzoom:14,paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
-    'circle-color':night?'#44544F':'#E9E6E0',
+    'circle-color':night?'#3A3A3E':'#E9E6E0',
     'circle-stroke-width':0,'circle-opacity':.95}});
   map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14,layout:{
     'icon-image':['get','icon'],
@@ -685,7 +685,7 @@ function addPlaceLayers(){
   map.addLayer({id:'mine-ring',type:'circle',source:'mine',paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],12,5,15,8,18,11],
     'circle-color':night?'#FAFAFA':'#111111',
-    'circle-stroke-color':night?'#1E2A29':'#FFFFFF','circle-stroke-width':2.4}});
+    'circle-stroke-color':night?'#121214':'#FFFFFF','circle-stroke-width':2.4}});
   map.addLayer({id:'mine-ic',type:'symbol',source:'mine',minzoom:13.5,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],13.5,.85,17,1.15],
@@ -694,7 +694,7 @@ function addPlaceLayers(){
     'text-optional':true,'text-max-width':9
   },paint:{
     'text-color':night?'#FFFFFF':'#000000',
-    'text-halo-color':night?'#1E2A29':'#FFFFFF','text-halo-width':1.8}});
+    'text-halo-color':night?'#121214':'#FFFFFF','text-halo-width':1.8}});
 
   // 写真の丸。地図の中に描くので、ズームしてもずれない
   map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,layout:{
@@ -1082,12 +1082,14 @@ async function autoLoad(force){
     if(!force&&cells[cell])return;
     cells[cell]=1; busy=true; loadLog.run++;
 
+    // まず自分たちが貯めたものから。外へは足りない分だけ取りに行く
+    var mine=await loadOurs();
     var n=await loadHP();
     var w=await loadWiki();
     var rk=await loadRakuten();
-    loadLog.hp+=n; loadLog.wiki+=w; loadLog.rk+=rk;
+    loadLog.hp+=n; loadLog.wiki+=w; loadLog.rk+=rk; loadLog.ours=(loadLog.ours||0)+mine;
 
-    var t=n+w+rk;
+    var t=mine+n+w+rk;
     if(t){ render(true); setTip('この辺りを '+t+' 件 読み込みました'); }
     else if(force){ setTip('この辺りには見つかりませんでした'); }
   }catch(e){ loadLog.err=String(e&&e.message||e); }
@@ -1095,6 +1097,27 @@ async function autoLoad(force){
 }
 
 function dedupe(){var s={};pois.forEach(function(p){s[p.n+p.lat.toFixed(4)]=1;});return s;}
+
+
+/* 自分たちで貯めた場所。外に頼らず、ここから返せる分 */
+async function loadOurs(){
+  try{
+    var b=map.getBounds();
+    var r=await fetch(SERVER+'/api/places?s='+b.getSouth()+'&w='+b.getWest()+
+      '&n='+b.getNorth()+'&e='+b.getEast()+'&limit=400');
+    if(!r.ok)return 0;
+    var j=await r.json();
+    var seen=dedupe(), n=0;
+    (j.places||[]).forEach(function(p){
+      if(!isFinite(p.lat)||!isFinite(p.lng))return;
+      var k=p.n+p.lat.toFixed(4); if(seen[k])return; seen[k]=1;
+      pois.push({n:p.n,c:p.c||'景',lat:p.lat,lng:p.lng,
+        gname:p.gname||'',budget:p.budget||'',addr:p.addr||'',src:'db'});
+      n++;
+    });
+    return n;
+  }catch(e){ return 0; }
+}
 
 async function loadHP(){
   var c=map.getCenter(),b=map.getBounds();
@@ -2327,8 +2350,8 @@ function showDiag(){
         'BUILD '+BUILD+'<br>'+
         'ズーム <b>'+map.getZoom().toFixed(2)+'</b>（写真は '+PHOTO_ZOOM+' 以上）<br>'+
         '思い出 '+spots.length+' 件／読み込んだ場所 <b>'+pois.length+'</b> 件<br>'+
-        '取得：実行 '+loadLog.run+' 回／飲食 '+loadLog.hp+'／名所 '+loadLog.wiki+
-          '／宿 '+loadLog.rk+
+        '取得：実行 '+loadLog.run+' 回／自前 '+(loadLog.ours||0)+
+          '／飲食 '+loadLog.hp+'／名所 '+loadLog.wiki+'／宿 '+loadLog.rk+
         (loadLog.err?('<br><span style="color:var(--warn)">取得エラー：'+
           esc(loadLog.err)+'</span>'):'')+'<br>'+
         '写真つきの場所 <b>'+withPhoto+'</b> 件<br>'+
