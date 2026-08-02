@@ -267,7 +267,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v50';
+var BUILD='v51';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -344,10 +344,11 @@ function el(h){var d=document.createElement('div');d.innerHTML=h.trim();return d
 let db=null;
 function openDB(){return new Promise(function(r){try{
   if(!window.indexedDB)return r(false);
-  var q=indexedDB.open('michikusa',1);
+  var q=indexedDB.open('michikusa',2);
   q.onupgradeneeded=function(){var d=q.result;
     if(!d.objectStoreNames.contains('spots'))d.createObjectStore('spots',{keyPath:'id'});
-    if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'k'});};
+    if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'k'});
+    if(!d.objectStoreNames.contains('seen'))d.createObjectStore('seen',{keyPath:'id'});};
   q.onsuccess=function(){db=q.result;r(true);};q.onerror=function(){r(false);};
   setTimeout(function(){if(!db)r(false);},4000);}catch(e){r(false);}});}
 function tx(s,m){return db.transaction(s,m).objectStore(s);}
@@ -413,7 +414,16 @@ function retint(st){
 /* ---------- 地図 ---------- */
 const map=new maplibregl.Map({container:'map',style:STYLE,
   center:[139.7745,35.7150],zoom:15.4,pitch:48,bearing:-12,maxPitch:70,
-  antialias:true,attributionControl:{compact:true}});
+  antialias:true,
+  attributionControl:{
+    compact:true,
+    /* 各サービスの規約で表示が求められているもの。消さないこと */
+    customAttribution:[
+      '<a href="https://webservice.recruit.co.jp/" target="_blank">Powered by ホットペッパー グルメ</a>',
+      '<a href="https://webservice.rakuten.co.jp/" target="_blank">Supported by 楽天ウェブサービス</a>',
+      '<a href="https://ja.wikipedia.org/" target="_blank">Wikipedia</a>'
+    ]
+  }});
 let baseStyle=null;
 
 map.on('load',function(){
@@ -1294,6 +1304,32 @@ document.getElementById('btn-night').onclick=function(){
 /* ============================================================
    記録する
    ============================================================ */
+
+/* ============================================================
+   一度取り込んだ写真を覚えておく
+
+   写真そのものに固有の番号は無いので、指紋を自分で作る。
+   撮影日時＋座標で判別し、日時が無いものはファイルの中身から作る。
+   ============================================================ */
+function fingerprint(lat,lng,at,file){
+  if(at&&isFinite(lat)){
+    return 'g'+Math.round(at/1000)+'_'+lat.toFixed(5)+'_'+lng.toFixed(5);
+  }
+  // 日時が取れない場合は、大きさと更新時刻で代用
+  return 'f'+(file?file.size:0)+'_'+(file?(file.lastModified||0):0);
+}
+async function seenAdd(fp){ return dbPut('seen',{id:fp,at:Date.now()}); }
+async function seenHas(fp){
+  return new Promise(function(r){
+    if(!db)return r(false);
+    try{
+      var q=db.transaction('seen','readonly').objectStore('seen').get(fp);
+      q.onsuccess=function(){ r(!!q.result); };
+      q.onerror=function(){ r(false); };
+    }catch(e){ r(false); }
+  });
+}
+
 /* ============================================================
    カメラロールからまとめて取り込む
 
@@ -1345,7 +1381,7 @@ async function handleBulk(files){
     '<div id="bfoot"></div></div>');
   var msg=s.querySelector('#bmsg'), foot=s.querySelector('#bfoot');
 
-  var found=[], noGeo=0;
+  var found=[], noGeo=0, already=0;
   for(var i=0;i<files.length;i++){
     msg.textContent=(i+1)+' / '+files.length+' 枚を調べています…';
     var f=files[i];
@@ -1354,13 +1390,22 @@ async function handleBulk(files){
       if(!g||g.latitude==null){ noGeo++; continue; }
       var pp=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(function(){return null;});
       var dt=pp&&(pp.DateTimeOriginal||pp.CreateDate);
-      found.push({file:f,lat:g.latitude,lng:g.longitude,
-        d:dt?new Date(dt).toISOString().slice(0,10):'',
-        at:dt?new Date(dt).getTime():(f.lastModified||Date.now())});
+      var at=dt?new Date(dt).getTime():(f.lastModified||Date.now());
+      var fp=fingerprint(g.latitude,g.longitude,dt?at:null,f);
+      if(await seenHas(fp)){ already++; continue; }   // もう入れたもの
+      found.push({file:f,lat:g.latitude,lng:g.longitude,fp:fp,
+        d:dt?new Date(dt).toISOString().slice(0,10):'', at:at});
     }catch(err){ noGeo++; }
   }
 
   if(!found.length){
+    if(already&&!noGeo){
+      msg.innerHTML='<b>'+already+' 枚</b>は、すでに地図に入っています。<br>'+
+        '<span style="font-size:12px">新しく入れるものはありませんでした。</span>';
+      foot.innerHTML='<button class="btn g" id="x" style="margin-top:16px">とじる</button>';
+      foot.querySelector('#x').onclick=closeSheet;
+      return;
+    }
     msg.innerHTML='位置情報のある写真が見つかりませんでした。<br>'+
       '<span style="font-size:12px">iPhoneなら「設定 → プライバシーとセキュリティ → '+
       '位置情報サービス → カメラ」をオンにしてください。</span>';
@@ -1383,7 +1428,8 @@ async function handleBulk(files){
   });
 
   msg.innerHTML='<b>'+found.length+' 枚</b>から <b>'+groups.length+' か所</b>が見つかりました。'+
-    (noGeo?('<br><span style="font-size:12px">位置情報のない '+noGeo+' 枚は除きました。</span>'):'');
+    (noGeo?('<br><span style="font-size:12px">位置情報のない '+noGeo+' 枚は除きました。</span>'):'')+
+    (already?('<br><span style="font-size:12px">すでに入っている '+already+' 枚は飛ばしました。</span>'):'');
 
   var list=s.querySelector('#blist');
   list.innerHTML='<div style="font-size:12px;color:var(--dim)">場所を調べています…</div>';
@@ -1438,6 +1484,7 @@ async function handleBulk(files){
         tag:'',d:g.d||new Date(g.at).toISOString().slice(0,10),photo:url||''};
       spots.push(rec);
       await dbPut('spots',rec);
+      for(var q=0;q<g.items.length;q++){ if(g.items[q].fp) await seenAdd(g.items[q].fp); }
       if(fbUser) pushOne(rec);
       done++;
     }
@@ -1483,6 +1530,7 @@ function openAdd(p){
     var rec={id:nid(),n:nm.value.trim(),c:cat,lat:p.lat,lng:p.lng,place:p.place||'',
       tag:ft.value.trim(),d:p.date||new Date().toISOString().slice(0,10),photo:p.photo||''};
     spots.push(rec); dbPut('spots',rec);
+    if(p.fp) seenAdd(p.fp);
     closeSheet(); render(true); setTip('追加しました');
     if(fbUser) pushOne(rec).then(function(o){ if(o)render(true); });
   };
@@ -1626,8 +1674,7 @@ try{ if(typeof firebase!=='undefined'){
   firebase.auth().onAuthStateChanged(function(u){
     fbUser=u; var b=document.getElementById('btn-me');
     if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
-      loadMe().then(function(){ syncUp(); syncDown();
-      }); }
+      loadMe().then(function(){ syncUp(); syncDown(); askHandle(); }); }
     else{ b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; meP=null; }
   });
   firebase.auth().getRedirectResult().then(function(r){
@@ -1650,6 +1697,84 @@ document.getElementById('btn-me').onclick=function(){ openMe(); };
    アプリの中では別窓（ポップアップ）が開けないので、
    画面ごと移って戻ってくる方式にする。
    ============================================================ */
+
+/* ============================================================
+   はじめてのID
+
+   ログインした直後に一度だけ尋ねる。
+   あとから変えられない（配ったQRやリンクが死ぬため）ので、
+   決める前にそのことを伝える。
+   ============================================================ */
+let askingHandle=false;
+
+async function askHandle(){
+  if(askingHandle)return;
+  if(!fbUser||!meP||meP.handle)return;
+  askingHandle=true;
+
+  var base=(fbUser.displayName||'').replace(/[^A-Za-z0-9_]/g,'').slice(0,12).toLowerCase();
+  var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:20px">'+
+    '<div style="font-size:19px;font-weight:700;margin-bottom:8px">あなたのIDを決めます</div>'+
+    '<div style="font-size:13px;color:var(--dim);line-height:1.85;margin-bottom:18px">'+
+      'フレンドはこのIDであなたを見つけます。<br>'+
+      '<b style="color:var(--warn)">あとから変えられません。</b>よく考えて決めてください。</div>'+
+    '<input class="fld" id="h-in" placeholder="例：damo" autocomplete="off" '+
+      'autocapitalize="none" spellcheck="false" value="'+esc(base)+'">'+
+    '<div id="h-msg" style="font-size:12px;color:var(--dim);line-height:1.7;'+
+      'min-height:34px;margin-bottom:4px">英数字と _ で、3〜20文字</div>'+
+    '<button class="btn" id="h-ok">このIDにする</button></div>');
+
+  var inp=s.querySelector('#h-in'), msg=s.querySelector('#h-msg'), ok=s.querySelector('#h-ok');
+
+  function check(){
+    var v=inp.value.trim();
+    if(!/^[A-Za-z0-9_]{3,20}$/.test(v)){
+      msg.textContent='英数字と _ で、3〜20文字にしてください';
+      msg.style.color='var(--dim)';
+      ok.disabled=true; return false;
+    }
+    msg.textContent='@'+v+' でよければ、下のボタンを押してください';
+    msg.style.color='var(--dim)';
+    ok.disabled=false; return true;
+  }
+  inp.oninput=check; check();
+
+  ok.onclick=async function(){
+    if(!check())return;
+    var v=inp.value.trim();
+    ok.disabled=true; ok.textContent='確かめています…';
+    try{
+      var r=await api('/api/me',{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:v})});
+      var j=await r.json().catch(function(){return {};});
+      if(r.status===409){
+        msg.textContent=(j.code==='taken')
+          ? 'そのIDは既に使われています。別のものを入れてください'
+          : (j.error||'そのIDは使えません');
+        msg.style.color='var(--warn)';
+        ok.disabled=false; ok.textContent='このIDにする';
+        inp.focus(); inp.select();
+        return;
+      }
+      if(!r.ok){
+        msg.textContent=j.error||'保存できませんでした';
+        msg.style.color='var(--warn)';
+        ok.disabled=false; ok.textContent='このIDにする';
+        return;
+      }
+      meP.handle=v;
+      askingHandle=false;
+      closeSheet();
+      setTip('@'+v+' に決まりました');
+    }catch(e){
+      msg.textContent='通信できませんでした';
+      msg.style.color='var(--warn)';
+      ok.disabled=false; ok.textContent='このIDにする';
+    }
+  };
+  setTimeout(function(){inp.focus();},380);
+}
+
 function doLogin(){
   if(typeof firebase==='undefined'){ setTip('ログインの部品がありません'); return; }
   var pv=new firebase.auth.GoogleAuthProvider();
@@ -1729,13 +1854,13 @@ function openMe(){
 
 
     '<div class="lab" style="margin-top:20px">あなたのID</div>'+
-    '<div style="display:flex;gap:8px">'+
-      '<input class="fld" id="f-handle" placeholder="damo など" style="margin:0" value="'+
-        esc((meP&&meP.handle)||'')+'">'+
-      '<button class="btn" id="save-handle" style="width:auto;padding:0 18px;margin:0">決定</button>'+
-    '</div>'+
-    '<div style="font-size:11.5px;color:var(--dim);margin-top:6px;line-height:1.7">'+
-      'フレンドはこのIDであなたを探します。</div>'+
+    ((meP&&meP.handle)
+      ? ('<div class="fld" style="opacity:.7">@'+esc(meP.handle)+'</div>'+
+         '<div style="font-size:11.5px;color:var(--dim);margin-top:-4px;line-height:1.7">'+
+         'IDは変更できません。</div>')
+      : ('<button class="btn" id="h-set">IDを決める</button>'+
+         '<div style="font-size:11.5px;color:var(--dim);margin-top:6px;line-height:1.7">'+
+         'フレンドはこのIDであなたを探します。</div>'))+
 
     '<div class="lab" style="margin-top:22px">新しい思い出をだれに見せるか</div>'+
     '<div class="chips" id="seg-vis">'+
@@ -1759,17 +1884,8 @@ function openMe(){
   s.querySelector('#fr').onclick=function(){openFriends();};
   s.querySelector('#out').onclick=function(){ doLogout(); closeSheet(); };
 
-  s.querySelector('#save-handle').onclick=async function(){
-    var v=s.querySelector('#f-handle').value.trim().replace(/[^A-Za-z0-9_]/g,'');
-    if(v.length<3){setTip('3文字以上の英数字で');return;}
-    var r=await api('/api/me',{method:'PATCH',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:v})});
-    if(r.status===409){setTip('そのIDは使われています');return;}
-    if(!r.ok){setTip('保存できませんでした');return;}
-    if(meP)meP.handle=v;
-    s.querySelector('#myhandle').textContent=v;
-    setTip('IDを決めました');
-  };
+  var hset=s.querySelector('#h-set');
+  if(hset)hset.onclick=function(){ closeSheet(); askingHandle=false; askHandle(); };
 
   [['seg-vis','default_visibility'],['seg-prec','public_precision']].forEach(function(pair){
     var box=s.querySelector('#'+pair[0]); if(!box)return;
