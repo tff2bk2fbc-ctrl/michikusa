@@ -275,7 +275,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v53';
+var BUILD='v55';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -428,44 +428,49 @@ function roleOf(L){
 }
 
 function retint(st){
-  var C=PALETTE[night?'night':'day'];
-  var s=JSON.parse(JSON.stringify(st));
+  try{
+    var C=PALETTE[night?'night':'day'];
+    var s=JSON.parse(JSON.stringify(st));
 
-  (s.layers||[]).forEach(function(L){
-    if(!L.paint)L.paint={};
+    (s.layers||[]).forEach(function(L){
+      try{
+        if(!L.paint)L.paint={};
 
-    if(L.type==='symbol'){
-      // 文字は、地名の大きさで濃さを変える
-      var big=/place|city|town|country|state/.test((L.id||'')+(L['source-layer']||''));
-      L.paint['text-color']=big?C.text:C.textSub;
-      L.paint['text-halo-color']=C.halo;
-      L.paint['text-halo-width']=1.6;
-      return;
-    }
+        if(L.type==='symbol'){
+          var big=/place|city|town|country|state/.test((L.id||'')+(L['source-layer']||''));
+          L.paint['text-color']=big?C.text:C.textSub;
+          L.paint['text-halo-color']=C.halo;
+          L.paint['text-halo-width']=1.6;
+          return;
+        }
 
-    var role=roleOf(L);
-    if(!role)return;
-    var col=C[role];
+        var role=roleOf(L);
+        if(!role)return;
+        var col=C[role];
+        if(!col)return;
 
-    if(L.type==='background') L.paint['background-color']=col;
-    if(L.type==='fill'){
-      L.paint['fill-color']=col;
-      if('fill-outline-color' in L.paint) L.paint['fill-outline-color']=C.roadCase;
-    }
-    if(L.type==='line'){
-      L.paint['line-color']=col;
-      // 夜は道路をわずかに太くする。細いと背景に沈んで見えなくなる
-      if(night && (role==='road'||role==='roadMinor') && L.paint['line-width']!==undefined){
-        var w=L.paint['line-width'];
-        if(typeof w==='number') L.paint['line-width']=w*1.25;
-        else if(Array.isArray(w)) L.paint['line-width']=['*',w,1.25];
-      }
-      if(night && role==='road') L.paint['line-opacity']=1;
-    }
-    if(L.type==='fill-extrusion') L.paint['fill-extrusion-color']=C.building;
-  });
-
-  return s;
+        if(L.type==='background') L.paint['background-color']=col;
+        if(L.type==='fill'){
+          L.paint['fill-color']=col;
+          if('fill-outline-color' in L.paint) L.paint['fill-outline-color']=C.roadCase;
+        }
+        if(L.type==='line'){
+          L.paint['line-color']=col;
+          // 夜は道路をわずかに太く。細いと背景に沈む
+          if(night&&(role==='road'||role==='roadMinor')){
+            var w=L.paint['line-width'];
+            if(typeof w==='number') L.paint['line-width']=w*1.25;
+          }
+          if(night&&role==='road') L.paint['line-opacity']=1;
+        }
+        if(L.type==='fill-extrusion') L.paint['fill-extrusion-color']=C.building;
+      }catch(e){ /* この部品だけ飛ばす */ }
+    });
+    return s;
+  }catch(e){
+    showErr('[retint] '+dump(e));
+    return st;                 // 失敗したら元の色のまま出す
+  }
 }
 
 /* ---------- 地図 ---------- */
@@ -483,14 +488,22 @@ const map=new maplibregl.Map({container:'map',style:STYLE,
   }});
 let baseStyle=null;
 
+map.on('error',function(e){
+  var m=(e&&e.error&&e.error.message)||'';
+  if(/glyph|sprite|tile/i.test(m))return;   // よくある小さな失敗は無視
+});
 map.on('load',function(){
   baseStyle=map.getStyle();
   applyTint();
 });
 function applyTint(){
-  if(!baseStyle)return;
-  map.setStyle(retint(baseStyle),{diff:false});
-  map.once('idle',afterStyle);
+  try{
+    if(!baseStyle)return;
+    map.setStyle(retint(baseStyle),{diff:false});
+    map.once('idle',afterStyle);
+    // 念のため、時間が経っても来なければ自分で進める
+    setTimeout(function(){ if(!map.getSource('spot')) afterStyle(); },3000);
+  }catch(e){ showErr('[applyTint] '+dump(e)); hideSplash(); }
 }
 function afterStyle(){
  try{
@@ -1159,6 +1172,21 @@ qEl.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();qEl.blur();sear
 document.getElementById('map').addEventListener('touchstart',function(){
   resEl.classList.remove('on');},{passive:true});
 
+
+/* Googleの分類を、こちらの分類に置き換える */
+function gCat(types){
+  var t=(types||[]).join(' ').toLowerCase();
+  if(/cafe|coffee|bakery|tea/.test(t))                    return '喫茶';
+  if(/bar|night_club|liquor/.test(t))                     return '酒';
+  if(/restaurant|food|meal|ramen|sushi/.test(t))          return '食';
+  if(/lodging|hotel|resort/.test(t))                      return '宿';
+  if(/spa|onsen|bath|sauna/.test(t))                      return '湯';
+  if(/place_of_worship|shrine|temple|church/.test(t))     return '社';
+  if(/park|garden|campground/.test(t))                    return '園';
+  if(/book|library/.test(t))                              return '本';
+  return '景';
+}
+
 async function search(v){
   if(!v)return;
   var out=[];
@@ -1166,25 +1194,44 @@ async function search(v){
     out.push({k:'記録',img:s.photo,n:s.n,sub:s.place||'',lat:s.lat,lng:s.lng,p:s,mine:true});});
   pois.filter(function(p){return p.n.indexOf(v)>=0;}).slice(0,4).forEach(function(p){
     out.push({k:'地図',img:p.photo,n:p.n,sub:p.gname||'',lat:p.lat,lng:p.lng,p:p});});
-  draw(out,'探しています…');
   var c=map.getCenter();
+  // ① 店（ホットペッパー）
   try{
     var r=await fetch(SERVER+'/api/hotpepper?keyword='+encodeURIComponent(v)+
       '&lat='+c.lat+'&lng='+c.lng+'&range=5&pages=1');
     var j=await r.json();
-    (j.shops||[]).slice(0,6).forEach(function(s){
+    (j.shops||[]).slice(0,5).forEach(function(s){
       out.push({k:'店',img:s.photo,n:s.n,sub:[s.gname,s.addr].filter(Boolean).join(' ・ '),
         lat:s.lat,lng:s.lng,p:{n:s.n,c:HP_CAT[s.genre]||'食',lat:s.lat,lng:s.lng,
         gname:s.gname,budget:s.budget,photo:s.photo||'',src:'hp'}});});
   }catch(e){}
+  draw(out,'探しています…');
+
+  // ② Google。曖昧な言葉や、ここに無い場所を拾う
   try{
-    var r2=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5'+
+    var rg=await fetch(SERVER+'/api/gsearch?q='+encodeURIComponent(v)+
+      '&lat='+c.lat+'&lng='+c.lng);
+    var jg=await rg.json();
+    var have={}; out.forEach(function(o){ have[o.n]=1; });
+    (jg.places||[]).forEach(function(g){
+      if(have[g.n])return;              // 同じ店が二重に出ないように
+      have[g.n]=1;
+      out.push({k:'場所',n:g.n,sub:[g.gname,g.addr].filter(Boolean).join(' ・ '),
+        lat:g.lat,lng:g.lng,
+        p:{n:g.n,c:gCat(g.types),lat:g.lat,lng:g.lng,gname:g.gname,src:'g'}});
+    });
+  }catch(e){}
+
+  // ③ 地名
+  try{
+    var r2=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=4'+
       '&accept-language=ja&countrycodes=jp&q='+encodeURIComponent(v));
     var j2=await r2.json();
     (j2||[]).forEach(function(p){
       out.push({k:'地名',n:p.name||String(p.display_name).split(',')[0],
         sub:p.display_name,lat:Number(p.lat),lng:Number(p.lon)});});
   }catch(e){}
+
   draw(out,null);
 }
 function draw(list,note){
