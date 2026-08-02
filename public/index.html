@@ -267,7 +267,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v49';
+var BUILD='v50';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -1655,12 +1655,35 @@ function doLogin(){
   var pv=new firebase.auth.GoogleAuthProvider();
   pv.setCustomParameters({prompt:'select_account'});
 
+  // アプリの中では、画面を移さずにその場で済ませる
+  var FA=plugin('FirebaseAuthentication');
+  if(isApp&&FA){
+    setTip('ログインしています…');
+    FA.signInWithGoogle().then(function(r){
+      // 受け取った証をこちら側にも渡す
+      var tok=r&&r.credential&&r.credential.idToken;
+      var acc=r&&r.credential&&r.credential.accessToken;
+      if(!tok&&!acc){ setTip('ログインできませんでした'); return; }
+      var cred=firebase.auth.GoogleAuthProvider.credential(tok||null,acc||null);
+      return firebase.auth().signInWithCredential(cred);
+    }).then(function(){
+      setTip('ログインしました');
+    }).catch(function(e){
+      var c=(e&&(e.code||e.message))||e;
+      if(/cancel/i.test(String(c)))return;      // 自分でやめた場合
+      setTip('ログイン失敗: '+c);
+    });
+    return;
+  }
+
   if(isApp){
+    // 部品が無い場合は、画面遷移で
     firebase.auth().signInWithRedirect(pv).catch(function(e){
       setTip('ログイン失敗: '+(e&&e.code||e));
     });
     return;
   }
+
   firebase.auth().signInWithPopup(pv).catch(function(e){
     if(e&&/popup|blocked|cancel/i.test(e.code||'')){
       firebase.auth().signInWithRedirect(pv);
@@ -1668,6 +1691,14 @@ function doLogin(){
       setTip('ログイン失敗: '+(e&&e.code||e));
     }
   });
+}
+
+/** ログアウト。アプリのときは両方から出る */
+function doLogout(){
+  var FA=plugin('FirebaseAuthentication');
+  if(isApp&&FA){ try{ FA.signOut(); }catch(e){} }
+  try{ firebase.auth().signOut(); }catch(e){}
+  setTip('ログアウトしました');
 }
 
 function openMe(){
@@ -1726,8 +1757,7 @@ function openMe(){
   var s=showSheet(html);
   s.querySelector('#x').onclick=closeSheet;
   s.querySelector('#fr').onclick=function(){openFriends();};
-  s.querySelector('#out').onclick=function(){
-    firebase.auth().signOut();closeSheet();setTip('ログアウトしました');};
+  s.querySelector('#out').onclick=function(){ doLogout(); closeSheet(); };
 
   s.querySelector('#save-handle').onclick=async function(){
     var v=s.querySelector('#f-handle').value.trim().replace(/[^A-Za-z0-9_]/g,'');
