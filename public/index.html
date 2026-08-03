@@ -275,9 +275,13 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v60';
+var BUILD='v61';
+var T0=performance.now(), TT=[];
+function mark(n){ TT.push([n, Math.round(performance.now()-T0)]); }
+mark('開始');
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
+  if(!window.__sg){ window.__sg=1; mark('地図が見えた'); }
   var s=document.getElementById('splash');
   if(!s||s.classList.contains('gone'))return;
   setTimeout(function(){ s.classList.add('gone');
@@ -508,40 +512,68 @@ function retint(st){
 }
 
 /* ---------- 地図 ---------- */
-const map=new maplibregl.Map({container:'map',style:STYLE,
+const map=new maplibregl.Map({
+  container:'map',
+  /* 以前は「元の色で読む → 色を変えて差し替える」の2段階だった。
+     タイルを2回取りに行くので出るまで待たされる。
+     いったん空で立ち上げ、色を変えたものを一度だけ渡す */
+  style:{version:8,sources:{},layers:[
+    {id:'bg',type:'background',paint:{'background-color':night?'#1C1C1E':'#F2F0EA'}}
+  ]},
   center:[139.7745,35.7150],zoom:15.4,pitch:48,bearing:-12,maxPitch:70,
   antialias:true,
+  fadeDuration:0,
   attributionControl:{
     compact:true,
-    /* 各サービスの規約で表示が求められているもの。消さないこと */
     customAttribution:[
       '<a href="https://webservice.recruit.co.jp/" target="_blank">Powered by ホットペッパー グルメ</a>',
       '<a href="https://webservice.rakuten.co.jp/" target="_blank">Supported by 楽天ウェブサービス</a>',
       '<a href="https://ja.wikipedia.org/" target="_blank">Wikipedia</a>'
     ]
-  }});
-let baseStyle=null;
-
-map.on('error',function(e){
-  var m=(e&&e.error&&e.error.message)||'';
-  if(/glyph|sprite|tile/i.test(m))return;   // よくある小さな失敗は無視
+  }
 });
-map.on('load',function(){
-  baseStyle=map.getStyle();
-  applyTint();
-});
+/* 見た目の元を取ってきて、色を変えてから渡す */
+(async function loadStyle(){
+  try{
+    var t0=performance.now();
+    var r=await fetch(STYLE);
+    baseStyle=await r.json();
+    window.__tStyle=Math.round(performance.now()-t0);
+    mark('見た目を取得');
+    map.setStyle(retint(baseStyle),{diff:false});
+    map.once('styledata',function(){ afterStyle(); });
+  }catch(e){ showErr('[style] '+dump(e)); hideSplash(); }
+})();
 /* 地図が描けた時点で、待たせている画面を引く */
-map.once('idle',function(){ hideSplash(); });
-setTimeout(function(){ hideSplash(); },2600);
+map.on('data',function(e){ if(e.tile) hideSplash(); });
+setTimeout(function(){ hideSplash(); },3000);
 function applyTint(){
   try{
     if(!baseStyle)return;
     map.setStyle(retint(baseStyle),{diff:false});
-    map.once('idle',afterStyle);
-    // 念のため、時間が経っても来なければ自分で進める
-    setTimeout(function(){ if(!map.getSource('spot')) afterStyle(); },3000);
-  }catch(e){ showErr('[applyTint] '+dump(e)); hideSplash(); }
+    map.once('styledata',function(){ afterStyle(); });
+  }catch(e){ showErr('[applyTint] '+dump(e)); }
 }
+/* 3Dの建物。起動時に描くと重いので、あとから足す */
+function addBuildings(){
+  try{
+    if(!is3D||map.getLayer('bld3d'))return;
+    var st=map.getStyle(); if(!st||!st.layers)return;
+    var src=null;
+    for(var k in st.sources){ if(st.sources[k].type==='vector'){src=k;break;} }
+    if(!src)return;
+    var firstSym=null;
+    for(var i=0;i<st.layers.length;i++){
+      if(st.layers[i].type==='symbol'){firstSym=st.layers[i].id;break;} }
+    map.addLayer({id:'bld3d',type:'fill-extrusion',source:src,'source-layer':'building',
+      minzoom:14,paint:{
+        'fill-extrusion-color':night?'#2A2A2E':'#E6E2D9',
+        'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],6],
+        'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
+        'fill-extrusion-opacity':night?0.72:0.88}},firstSym);
+  }catch(e){}
+}
+
 function afterStyle(){
  try{
   // 地図に元からある店の文字を静かにする（写真ピンを主役にするため）
@@ -554,30 +586,14 @@ function afterStyle(){
       map.setPaintProperty(L.id,'icon-opacity',0.45);
     }catch(e){}
   });
-  // 3Dの建物。地図の文字より下に入れて、名前が隠れないようにする
-  if(is3D&&!map.getLayer('bld3d')){
-    var src=null;
-    for(var k in st.sources){ if(st.sources[k].type==='vector'){src=k;break;} }
-    var firstSym=null;
-    for(var i2=0;i2<st.layers.length;i2++){
-      if(st.layers[i2].type==='symbol'){firstSym=st.layers[i2].id;break;} }
-    if(src){
-      try{
-        map.addLayer({id:'bld3d',type:'fill-extrusion',source:src,'source-layer':'building',
-          minzoom:14,paint:{
-            'fill-extrusion-color':night?'#2A2A2E':'#E6E2D9',
-            'fill-extrusion-height':['coalesce',['get','render_height'],['get','height'],6],
-            'fill-extrusion-base':['coalesce',['get','render_min_height'],0],
-            'fill-extrusion-opacity':night?0.72:0.88}},firstSym);
-      }catch(e){}
-    }
-  }
+  if(is3D) setTimeout(addBuildings,700);   // 重いので後から
   SPRITE=null;
   Object.keys(ICON_CACHE).forEach(function(k){delete ICON_CACHE[k];});
   Object.keys(madeIcons).forEach(function(k){delete madeIcons[k];});
   addPlaceLayers();
   render(true);
-  if(!locDone) goHome(false);
+  hideSplash();
+  if(!locDone && !window.__homed){ window.__homed=1; goHome(false); }
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
 
@@ -1448,7 +1464,7 @@ async function goHome(quiet){
   locDone=true;
   map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.4,duration:900});
   showMe(p.lat,p.lng,p.acc);
-  setTimeout(function(){ autoLoad(true); },600);
+  setTimeout(function(){ autoLoad(true); },1200);
 }
 
 /* ============================================================
@@ -2498,6 +2514,8 @@ function showDiag(){
       '<div style="font-size:17px;font-weight:700;margin-bottom:12px">診断</div>'+
       '<div style="font-size:13px;line-height:2.1;margin-bottom:14px">'+
         'BUILD '+BUILD+'<br>'+
+        '起動：'+TT.map(function(x){return x[0]+' '+x[1]+'ms';}).join(' / ')+
+        (window.__tStyle?('　見た目の取得 '+window.__tStyle+'ms'):'')+'<br>'+
         'ズーム <b>'+map.getZoom().toFixed(2)+'</b>（写真は '+PHOTO_ZOOM+' 以上）<br>'+
         '思い出 '+spots.length+' 件／読み込んだ場所 <b>'+pois.length+'</b> 件<br>'+
         '取得：実行 '+loadLog.run+' 回／自前 '+(loadLog.ours||0)+
@@ -2532,10 +2550,11 @@ if(location.search.indexOf('diag=1')>=0) setTimeout(showDiag,1500);
 /* ---------- 起動 ---------- */
 (async function(){
  try{
-  preload();                      // 手が空いたころに、残りの部品を読んでおく
   var ok=await openDB();
   if(ok) spots=(await dbAll('spots')).filter(valid);
-  if(map.isStyleLoaded())render();
+  mark('記録を読んだ');
+  if(map.getSource&&map.getSource('mine'))render(true);
+  preload();                      // 部品はいちばん最後でいい
  }catch(e){showErr('[init] '+dump(e));}
 })();
 
