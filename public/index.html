@@ -13,13 +13,15 @@ button,input{font-family:inherit;color:inherit;border:none;background:none;outli
 button{cursor:pointer}
 
 /* 昼 */
-body{--glass:rgba(255,255,255,.62);--glassline:rgba(0,0,0,.06);--glasstop:rgba(255,255,255,.9);
+body{--glass:rgba(255,255,255,.66);--glassline:rgba(0,0,0,.07);--glasstop:rgba(255,255,255,.95);
+  --glareC:rgba(255,255,255,.75);--pillC:rgba(0,0,0,.055);--camring:rgba(255,255,255,.5);
   --bg:#EFEDE8;--sf:#FFFFFF;--ink:#111111;--dim:#787878;--line:#E6E4E0;
   --ring:#FFFFFF;--chip:#F0F0F0;--btn:#111111;--btnink:#FFFFFF;--warn:#D93025;
   --sh:0 2px 10px rgba(0,0,0,.14);--sh2:0 -4px 26px rgba(0,0,0,.12);
   background:var(--bg);color:var(--ink);transition:background .4s,color .4s}
 /* 夜 */
-body.dark{--glass:rgba(20,20,24,.58);--glassline:rgba(255,255,255,.10);--glasstop:rgba(255,255,255,.06);
+body.dark{--glass:rgba(22,22,26,.62);--glassline:rgba(255,255,255,.11);--glasstop:rgba(255,255,255,.07);
+  --glareC:rgba(255,255,255,.13);--pillC:rgba(255,255,255,.09);--camring:rgba(255,255,255,.07);
   --bg:#121214;--sf:#1E1E22;--ink:#F2F2F4;--dim:#9E9EA4;--line:#32323A;
   --ring:#121214;--chip:#2C2C33;--btn:#F2F2F4;--btnink:#121214;--warn:#FF6B60;
   --sh:0 2px 12px rgba(0,0,0,.6);--sh2:0 -4px 30px rgba(0,0,0,.6)}
@@ -86,33 +88,23 @@ body.dark{--glass:rgba(20,20,24,.58);--glassline:rgba(255,255,255,.10);--glassto
 /* ---------- 下：カード ---------- */
 
 /* ---------- 丸ボタン ---------- */
-.fabs{position:fixed;left:0;right:0;bottom:0;z-index:36;
-  display:flex;align-items:center;justify-content:center;gap:24px;
-  padding:14px 20px calc(env(safe-area-inset-bottom,0px) + 16px);
-  background:var(--glass);
-  backdrop-filter:blur(26px) saturate(1.8);-webkit-backdrop-filter:blur(26px) saturate(1.8);
-  border-top:1px solid var(--glassline);
-  box-shadow:0 -1px 0 var(--glasstop) inset;
-  transition:transform .32s cubic-bezier(.2,.9,.25,1),opacity .28s}
-.fabs.hide{transform:translateY(150%);opacity:0;pointer-events:none}
-.fabpull{position:fixed;left:0;right:0;bottom:0;height:56px;z-index:37;display:none}
+
+
+.fabpull{position:fixed;left:0;right:0;bottom:0;height:52px;z-index:37;display:none}
 .fabpull.on{display:block}
 .fabpull b{position:absolute;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 8px);
   transform:translateX(-50%);width:52px;height:5px;border-radius:99px;background:var(--dim);opacity:.5}
 .fabpull:active b{opacity:.9}
-.fab{width:44px;height:44px;border-radius:50%;background:var(--sf);
-  box-shadow:0 1px 3px rgba(0,0,0,.18);
-  display:flex;align-items:center;justify-content:center;transition:transform .15s;flex:0 0 auto}
-.fab:active{transform:scale(.92)}
-.fab:active{transform:scale(.92)}
-.fab svg{width:20px;height:20px}
-.fab.main{width:66px;height:66px;background:var(--btn);color:var(--btnink);
-  box-shadow:0 3px 14px rgba(0,0,0,.28)}
-.fab.main svg{width:27px;height:27px}
+
+
+
+
+
+
 .fab.act svg{color:#1E88E5}
 
 .tip{position:fixed;left:50%;transform:translateX(-50%);z-index:38;
-  bottom:calc(env(safe-area-inset-bottom,0px) + 104px);font-size:11.5px;color:var(--ink);
+  bottom:calc(env(safe-area-inset-bottom,0px) + 96px);font-size:11.5px;color:var(--ink);
   background:var(--sf);box-shadow:var(--sh);padding:8px 14px;border-radius:999px;
   pointer-events:none;transition:opacity .4s;max-width:86vw;text-align:center}
 
@@ -177,6 +169,74 @@ body.dark{--glass:rgba(20,20,24,.58);--glassline:rgba(255,255,255,.10);--glassto
 .pad{padding:0 16px}
 
 /* ---------- 場所の確認 ---------- */
+
+/* ============================================================
+   下のバナー
+
+   すりガラスの板の上に置く。
+   ・上端に細い光の筋を走らせて、厚みを出す
+   ・押した場所へ、丸みのある枠が滑って動く
+   ・撮るボタンだけ板から少し浮かせる
+   ============================================================ */
+.fabs{position:fixed;left:12px;right:12px;z-index:36;
+  bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+  display:flex;align-items:center;gap:6px;
+  padding:8px 10px;border-radius:26px;
+  background:var(--glass);
+  backdrop-filter:blur(30px) saturate(1.9);-webkit-backdrop-filter:blur(30px) saturate(1.9);
+  border:1px solid var(--glassline);
+  box-shadow:0 10px 34px rgba(0,0,0,.26),
+             inset 0 1px 0 var(--glasstop),
+             inset 0 -1px 0 rgba(0,0,0,.05);
+  overflow:hidden;
+  transition:transform .34s cubic-bezier(.2,.9,.25,1),opacity .28s}
+.fabs.hide{transform:translateY(160%);opacity:0;pointer-events:none}
+
+/* 上端を走る光。ガラスの厚みに見せるためのもの */
+.glare-wrap{position:absolute;inset:0;border-radius:26px;overflow:hidden;pointer-events:none}
+.glare{position:absolute;top:0;left:-40%;width:40%;height:100%;
+  background:linear-gradient(105deg,transparent,var(--glareC) 45%,transparent);
+  transform:skewX(-18deg);opacity:0;transition:opacity .4s}
+.fabs.lit .glare{opacity:1;animation:sweep 1.5s cubic-bezier(.4,0,.2,1)}
+@keyframes sweep{to{left:120%}}
+
+.nav-items{position:relative;display:flex;align-items:center;gap:2px;flex:1;min-width:0}
+
+/* 押した場所へ滑って動く枠 */
+.pill{position:absolute;top:0;height:100%;border-radius:18px;
+  background:var(--pillC);opacity:0;
+  transition:transform .42s cubic-bezier(.34,1.3,.5,1),width .42s cubic-bezier(.34,1.3,.5,1),opacity .3s;
+  pointer-events:none}
+.pill.on{opacity:1}
+
+.nav-btn{position:relative;flex:1;min-width:0;padding:8px 2px;border-radius:18px;
+  color:var(--dim);transition:color .28s;background:none}
+.nav-btn.on{color:var(--ink)}
+.bc{display:flex;flex-direction:column;align-items:center;gap:3px}
+.bc svg{width:20px;height:20px;flex:0 0 20px}
+.bc span{font-size:9.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+
+/* 撮るボタン。板から少し浮かせる */
+.cam{flex:0 0 auto;width:54px;height:54px;border-radius:50%;margin:0 4px;
+  background:var(--btn);color:var(--btnink);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 14px rgba(0,0,0,.3),0 0 0 4px var(--camring);
+  transition:transform .16s}
+.cam:active{transform:scale(.9)}
+.cam svg{width:24px;height:24px}
+
+.divider{width:1px;height:26px;background:var(--glassline);flex:0 0 1px;margin:0 2px}
+
+.theme-btn{flex:0 0 38px;height:38px;border-radius:50%;color:var(--dim);
+  display:flex;align-items:center;justify-content:center;transition:color .28s}
+.theme-icon{position:relative;width:20px;height:20px}
+.theme-icon svg{position:absolute;inset:0;width:20px;height:20px;
+  transition:opacity .34s,transform .44s cubic-bezier(.34,1.3,.5,1)}
+.theme-icon .sun{opacity:0;transform:rotate(-70deg) scale(.6)}
+.theme-icon .moon{opacity:1;transform:none}
+body:not(.dark) .theme-icon .sun{opacity:1;transform:none}
+body:not(.dark) .theme-icon .moon{opacity:0;transform:rotate(70deg) scale(.6)}
+
 .zoombar{position:fixed;right:9px;top:50%;transform:translateY(-50%);
   width:5px;height:150px;border-radius:99px;background:rgba(128,128,128,.22);
   z-index:39;opacity:0;transition:opacity .2s;pointer-events:none;
@@ -322,31 +382,59 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
     <input id="q" placeholder="店名・地名で探す" autocomplete="off" enterkeyhint="search">
     <button class="x" id="qx">✕</button>
   </div>
-  <button class="rb" id="btn-night">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></svg>
-  </button>
 </div>
 <div class="results" id="results"></div>
 
 <div class="fabpull" id="fabpull"><b></b></div>
 
-<div class="fabs">
-  <button class="fab" id="btn-loc" title="現在地">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><path d="M12 1.5v3.5M12 19v3.5M1.5 12H5M19 12h3.5"/></svg>
+<nav class="fabs" id="fabs">
+  <div class="glare-wrap"><div class="glare" id="glare"></div></div>
+
+  <div class="nav-items">
+    <div class="pill" id="pill"></div>
+
+    <button class="nav-btn" id="btn-loc" data-i="0">
+      <div class="bc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        <span>現在地</span>
+      </div>
+    </button>
+
+    <button class="nav-btn" id="btn-bulk" data-i="1">
+      <div class="bc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h14v14H7z"/><path d="M17 17.5v3H3v-14h3"/><path d="M7 14l4-3.5 3 2.5 2.5-2 4.5 4"/></svg>
+        <span>まとめて</span>
+      </div>
+    </button>
+
+    <button class="cam" id="btn-cam">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
+    </button>
+
+    <button class="nav-btn" id="btn-lib" data-i="2">
+      <div class="bc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.3"/></svg>
+        <span>写真</span>
+      </div>
+    </button>
+
+    <button class="nav-btn" id="btn-me" data-i="3">
+      <div class="bc">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
+        <span>じぶん</span>
+      </div>
+    </button>
+  </div>
+
+  <div class="divider"></div>
+
+  <button class="theme-btn" id="btn-night">
+    <div class="theme-icon">
+      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </div>
   </button>
-  <button class="fab" id="btn-bulk" title="カメラロールからまとめて">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 3.5h14v14H7z"/><path d="M17 17.5v3H3v-14h3"/><path d="M7 14l4-3.5 3 2.5 2.5-2 4.5 4"/></svg>
-  </button>
-  <button class="fab main" id="btn-cam" title="撮る">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
-  </button>
-  <button class="fab" id="btn-lib" title="カメラロール">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.4"/></svg>
-  </button>
-  <button class="fab" id="btn-me" title="アカウント">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
-  </button>
-</div>
+</nav>
 
 <div class="tip" id="tip">地図をタップして、思い出を追加</div>
 
@@ -363,7 +451,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v63';
+var BUILD='v64';
 /* 一度読んだものを端末に残す。次からは待たずに出せる */
 if('serviceWorker' in navigator && location.protocol==='https:'){
   navigator.serviceWorker.register('/sw.js').catch(function(){});
@@ -1723,9 +1811,8 @@ function shrink(file,cb){
 
 document.getElementById('btn-loc').onclick=async function(){
   var btn=this;
-  btn.classList.add('act'); setTip('現在地を取得しています…');
+  setTip('現在地を取得しています…');
   var p=await whereAmI();
-  btn.classList.remove('act');
   if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
   locDone=true;
   map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
@@ -2846,6 +2933,56 @@ async function openFriends(){
   }
   el2.addEventListener('touchend',end,{passive:true});
   el2.addEventListener('touchcancel',end,{passive:true});
+})();
+
+
+/* ============================================================
+   下のバナーの動き
+
+   ・押した場所へ、丸い枠が滑って動く
+   ・そのとき、上端に光が一度だけ走る
+   ============================================================ */
+(function(){
+  var bar=document.getElementById('fabs');
+  var pill=document.getElementById('pill');
+  var glare=document.getElementById('glare');
+  if(!bar||!pill)return;
+
+  var btns=Array.prototype.slice.call(bar.querySelectorAll('.nav-btn'));
+
+  function movePill(b){
+    if(!b){ pill.classList.remove('on'); return; }
+    var p=b.parentElement.getBoundingClientRect();
+    var r=b.getBoundingClientRect();
+    pill.style.width=r.width+'px';
+    pill.style.transform='translateX('+(r.left-p.left)+'px)';
+    pill.classList.add('on');
+  }
+  function sweep(){
+    bar.classList.remove('lit');
+    void bar.offsetWidth;          // ここで一度描かせないと、また流れない
+    bar.classList.add('lit');
+    setTimeout(function(){ bar.classList.remove('lit'); },1600);
+  }
+
+  btns.forEach(function(b){
+    b.addEventListener('pointerdown',function(){
+      btns.forEach(function(x){x.classList.remove('on');});
+      b.classList.add('on');
+      movePill(b);
+      sweep();
+      // 少し置いてから枠を戻す。押した感触だけ残す
+      clearTimeout(window.__pillT);
+      window.__pillT=setTimeout(function(){
+        b.classList.remove('on');
+        pill.classList.remove('on');
+      },1400);
+    });
+  });
+
+  document.getElementById('btn-cam').addEventListener('pointerdown',sweep);
+  document.getElementById('btn-night').addEventListener('pointerdown',sweep);
+  window.addEventListener('resize',function(){ pill.classList.remove('on'); });
 })();
 
 /* ============================================================
