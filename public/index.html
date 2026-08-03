@@ -275,7 +275,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v58';
+var BUILD='v60';
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
   var s=document.getElementById('splash');
@@ -293,29 +293,63 @@ window.addEventListener('error',function(e){showErr('[error] '+(e.message||'')+'
 window.addEventListener('unhandledrejection',function(e){showErr('[promise] '+dump(e.reason));});
 </script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
-/* 1つ目が届かなかったときの控え。順に試す */
-(function(){
-  if(typeof QRCode!=='undefined')return;
-  var list=[
-    'https://unpkg.com/qrcode@1.5.4/build/qrcode.min.js',
-    'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js'
-  ];
-  var i=0;
-  (function next(){
-    if(i>=list.length||typeof QRCode!=='undefined')return;
-    var s=document.createElement('script');
-    s.src=list[i++];
-    s.onload=function(){ if(typeof QRCode==='undefined')next(); };
-    s.onerror=next;
-    document.head.appendChild(s);
-  })();
-})();
+/* ============================================================
+   部品は、使うときになってから読む
+
+   起動のたびに5つも取りに行くと、地図が出るまで待たされる。
+   写真を触るまで exifr は要らないし、
+   QRはフレンド画面を開くまで要らない。
+   ============================================================ */
+var _loaded={}, _loading={};
+function need(name){
+  if(_loaded[name]) return Promise.resolve(true);
+  if(_loading[name]) return _loading[name];
+
+  var SRC={
+    exifr:  ['https://cdn.jsdelivr.net/npm/exifr/dist/lite.umd.js',
+             'https://unpkg.com/exifr/dist/lite.umd.js'],
+    qrcode: ['https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js',
+             'https://unpkg.com/qrcode@1.5.4/build/qrcode.min.js'],
+    firebase:['https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',
+              'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js']
+  };
+  var list=SRC[name]||[];
+
+  _loading[name]=new Promise(function(res){
+    if(name==='firebase'){
+      // これは2つとも、順に読む必要がある
+      one(list[0],function(){ one(list[1],function(){ done(); },function(){res(false);}); },
+        function(){res(false);});
+      return;
+    }
+    var i=0;
+    (function next(){
+      if(i>=list.length) return res(false);
+      one(list[i++],done,next);
+    })();
+
+    function done(){ _loaded[name]=1; res(true); }
+    function one(src,ok,ng){
+      var s=document.createElement('script');
+      s.src=src; s.async=true;
+      s.onload=ok; s.onerror=ng;
+      document.head.appendChild(s);
+    }
+  });
+  return _loading[name];
+}
+
+/* 手が空いたころに、こっそり読んでおく。
+   実際に使うときには、たいてい用意できている */
+function preload(){
+  var go=function(){ need('exifr'); need('firebase').then(function(o){ if(o&&window.initAuth)initAuth(); }); };
+  if(window.requestIdleCallback) requestIdleCallback(go,{timeout:2500});
+  else setTimeout(go,1200);
+}
 </script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+
+
 <script>
 if(typeof maplibregl==='undefined'){ showErr('地図の読み込みに失敗しました'); }
 else{ try{
@@ -496,6 +530,9 @@ map.on('load',function(){
   baseStyle=map.getStyle();
   applyTint();
 });
+/* 地図が描けた時点で、待たせている画面を引く */
+map.once('idle',function(){ hideSplash(); });
+setTimeout(function(){ hideSplash(); },2600);
 function applyTint(){
   try{
     if(!baseStyle)return;
@@ -540,7 +577,6 @@ function afterStyle(){
   Object.keys(madeIcons).forEach(function(k){delete madeIcons[k];});
   addPlaceLayers();
   render(true);
-  hideSplash();
   if(!locDone) goHome(false);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
@@ -1430,6 +1466,7 @@ document.getElementById('btn-lib').onclick=async function(){
 /* 写真を受け取ったあとの流れ。位置は写真から読む */
 async function afterPhoto(dataUrl,file){
   var gps=null,date=null;
+  await need('exifr');
   try{
     if(typeof exifr!=='undefined'){
       var target=file||dataUrl;
@@ -1554,6 +1591,8 @@ document.getElementById('in-bulk').onchange=function(e){
 
 async function handleBulk(files){
   if(!files.length)return;
+  setTip('準備しています…');
+  await need('exifr');
   if(typeof exifr==='undefined'){ setTip('写真を読む部品がありません'); return; }
 
   var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
@@ -1890,28 +1929,51 @@ const FB={apiKey:"AIzaSyAJFFjRk6zvAA_L9-1O7Y7Q43Yw86QQtxM",
   storageBucket:"michikusa-e34df.firebasestorage.app",
   messagingSenderId:"1058235183759",appId:"1:1058235183759:web:8d0741be89ad707c07b6fa"};
 let fbUser=null,meP=null;
-try{ if(typeof firebase!=='undefined'){
-  firebase.initializeApp(FB);
-  try{ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
-  firebase.auth().onAuthStateChanged(function(u){
-    fbUser=u; var b=document.getElementById('btn-me');
-    if(u){ b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
-      loadMe().then(function(){ syncUp(); syncDown(); askHandle(); setupPush(); }); }
-    else{ b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>'; meP=null; }
-  });
-  firebase.auth().getRedirectResult().then(function(r){
-    if(r&&r.user) setTip('ログインしました');
-  }).catch(function(e){
-    if(e&&e.code&&e.code!=='auth/no-auth-event') setTip('ログイン失敗: '+e.code);
-  });
-}}catch(e){}
+
+/* 部品が用意できてから、ログインの仕組みを立ち上げる */
+window.initAuth=function(){
+  if(typeof firebase==='undefined')return;
+  if(window.__authReady)return;
+  window.__authReady=1;
+  try{
+    firebase.initializeApp(FB);
+    try{ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
+
+    firebase.auth().onAuthStateChanged(function(u){
+      fbUser=u; var b=document.getElementById('btn-me');
+      if(!b)return;
+      if(u){
+        b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
+        loadMe().then(function(){ syncUp(); syncDown(); askHandle(); setupPush(); });
+      }else{
+        b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>';
+        meP=null;
+      }
+    });
+
+    firebase.auth().getRedirectResult().then(function(r){
+      if(r&&r.user) setTip('ログインしました');
+    }).catch(function(e){
+      if(e&&e.code&&e.code!=='auth/no-auth-event') setTip('ログイン失敗: '+e.code);
+    });
+  }catch(e){}
+};
+
 async function api(path,opt){
   opt=opt||{}; var h=Object.assign({},opt.headers||{});
   if(fbUser)h['Authorization']='Bearer '+(await fbUser.getIdToken());
   return fetch(SERVER+path,Object.assign({},opt,{headers:h}));
 }
 async function loadMe(){try{var r=await api('/api/me');if(r.ok)meP=await r.json();}catch(e){}}
-document.getElementById('btn-me').onclick=function(){ openMe(); };
+document.getElementById('btn-me').onclick=async function(){
+  if(typeof firebase==='undefined'){
+    setTip('準備しています…');
+    await need('firebase');
+    if(window.initAuth)initAuth();
+    await new Promise(function(r){setTimeout(r,300);});   // 状態が定まるのを少し待つ
+  }
+  openMe();
+};
 
 /* ============================================================
    ログイン
@@ -2098,13 +2160,24 @@ function openMe(){
     '<div style="font-size:11.5px;color:var(--dim);line-height:1.7;margin-bottom:4px">'+
       'フレンドには正確な場所が見えます。それ以外の人には、この設定が使われます。</div>'+
 
-    '<button class="btn g" id="out" style="margin-top:20px">ログアウト</button>'+
+    '<button class="btn g" id="push-test" style="margin-top:20px">通知を試す</button>'+
+    '<button class="btn g" id="out" style="margin-top:8px">ログアウト</button>'+
     '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>';
 
   var s=showSheet(html);
   s.querySelector('#x').onclick=closeSheet;
   s.querySelector('#fr').onclick=function(){openFriends();};
   s.querySelector('#out').onclick=function(){ doLogout(); closeSheet(); };
+  var pt=s.querySelector('#push-test');
+  if(pt)pt.onclick=async function(){
+    pt.textContent='送っています…';
+    try{
+      var r=await api('/api/push/test',{method:'POST'});
+      var j=await r.json();
+      setTip(j.sent?('通知を送りました（'+j.sent+'件）'):'届け先がありません。通知を許可してください');
+    }catch(e){ setTip('送れませんでした'); }
+    pt.textContent='通知を試す';
+  };
 
   var hset=s.querySelector('#h-set');
   if(hset)hset.onclick=function(){ closeSheet(); askingHandle=false; askHandle(); };
@@ -2135,8 +2208,9 @@ function openMe(){
 /* --- 作る側 ---
    規格どおりのQRには誤り訂正が要る。自前で書くと読めないものができるので、
    実績のある部品に任せる。届かない場合は、外の画像づくりに頼る。 */
-function qrInto(el2,text,px){
+async function qrInto(el2,text,px){
   el2.innerHTML='<div style="font-size:12px;color:var(--dim)">QRを作っています…</div>';
+  await need('qrcode');
 
   function byLib(){
     try{
@@ -2458,6 +2532,7 @@ if(location.search.indexOf('diag=1')>=0) setTimeout(showDiag,1500);
 /* ---------- 起動 ---------- */
 (async function(){
  try{
+  preload();                      // 手が空いたころに、残りの部品を読んでおく
   var ok=await openDB();
   if(ok) spots=(await dbAll('spots')).filter(valid);
   if(map.isStyleLoaded())render();
