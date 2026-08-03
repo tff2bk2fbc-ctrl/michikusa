@@ -27,9 +27,9 @@ body.dark{--bg:#121214;--sf:#1E1E22;--ink:#F2F2F4;--dim:#9E9EA4;--line:#32323A;
 /* ---------- 起動画面 ---------- */
 #splash{position:fixed;inset:0;z-index:5000;background:var(--bg);color:var(--ink);
   display:flex;align-items:center;justify-content:center;
-  transition:opacity .55s ease,visibility .55s}
+  transition:opacity .22s ease,visibility .22s}
 #splash.gone{opacity:0;visibility:hidden;pointer-events:none}
-.sp-in{text-align:center;animation:spIn .7s cubic-bezier(.2,.9,.25,1)}
+.sp-in{text-align:center;animation:spIn .3s cubic-bezier(.2,.9,.25,1)}
 @keyframes spIn{from{opacity:0;transform:translateY(12px) scale(.96)}to{opacity:1;transform:none}}
 .sp-mark{width:78px;height:78px;display:block;margin:0 auto 18px;
   animation:spBeat 2.4s ease-in-out infinite}
@@ -275,7 +275,11 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v61';
+var BUILD='v62';
+/* 一度読んだものを端末に残す。次からは待たずに出せる */
+if('serviceWorker' in navigator && location.protocol==='https:'){
+  navigator.serviceWorker.register('/sw.js').catch(function(){});
+}
 var T0=performance.now(), TT=[];
 function mark(n){ TT.push([n, Math.round(performance.now()-T0)]); }
 mark('開始');
@@ -284,8 +288,8 @@ function hideSplash(){
   if(!window.__sg){ window.__sg=1; mark('地図が見えた'); }
   var s=document.getElementById('splash');
   if(!s||s.classList.contains('gone'))return;
-  setTimeout(function(){ s.classList.add('gone');
-    setTimeout(function(){ s.remove(); },700); },420);
+  s.classList.add('gone');
+  setTimeout(function(){ s.remove(); },260);
 }
 setTimeout(function(){ hideSplash(); },6000);
 function showErr(m){var e=document.getElementById('err');e.style.display='block';
@@ -620,18 +624,22 @@ function photoOf(p){
 /* 中の絵。地図が持っている名前の候補を、細かい順に並べる。
    実際にどれがあるかは走査して決める */
 const ICON_ALT={
-  '喫茶':['cafe','coffee','fast_food','restaurant'],
-  '食'  :['restaurant','japanese','noodle','ramen','fast_food','cafe'],
+  '喫茶':['cafe','coffee','bakery','fast_food','restaurant','bar'],
+  '食'  :['restaurant','fast_food','japanese','noodle','cafe'],
   '酒'  :['bar','alcohol_shop','pub','nightclub','beer','restaurant'],
-  '湯'  :['hot_spring','onsen','spa','public_bath','swimming','beach'],
+  '湯'  :['hot_spring','onsen','spa','public_bath','swimming','beach','water'],
   '宿'  :['lodging','hotel','hostel','guest_house','shelter','building'],
-  '社'  :['shinto','buddhist','place_of_worship','temple','shrine','religious','monument'],
-  '園'  :['park','garden','tree','forest','playground','picnic_site'],
-  '景'  :['attraction','viewpoint','monument','castle','museum','art_gallery','tower'],
-  '本'  :['library','books','shop','stationery'],
+  '社'  :['place_of_worship','shinto','buddhist','temple','shrine','religious',
+          'monument','castle','historic','attraction'],
+  '園'  :['park','garden','tree','forest','playground','picnic_site',
+          'nature_reserve','grass','pitch','attraction'],
+  '景'  :['attraction','viewpoint','monument','castle','museum','art_gallery',
+          'tower','information'],
+  '本'  :['library','books','stationery','shop'],
   '店'  :['shop','convenience','supermarket','grocery'],
   '駅'  :['rail','railway','train','subway','bus']
 };
+
 let SPRITE=null;
 function scanSprite(){
   SPRITE={};
@@ -650,9 +658,12 @@ function findIcon(words){
   for(var i=0;i<words.length;i++){
     var w=words[i];
     if(SPRITE[w])return w;
-    // 部分一致（cafe_11 / cafe-15 などに対応）
+    // 名前の付け方は地図ごとに違うので、幅を持たせて探す
     for(var k=0;k<keys.length;k++){
       if(keys[k].indexOf(w)===0)return keys[k];
+    }
+    for(var k2=0;k2<keys.length;k2++){
+      if(keys[k2].indexOf(w)>=0)return keys[k2];
     }
   }
   return '';
@@ -1459,12 +1470,13 @@ async function goHome(quiet){
   var p=await whereAmI();
   if(!p){
     if(!quiet) setTip('現在地を使えません。設定から許可してください');
+    autoLoad(true);                 // 位置が取れなくても、いま見えている辺りは読む
     return;
   }
   locDone=true;
   map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.4,duration:900});
   showMe(p.lat,p.lng,p.acc);
-  setTimeout(function(){ autoLoad(true); },1200);
+  setTimeout(function(){ autoLoad(true); },900);
 }
 
 /* ============================================================
