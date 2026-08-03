@@ -46,7 +46,7 @@ export default {
         const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-19",
+          build: "api-20",
           hasKey: !!k.key,          // ホットペッパー
           keySource: k.src,
           hasRakuten: !!(await cfg(env, "rakuten_id")),
@@ -65,6 +65,7 @@ export default {
       if (p === "/api/vision" && request.method === "POST") return cors(await vision(request, env));
       if (p === "/api/suggest" && request.method === "POST") return cors(await suggest(request, env));
       if (p === "/api/push/token" && request.method === "POST") return cors(await saveToken(request, env, me));
+      if (p === "/api/push/test"  && request.method === "POST") return cors(await pushTest(env, me));
       if (p === "/api/img")       return await proxyImage(url);
 
       // ---- ここから先はログインが必要 ----
@@ -311,6 +312,23 @@ async function createPost(request, env, me) {
     b.fixed_lat ?? null, b.fixed_lng ?? null, b.fixed_label || null,
     b.taken_at || null, now, vis, now + (me.publish_delay_sec || 0) * 1000
   ).run();
+
+  // フレンドに見せる投稿なら、相手に知らせる
+  if (vis !== "private") {
+    try {
+      const fr = await env.DB.prepare(`
+        SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END AS uid
+          FROM friendships
+         WHERE status='accepted' AND (requester_id=?1 OR addressee_id=?1)
+         LIMIT 20
+      `).bind(me.id).all();
+      const who = me.display_name || me.handle || "フレンド";
+      for (const f of (fr.results || [])) {
+        await sendPush(env, f.uid, who + " が思い出を残しました",
+          b.title || b.place_name || "", { lat: String(lat), lng: String(lng), post: id });
+      }
+    } catch (e) {}
+  }
 
   return json({ id, visibility: vis });
 }
@@ -1148,4 +1166,118 @@ async function saveToken(request, env, me) {
     ON CONFLICT(token) DO UPDATE SET user_id=excluded.user_id, updated_at=excluded.updated_at
   `).bind(t, me.id, b.platform || "ios", Date.now()).run();
   return json({ ok: true });
+}
+
+
+/* ============================================================
+   通知を送る
+
+   Firebase を通してiPhoneへ届ける。
+   送るときに音の名前を指定すると、その音で鳴る。
+   （音のファイルはアプリの中に入れておく）
+   ============================================================ */
+
+const SOUND = "spota.caf";     // アプリに入れた音の名前
+
+/** Firebase に話しかけるための証をつくる */
+async function fcmToken(env) {
+  const raw = await cfg(env, "fcm_service_account");
+  if (!raw) return null;
+
+  let sa;
+  try { sa = JSON.parse(raw); } catch (e) { return null; }
+
+  const now = Math.floor(Date.now() / 1000);
+  const head = { alg: "RS256", typ: "JWT" };
+  const claim = {
+    iss: sa.client_email,
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600
+  };
+
+  const b64 = function (o) {
+    return btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  };
+  const unsigned = b64(head) + "." + b64(claim);
+
+  // 鍵を読み込んで署名する
+  const pem = sa.private_key.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+  const bin = atob(pem);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+
+  const key = await crypto.subtle.importKey(
+    "pkcs8", buf.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)
+  );
+  const sigB64 = btoa(String.fromCharCode.apply(null, new Uint8Array(sig)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" +
+          unsigned + "." + sigB64
+  });
+  if (!res.ok) return null;
+  const j = await res.json();
+  return { token: j.access_token, project: sa.project_id };
+}
+
+/** ある人に通知を届ける */
+async function sendPush(env, userId, title, body, data) {
+  const auth = await fcmToken(env);
+  if (!auth) return 0;
+
+  const rows = await env.DB
+    .prepare("SELECT token FROM push_tokens WHERE user_id=?").bind(userId).all();
+  const tokens = (rows.results || []).map(function (r) { return r.token; });
+  if (!tokens.length) return 0;
+
+  let sent = 0;
+  for (const t of tokens) {
+    const msg = {
+      message: {
+        token: t,
+        notification: { title: title, body: body },
+        data: data || {},
+        apns: {
+          payload: {
+            aps: { sound: SOUND, badge: 1 }
+          }
+        }
+      }
+    };
+    try {
+      const r = await fetch(
+        "https://fcm.googleapis.com/v1/projects/" + auth.project + "/messages:send",
+        {
+          method: "POST",
+          headers: {
+            "Authorization": "Bearer " + auth.token,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(msg)
+        }
+      );
+      if (r.ok) sent++;
+      else if (r.status === 404) {
+        // その宛先はもう使えない
+        await env.DB.prepare("DELETE FROM push_tokens WHERE token=?").bind(t).run();
+      }
+    } catch (e) {}
+  }
+  return sent;
+}
+
+/** 自分に試しに送る */
+async function pushTest(env, me) {
+  const n = await sendPush(env, me.id, "spota", "通知はこの音で届きます", { test: "1" });
+  return json({ sent: n });
 }
