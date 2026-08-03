@@ -825,7 +825,8 @@ async function proxyImage(url) {
       "Access-Control-Allow-Origin": "*"
     }
   });
-}\n
+}
+
 
 /* ============================================================
    Google の場所検索
