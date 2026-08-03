@@ -13,15 +13,17 @@ button,input{font-family:inherit;color:inherit;border:none;background:none;outli
 button{cursor:pointer}
 
 /* 昼 */
-body{--glass:rgba(255,255,255,.66);--glassline:rgba(0,0,0,.07);--glasstop:rgba(255,255,255,.95);
-  --glareC:rgba(255,255,255,.75);--pillC:rgba(0,0,0,.055);--camring:rgba(255,255,255,.5);
+body{--glass:rgba(255,255,255,.10);--glassline:rgba(0,0,0,.05);
+  --gtop:.34;--gbot:.05;--gside:.16;--rim:.70;--sheen:.12;
+  --glareC:rgba(255,255,255,.34);--pillC:rgba(0,0,0,.07);--camring:rgba(255,255,255,.42);
   --bg:#EFEDE8;--sf:#FFFFFF;--ink:#111111;--dim:#787878;--line:#E6E4E0;
   --ring:#FFFFFF;--chip:#F0F0F0;--btn:#111111;--btnink:#FFFFFF;--warn:#D93025;
   --sh:0 2px 10px rgba(0,0,0,.14);--sh2:0 -4px 26px rgba(0,0,0,.12);
   background:var(--bg);color:var(--ink);transition:background .4s,color .4s}
 /* 夜 */
-body.dark{--glass:rgba(22,22,26,.62);--glassline:rgba(255,255,255,.11);--glasstop:rgba(255,255,255,.07);
-  --glareC:rgba(255,255,255,.13);--pillC:rgba(255,255,255,.09);--camring:rgba(255,255,255,.07);
+body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
+  --gtop:.34;--gbot:.06;--gside:.16;--rim:.70;--sheen:.12;
+  --glareC:rgba(255,255,255,.30);--pillC:rgba(255,255,255,.10);--camring:rgba(255,255,255,.10);
   --bg:#121214;--sf:#1E1E22;--ink:#F2F2F4;--dim:#9E9EA4;--line:#32323A;
   --ring:#121214;--chip:#2C2C33;--btn:#F2F2F4;--btnink:#121214;--warn:#FF6B60;
   --sh:0 2px 12px rgba(0,0,0,.6);--sh2:0 -4px 30px rgba(0,0,0,.6)}
@@ -173,63 +175,84 @@ body.dark{--glass:rgba(22,22,26,.62);--glassline:rgba(255,255,255,.11);--glassto
 /* ============================================================
    下のバナー
 
-   すりガラスの板の上に置く。
-   ・上端に細い光の筋を走らせて、厚みを出す
-   ・押した場所へ、丸みのある枠が滑って動く
-   ・撮るボタンだけ板から少し浮かせる
+   ぼかしはほとんどかけない。地図を隠さないため。
+   代わりに縁の光を強くして、輪郭だけで存在を示す。
+   板というより、薄いガラスの縁が浮かんでいる状態。
    ============================================================ */
 .fabs{position:fixed;left:12px;right:12px;z-index:36;
   bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
   display:flex;align-items:center;gap:6px;
-  padding:8px 10px;border-radius:26px;
+  padding:9px 11px;border-radius:34px;
   background:var(--glass);
-  backdrop-filter:blur(30px) saturate(1.9);-webkit-backdrop-filter:blur(30px) saturate(1.9);
-  border:1px solid var(--glassline);
-  box-shadow:0 10px 34px rgba(0,0,0,.26),
-             inset 0 1px 0 var(--glasstop),
-             inset 0 -1px 0 rgba(0,0,0,.05);
+  backdrop-filter:blur(1px) saturate(1.1);-webkit-backdrop-filter:blur(1px) saturate(1.1);
+  box-shadow:
+    0 10px 34px rgba(0,0,0,.26),
+    inset 0 1px 0 rgba(255,255,255,var(--gtop)),
+    inset 0 -1px 0 rgba(0,0,0,var(--gbot)),
+    inset 1px 0 0 rgba(255,255,255,var(--gside)),
+    inset -1px 0 0 rgba(255,255,255,var(--gside));
   overflow:hidden;
   transition:transform .34s cubic-bezier(.2,.9,.25,1),opacity .28s}
 .fabs.hide{transform:translateY(160%);opacity:0;pointer-events:none}
 
-/* 上端を走る光。ガラスの厚みに見せるためのもの */
-.glare-wrap{position:absolute;inset:0;border-radius:26px;overflow:hidden;pointer-events:none}
-.glare{position:absolute;top:0;left:-40%;width:40%;height:100%;
+/* 縁の光。上と下で強さを変えると、面が上を向いて見える */
+.rim{position:absolute;inset:0;border-radius:34px;pointer-events:none;padding:1px;
+  background:linear-gradient(160deg,
+    rgba(255,255,255,var(--rim)) 0%,
+    rgba(255,255,255,0) 32%,
+    rgba(255,255,255,0) 68%,
+    rgba(255,255,255,calc(var(--rim) * .55)) 100%);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude}
+
+/* 表面の反射。上半分だけ明るくする */
+.sheen{position:absolute;left:0;right:0;top:0;height:52%;
+  border-radius:34px 34px 0 0;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,var(--sheen)),transparent)}
+
+/* 上を走る光 */
+.glare-wrap{position:absolute;inset:0;border-radius:34px;overflow:hidden;pointer-events:none}
+.glare{position:absolute;top:0;left:-45%;width:45%;height:100%;
   background:linear-gradient(105deg,transparent,var(--glareC) 45%,transparent);
-  transform:skewX(-18deg);opacity:0;transition:opacity .4s}
-.fabs.lit .glare{opacity:1;animation:sweep 1.5s cubic-bezier(.4,0,.2,1)}
-@keyframes sweep{to{left:120%}}
+  transform:skewX(-18deg);opacity:0}
+.fabs.lit .glare{opacity:1;animation:sweep 1.4s cubic-bezier(.4,0,.2,1)}
+@keyframes sweep{to{left:125%}}
 
 .nav-items{position:relative;display:flex;align-items:center;gap:2px;flex:1;min-width:0}
 
 /* 押した場所へ滑って動く枠 */
-.pill{position:absolute;top:0;height:100%;border-radius:18px;
+.pill{position:absolute;top:0;height:100%;border-radius:26px;
   background:var(--pillC);opacity:0;
-  transition:transform .42s cubic-bezier(.34,1.3,.5,1),width .42s cubic-bezier(.34,1.3,.5,1),opacity .3s;
+  transition:transform .42s cubic-bezier(.34,1.3,.5,1),
+             width .42s cubic-bezier(.34,1.3,.5,1),opacity .3s;
   pointer-events:none}
 .pill.on{opacity:1}
 
-.nav-btn{position:relative;flex:1;min-width:0;padding:8px 2px;border-radius:18px;
+.nav-btn{position:relative;flex:1;min-width:0;padding:8px 2px;border-radius:26px;
   color:var(--dim);transition:color .28s;background:none}
 .nav-btn.on{color:var(--ink)}
 .bc{display:flex;flex-direction:column;align-items:center;gap:3px}
 .bc svg{width:20px;height:20px;flex:0 0 20px}
-.bc span{font-size:9.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
+.bc span{font-size:9.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap;
+  text-shadow:0 0 4px var(--bg),0 0 8px var(--bg)}
+.bc svg{filter:drop-shadow(0 0 3px var(--bg))}
 
 /* 撮るボタン。板から少し浮かせる */
 .cam{flex:0 0 auto;width:54px;height:54px;border-radius:50%;margin:0 4px;
   background:var(--btn);color:var(--btnink);
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 4px 14px rgba(0,0,0,.3),0 0 0 4px var(--camring);
+  box-shadow:0 4px 14px rgba(0,0,0,.32),0 0 0 4px var(--camring);
   transition:transform .16s}
 .cam:active{transform:scale(.9)}
 .cam svg{width:24px;height:24px}
 
-.divider{width:1px;height:26px;background:var(--glassline);flex:0 0 1px;margin:0 2px}
+.divider{width:1px;height:26px;background:rgba(255,255,255,var(--rim));
+  flex:0 0 1px;margin:0 2px}
 
 .theme-btn{flex:0 0 38px;height:38px;border-radius:50%;color:var(--dim);
   display:flex;align-items:center;justify-content:center;transition:color .28s}
-.theme-icon{position:relative;width:20px;height:20px}
+.theme-icon{position:relative;width:20px;height:20px;
+  filter:drop-shadow(0 0 3px var(--bg))}
 .theme-icon svg{position:absolute;inset:0;width:20px;height:20px;
   transition:opacity .34s,transform .44s cubic-bezier(.34,1.3,.5,1)}
 .theme-icon .sun{opacity:0;transform:rotate(-70deg) scale(.6)}
@@ -388,6 +411,8 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <div class="fabpull" id="fabpull"><b></b></div>
 
 <nav class="fabs" id="fabs">
+  <div class="rim"></div>
+  <div class="sheen"></div>
   <div class="glare-wrap"><div class="glare" id="glare"></div></div>
 
   <div class="nav-items">
@@ -451,7 +476,7 @@ body.placing .fabs,body.placing .tip,body.placing .top{display:none}
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 <script>
-var BUILD='v64';
+var BUILD='v65';
 /* 一度読んだものを端末に残す。次からは待たずに出せる */
 if('serviceWorker' in navigator && location.protocol==='https:'){
   navigator.serviceWorker.register('/sw.js').catch(function(){});
