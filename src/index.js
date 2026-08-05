@@ -57,7 +57,7 @@ export default {
       if (p === "/api/health") {
         return cors(json({
           ok: true,
-          build: "api-22"
+          build: "api-23"
         }));
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, request, env));
@@ -531,7 +531,7 @@ async function putPhoto(url, request, env, me) {
   if (!["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(ct)) {
     return json({ error: "対応していない画像形式です" }, 415);
   }
-  const maxBytes = kind === "orig" ? 10_000_000 : kind === "view" ? 4_000_000 : 1_000_000;
+  const maxBytes = kind === "orig" ? 25_000_000 : kind === "view" ? 8_000_000 : 1_500_000;
   const declared = Number(request.headers.get("Content-Length") || 0);
   if (declared > maxBytes) return json({ error: "画像が大きすぎます" }, 413);
   const bytes = await request.arrayBuffer();
@@ -548,8 +548,8 @@ async function putPhoto(url, request, env, me) {
     if ((Number(count && count.n) || 0) >= 12) return json({ error: "写真は12枚までです" }, 409);
   }
   if (!(await userLimit(env, me.id, "photo-requests-hour", hourKey(), 80)) ||
-      !(await userLimit(env, me.id, "photo-bytes-day", dayKey(), 120_000_000, bytes.byteLength)) ||
-      !(await userLimit(env, me.id, "photo-bytes-total", "all", 2_000_000_000, bytes.byteLength))) {
+      !(await userLimit(env, me.id, "photo-bytes-day", dayKey(), 300_000_000, bytes.byteLength)) ||
+      !(await userLimit(env, me.id, "photo-bytes-total", "all", 5_000_000_000, bytes.byteLength))) {
     return json({ error: "画像の利用上限に達しました" }, 429);
   }
 

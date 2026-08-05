@@ -60,7 +60,7 @@
 - フロントを `app.css`、`boot.js`、`lazy.js`、`core.js`、`map.js`、`place.js`、`data.js`、`native.js`、`post.js`、`sync.js`、`ui.js`、`sw.js` に分割した。
 - Google Places、Vision、Gemini、Push、タグ、写真APIをFirebase認証後へ移動した。
 - 写真更新時に `photo_id`、`user_id`、`post_id` を照合し、他ユーザーの写真を更新できないようにした。
-- 画像のContent-Lengthと実バイト数、MIME、画像シグネチャ、1投稿枚数、時間・日次・総容量を制限した。
+- 画像のContent-Lengthと実バイト数、MIME、画像シグネチャ、1投稿枚数、時間・日次・総容量を制限した。写真品質調整後は原本25MB、表示用8MB、サムネイル1.5MB、日次300MB、累積5GBとしている。
 - 投稿本文と座標の検証、投稿・編集頻度制限を追加した。
 - D1のquota/rate加算を単一SQL文にした。
 - Vision失敗、キー未設定、上限到達時は公開を許可しないようにした。
@@ -93,6 +93,6 @@
 - `orig`、`view`、`thumb` はクライアントが別々に送るため、改造クライアントからの迂回を防ぐには各画像の検査が必要で、Vision quotaを1写真あたり最大3回消費する。将来はサーバー側で派生画像を生成する構成が望ましい。
 - 外部JavaScriptはバージョン固定したが、SRIと完全セルフホスト化は未実施である。
 - Nominatimへの送信元IPはWorkerに隠れるが、約11mへ丸めた座標自体はNominatimへ送信される。国土数値情報をD1へ取り込む自前逆ジオコーディングが最終対策である。
-- 総容量は安全側の累積上限であり、削除しても現在は枠を戻さない。共有写真を壊さない参照カウント付きR2 GCは別途必要である。
+- 総容量5GBは安全側の累積上限であり、削除しても現在は枠を戻さない。共有写真を壊さない参照カウント付きR2 GCは別途必要である。
 - Cloudflare WAF、Google Cloud APIキー制限、Firebase App Check、Firebase Security Rules、IAM、課金アラートはリポジトリ外の設定なので、デプロイ前に管理画面で確認する。
 - 本記録作成時点ではCloudflare本番へのデプロイは行っていない。

@@ -20,12 +20,12 @@ async function uploadPhoto(postId, photoId, dataUrl){
     // 原本
     await put('orig',blob,blob.type||'image/jpeg');
     // 表示用（軽くしたもの）
-    var view=await resize(dataUrl,1600,.86);
+    var view=await resize(dataUrl,2560,.90);
     if(view){
       var vb=await (await fetch(view)).blob();
       await put('view',vb,'image/jpeg');
     }
-    var th=await resize(dataUrl,400,.8);
+    var th=await resize(dataUrl,512,.82);
     if(th){
       var tb=await (await fetch(th)).blob();
       await put('thumb',tb,'image/jpeg');
