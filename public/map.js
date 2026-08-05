@@ -7,7 +7,13 @@
 
    そこで計算をやめ、地図の部品ごとに色を割り当てる方式にする。
    ============================================================ */
-const PALETTE={
+/* 見た目は2種類。切り替えられる。
+     apple … いまの標準。道が明るく、夜でも読める
+     paper … 紙の地図。やわらかい黄緑の陸に、白い道 */
+const THEMES={
+
+apple:{
+  name:'標準',
   night:{
     land:      '#1C1C1E',   // 陸。落ち着いた黒に近いグレー
     water:     '#16305C',   // 水。青は残す
@@ -36,7 +42,50 @@ const PALETTE={
     halo:      '#FFFFFF',
     border:    '#D2CEC4'
   }
+},
+
+/* 紙に刷った地図。
+   陸を白ではなく黄緑にすると、印刷物の空気になる。
+   道は白のまま残し、ふちを濃くして輪郭を立てる。 */
+paper:{
+  name:'紙',
+  day:{
+    land:      '#E7EBDC',   // 陸。わずかに緑がかった生成り
+    water:     '#A9CBE8',
+    green:     '#D6E2C2',   // 公園。陸より少し濃く
+    road:      '#FFFFFF',
+    roadMinor: '#F4F5EE',
+    roadCase:  '#DCDCD1',   // 道のふち。ここを効かせると紙らしくなる
+    rail:      '#CFCCBF',
+    building:  '#D6D4C9',
+    text:      '#4A483F',
+    textSub:   '#7C7A70',
+    halo:      '#E7EBDC',
+    border:    '#C9C6BB'
+  },
+  night:{
+    land:      '#23241E',   // 夜も、黒ではなく墨がかった緑
+    water:     '#1B3350',
+    green:     '#2A3126',
+    road:      '#8C8A7E',
+    roadMinor: '#5A594F',
+    roadCase:  '#191A15',
+    rail:      '#4A493F',
+    building:  '#33342C',
+    text:      '#EDEBE0',
+    textSub:   '#A6A395',
+    halo:      '#191A15',
+    border:    '#55544A'
+  }
+}
+
 };
+
+/* いま選ばれている見た目 */
+let theme = (function(){
+  try{ return localStorage.getItem('mk_theme')||'apple'; }catch(e){ return 'apple'; }
+})();
+function PAL(){ return (THEMES[theme]||THEMES.apple)[night?'night':'day']; }
 
 /* 地図の部品の名前から、どの役割かを見分ける */
 function roleOf(L){
@@ -60,7 +109,8 @@ function roleOf(L){
 
 function retint(st){
   try{
-    var C=PALETTE[night?'night':'day'];
+    var C=PAL();
+    var paper=(theme==='paper');
     var s=JSON.parse(JSON.stringify(st));
 
     (s.layers||[]).forEach(function(L){
@@ -69,9 +119,28 @@ function retint(st){
 
         if(L.type==='symbol'){
           var big=/place|city|town|country|state/.test((L.id||'')+(L['source-layer']||''));
+
+          // 紙の地図は、地名を「英字 / 日本語」の2段で出す
+          if(paper&&big&&L.layout){
+            L.layout['text-field']=[
+              'case',
+              ['all',['has','name:latin'],['has','name:ja']],
+              ['concat',['get','name:latin'],'\n',['get','name:ja']],
+              ['coalesce',['get','name:ja'],['get','name'],['get','name:latin']]
+            ];
+            L.layout['text-line-height']=1.35;
+            L.layout['text-size']=['interpolate',['linear'],['zoom'],6,11,12,14,16,17];
+          }
+
           L.paint['text-color']=big?C.text:C.textSub;
           L.paint['text-halo-color']=C.halo;
-          L.paint['text-halo-width']=1.6;
+          L.paint['text-halo-width']=paper?2.2:1.6;
+          if(paper){
+            // 紙の地図は、文字の間を広くとって落ち着かせる
+            if(!L.layout)L.layout={};
+            L.layout['text-letter-spacing']=big?0.09:0.05;
+            L.paint['text-halo-blur']=0.4;
+          }
           return;
         }
 
@@ -87,12 +156,16 @@ function retint(st){
         }
         if(L.type==='line'){
           L.paint['line-color']=col;
+          var w=L.paint['line-width'];
           // 夜は道路をわずかに太く。細いと背景に沈む
-          if(night&&(role==='road'||role==='roadMinor')){
-            var w=L.paint['line-width'];
-            if(typeof w==='number') L.paint['line-width']=w*1.25;
+          if(night&&(role==='road'||role==='roadMinor')&&typeof w==='number'){
+            L.paint['line-width']=w*1.25;
           }
           if(night&&role==='road') L.paint['line-opacity']=1;
+          // 紙は、道のふちを太くして輪郭を立てる
+          if(paper&&role==='roadCase'&&typeof L.paint['line-width']==='number'){
+            L.paint['line-width']=L.paint['line-width']*1.35;
+          }
         }
         if(L.type==='fill-extrusion') L.paint['fill-extrusion-color']=C.building;
       }catch(e){ /* この部品だけ飛ばす */ }
@@ -183,7 +256,10 @@ function afterStyle(){
   if(is3D) setTimeout(addBuildings,700);   // 重いので後から
   SPRITE=null;
   Object.keys(ICON_CACHE).forEach(function(k){delete ICON_CACHE[k];});
-  Object.keys(madeIcons).forEach(function(k){delete madeIcons[k];});
+  Object.keys(madeIcons).forEach(function(k){
+    if(map.hasImage&&map.hasImage(k)){ try{ map.removeImage(k); }catch(e){} }
+    delete madeIcons[k];
+  });
   addPlaceLayers();
   render(true);
   hideSplash();
@@ -303,7 +379,7 @@ function addPlaceLayers(){
   // 地図が元から描いている店とまったく同じ大きさ・濃さにする
   map.addLayer({id:'spot-dot',type:'circle',source:'spot',minzoom:14,paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
-    'circle-color':night?'#3A3A3E':'#E9E6E0',
+    'circle-color':PAL().building,
     'circle-stroke-width':0,'circle-opacity':.95}});
   map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14,layout:{
     'icon-image':['get','icon'],
@@ -338,7 +414,7 @@ function addPlaceLayers(){
   map.addLayer({id:'mine-ring',type:'circle',source:'mine',paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],12,5,15,8,18,11],
     'circle-color':night?'#FAFAFA':'#111111',
-    'circle-stroke-color':night?'#121214':'#FFFFFF','circle-stroke-width':2.4}});
+    'circle-stroke-color':PAL().halo,'circle-stroke-width':2.4}});
   map.addLayer({id:'mine-ic',type:'symbol',source:'mine',minzoom:13.5,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],13.5,.85,17,1.15],
@@ -347,20 +423,22 @@ function addPlaceLayers(){
     'text-optional':true,'text-max-width':9
   },paint:{
     'text-color':night?'#FFFFFF':'#000000',
-    'text-halo-color':night?'#121214':'#FFFFFF','text-halo-width':1.8}});
+    'text-halo-color':PAL().halo,'text-halo-width':1.8}});
 
   // 写真の丸。地図の中に描くので、ズームしてもずれない
   map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,layout:{
     'icon-image':['get','icon'],
+    /* 76px で出したいので、128 で描いたものを縮める。
+       画面の細かさに合わせて2倍で登録しているぶん、値は半分になる */
     'icon-size':['interpolate',['linear'],['zoom'],
-       PHOTO_ZOOM,['case',['==',['get','mine'],1],0.44,0.40],
-       19,        ['case',['==',['get','mine'],1],0.60,0.54]],
-    'icon-allow-overlap':true,'icon-anchor':'bottom','icon-offset':[0,6],
-    'text-field':['get','n'],'text-size':11,'text-offset':[0,0.7],'text-anchor':'top',
+       PHOTO_ZOOM,['case',['==',['get','mine'],1],0.59,0.52],
+       19,        ['case',['==',['get','mine'],1],0.76,0.66]],
+    'icon-allow-overlap':true,'icon-anchor':'bottom','icon-offset':[0,4],
+    'text-field':['get','n'],'text-size':11,'text-offset':[0,0.6],'text-anchor':'top',
     'text-optional':true,'text-max-width':8
   },paint:{
-    'text-color':night?'#FFFFFF':'#111111',
-    'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.7}});
+    'text-color':PAL().text,
+    'text-halo-color':PAL().halo,'text-halo-width':1.7}});
 
   /* 押したときの判定は、地図のクリック処理側で一括して行う。
      レイヤーごとに受けると、順番の都合で二重に開いてしまう */
@@ -382,7 +460,19 @@ const makingIcons={};          // 作っている途中のもの
 
 let photoDiag={try:0,ok:0,ngLoad:0,ngAdd:0,last:''};
 
-/** 写真を丸く切り抜いて、地図に登録する */
+/** 角の丸い四角を描く。Canvas には用意されていないので自分で書く */
+function roundRect(x,px,py,w,hh,r){
+  x.beginPath();
+  x.moveTo(px+r,py);
+  x.lineTo(px+w-r,py);   x.quadraticCurveTo(px+w,py,px+w,py+r);
+  x.lineTo(px+w,py+hh-r);x.quadraticCurveTo(px+w,py+hh,px+w-r,py+hh);
+  x.lineTo(px+r,py+hh);  x.quadraticCurveTo(px,py+hh,px,py+hh-r);
+  x.lineTo(px,py+r);     x.quadraticCurveTo(px,py,px+r,py);
+  x.closePath();
+}
+
+/** 写真を切り抜いて、地図に登録する。
+    形は地図の見た目によらず同じ。角を少し落とした四角。 */
 function makeRoundIcon(url,mine,key){
   if(madeIcons[key]||makingIcons[key])return;
   makingIcons[key]=1;
@@ -398,22 +488,30 @@ function makeRoundIcon(url,mine,key){
 
   im.onload=function(){
     try{
-      var S=128,R=S/2,ring=7;
+      /* 形は地図の見た目によらず同じ。
+         角をわずかに落とした四角。尖りは出さない */
+      var S=128, ring=5, r=S*0.13;
+      var H=S;
       var cv=document.createElement('canvas');
-      cv.width=S; cv.height=S;
+      cv.width=S; cv.height=H;
       var x=cv.getContext('2d',{willReadFrequently:true});
 
-      x.beginPath(); x.arc(R,R,R-1,0,Math.PI*2);
-      x.fillStyle = mine ? (night?'#FAFAFA':'#111111') : (night?'#101010':'#FFFFFF');
+      var frame = mine ? (night?'#FAFAFA':'#111111') : (night?'#101010':'#FFFFFF');
+      var s=Math.min(im.width,im.height);
+
+      // 枠
+      x.fillStyle=frame;
+      roundRect(x, 0, 0, S, S, r);
       x.fill();
 
+      // 中に写真
       x.save();
-      x.beginPath(); x.arc(R,R,R-ring,0,Math.PI*2); x.clip();
-      var s=Math.min(im.width,im.height);
+      roundRect(x, ring, ring, S-ring*2, S-ring*2, Math.max(0, r-ring*0.6));
+      x.clip();
       x.drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,ring,ring,S-ring*2,S-ring*2);
       x.restore();
 
-      var dat=x.getImageData(0,0,S,S);
+      var dat=x.getImageData(0,0,S,H);
       if(map.hasImage(key))map.removeImage(key);
       // ImageData をそのまま渡すのが一番確実
       map.addImage(key,dat,{pixelRatio:2});
