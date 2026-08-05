@@ -1,0 +1,338 @@
+/* ============================================================
+   写真を開く
+
+   一枚に集中して見られるように、画面いっぱいで出す。
+   下へ払うと閉じる。
+   ============================================================ */
+let viewerEl=null;
+
+function openViewer(list, idx, who, place, cap, when, tags){
+  closeViewer();
+  idx=idx||0;
+  var v=el('<div class="viewer">'+
+    '<div class="vw-bar">'+
+      '<div class="av"'+(list[0]?' style="background-image:url('+
+        JSON.stringify(list[0]).replace(/"/g,'&quot;')+')"':'')+'></div>'+
+      '<div class="who"><b>'+esc(who||'じぶん')+'</b><span>'+esc(place||'')+'</span></div>'+
+      '<button class="x">✕</button></div>'+
+    '<div class="vw-track" id="vwt">'+
+      list.map(function(u){return '<img src="'+u+'">';}).join('')+'</div>'+
+    (list.length>1?'<div class="vw-dots" id="vwd">'+
+      list.map(function(_,i){return '<i class="'+(i===idx?'on':'')+'"></i>';}).join('')+
+      '</div>':'')+
+    (cap?'<div class="vw-cap"><em>'+esc(who||'じぶん')+'</em>'+esc(cap)+'</div>':'')+
+    (tags&&tags.length?'<div class="vw-tags">'+tags.map(function(t){
+      return '<span>'+esc(t)+'</span>';}).join('')+'</div>':'')+
+    '<div class="vw-meta">'+esc(when||'')+(place?('　'+esc(place)):'')+'</div>'+
+  '</div>');
+  document.body.appendChild(v);
+  viewerEl=v;
+  void v.offsetWidth; v.classList.add('on');
+
+  var track=v.querySelector('#vwt');
+  if(idx) setTimeout(function(){ track.scrollLeft=track.clientWidth*idx; },30);
+  var dots=v.querySelector('#vwd');
+  if(dots) track.onscroll=function(){
+    var i=Math.round(track.scrollLeft/track.clientWidth);
+    Array.prototype.forEach.call(dots.children,function(d,j){
+      d.classList.toggle('on',j===i);});
+  };
+  v.querySelector('.x').onclick=closeViewer;
+
+  /* 下へ払うと閉じる */
+  var y0=0,dragging=false;
+  v.addEventListener('touchstart',function(e){
+    if(v.scrollTop>4)return;
+    y0=e.touches[0].clientY; dragging=true;
+  },{passive:true});
+  v.addEventListener('touchmove',function(e){
+    if(!dragging)return;
+    var dy=e.touches[0].clientY-y0;
+    if(dy>0){ v.style.transform='translateY('+dy+'px)';
+      v.style.transition='none'; }
+  },{passive:true});
+  v.addEventListener('touchend',function(e){
+    if(!dragging)return; dragging=false;
+    var dy=e.changedTouches[0].clientY-y0;
+    v.style.transition='';
+    if(dy>110) closeViewer();
+    else v.style.transform='';
+  },{passive:true});
+}
+function closeViewer(){
+  if(!viewerEl)return;
+  var v=viewerEl; viewerEl=null;
+  v.style.transform='translateY(100%)';
+  setTimeout(function(){ v.remove(); },340);
+}
+
+/* ============================================================
+   場所のシート
+   ============================================================ */
+const scrim=document.getElementById('scrim');
+let sheetEl=null;
+function closeSheet(){
+  if(sheetEl){var s=sheetEl;sheetEl=null;s.classList.remove('on');
+    setTimeout(function(){s.remove();},420);}
+  scrim.classList.remove('on');
+}
+scrim.onclick=closeSheet;
+function showSheet(html){
+  closeSheet();
+  var s=el('<div class="sheet">'+html+'</div>');
+  document.body.appendChild(s);
+  sheetEl=s; void s.offsetWidth; s.classList.add('on');
+
+  /* 上の余白を下へ払うと閉じる */
+  var y0=0,drag=false;
+  s.addEventListener('touchstart',function(e){
+    if(s.scrollTop>4)return;
+    y0=e.touches[0].clientY; drag=true;
+  },{passive:true});
+  s.addEventListener('touchmove',function(e){
+    if(!drag)return;
+    var dy=e.touches[0].clientY-y0;
+    if(dy>0){ s.style.transform='translateY('+dy+'px)'; s.style.transition='none'; }
+  },{passive:true});
+  s.addEventListener('touchend',function(e){
+    if(!drag)return; drag=false;
+    var dy=e.changedTouches[0].clientY-y0;
+    s.style.transition='';
+    if(dy>100) closeSheet();
+    else s.style.transform='';
+  },{passive:true});
+  scrim.classList.add('on');
+  return s;
+}
+
+function openPlace(p,mine){
+  var mySpots=spots.filter(function(s){return s.n===p.n;});
+  var photos=mySpots.filter(function(s){return s.photo;}).map(function(s){return s.photo;});
+  if(p.photo&&photos.indexOf(p.photo)<0)photos.unshift(p.photo);
+  var av=photos[0]||'';
+  var meta=[p.gname,p.budget,p.place].filter(Boolean).join(' ・ ')||p.c||'';
+
+  var html='<div class="grab"></div>'+
+    '<div class="head"><div class="av"'+(av?' style="background-image:url('+
+      JSON.stringify(av).replace(/"/g,'&quot;')+')"':'')+'>'+(av?'':esc((p.n||'?').charAt(0)))+'</div>'+
+    '<div class="t"><h2>'+esc(p.n)+'</h2><p>'+esc(meta)+
+      (mySpots.length?' ・ '+mySpots.length+'件の思い出':'')+'</p></div></div>'+
+    '<div class="acts"><button class="main" id="a-add">ここに追加</button>'+
+    '<button id="a-route">経路</button></div>';
+
+  if(photos.length){
+    // 大小を混ぜて並べる。均一だと単調になる
+    html+='<div class="grid2">'+photos.slice(0,9).map(function(u,i){
+      var tall=(i%5===0);
+      return '<i class="'+(tall?'tall':'')+'" data-ph="'+i+'" style="background-image:url('+
+        JSON.stringify(u).replace(/"/g,'&quot;')+')"></i>';
+    }).join('')+'</div>';
+  }
+  var frnd=Object.keys(others).map(function(k){return others[k];})
+    .filter(function(o){return o.n===p.n&&o.tag;});
+  if(frnd.length){
+    html+='<div class="posts">'+frnd.map(function(o){
+      return '<div class="post"><div class="av2"></div><div class="b"><b>'+
+        esc(o.author&&o.author.name||'フレンド')+'</b>'+
+        '<p>'+esc(o.tag)+'</p></div></div>';
+    }).join('')+'</div>';
+  }
+  if(mySpots.length){
+    html+='<div class="posts">'+mySpots.map(function(s){
+      return '<div class="post"><div class="av2"'+(s.photo?' style="background-image:url('+
+        JSON.stringify(s.photo).replace(/"/g,'&quot;')+')"':'')+'></div>'+
+        '<div class="b"><b>じぶん</b><span>'+esc(s.d||'')+'</span>'+
+        (s.tag?'<p>'+esc(s.tag)+'</p>':'')+'</div></div>';
+    }).join('')+'</div>';
+    html+='<div class="pad" style="margin-top:12px"><button class="btn d" id="a-del">この記録を消す</button></div>';
+  }else{
+    html+='<div class="empty">まだ思い出がありません。<br>写真を1枚、置いてみてください。</div>';
+  }
+
+  var s=showSheet(html);
+  Array.prototype.forEach.call(s.querySelectorAll('[data-ph]'),function(e2){
+    e2.onclick=function(){
+      var i=Number(e2.dataset.ph);
+      var m=mySpots.filter(function(x){return x.photo;})[i]||mySpots[0]||{};
+      openViewer(photos, i, 'じぶん', p.place||p.n, m.tag||'', m.d||'', []);
+    };
+  });
+  s.querySelector('#a-add').onclick=function(){
+    // 場所はもう分かっているので、確認は挟まない
+    closeSheet();
+    openAdd({lat:p.lat,lng:p.lng,known:p.n,cat:p.c,
+      place:p.place||p.addr||'',gname:p.gname,budget:p.budget});
+  };
+  s.querySelector('#a-route').onclick=function(){
+    var ios=/iPad|iPhone|iPod/.test(navigator.userAgent);
+    location.href=(ios?'maps://?daddr=':'https://www.google.com/maps/dir/?api=1&destination=')
+      +p.lat+','+p.lng;
+  };
+  var d=s.querySelector('#a-del');
+  if(d)d.onclick=function(){
+    if(this.dataset.s!=='1'){this.dataset.s='1';this.textContent='本当に消す？（もう一度）';return;}
+    mySpots.forEach(function(x){dbDel('spots',x.id);});
+    spots=spots.filter(function(x){return x.n!==p.n;});
+    closeSheet(); render(true);
+  };
+}
+
+/* ============================================================
+   場所を置く
+   ============================================================ */
+const cf=document.getElementById('confirm');
+const cfName=document.getElementById('cf-name'), cfAsk=document.getElementById('cf-ask');
+
+function startPlacing(lat,lng,opt){
+ try{
+  opt=opt||{};
+  if(!isFinite(lat)||!isFinite(lng))return;
+  if(dropM){dropM.remove();dropM=null;}
+  placing=Object.assign({lat:lat,lng:lng,place:null},opt);
+  var d=document.createElement('div');d.className='pn drop';
+  d.innerHTML='<div class="im"></div><div class="tl"></div>';
+  dropM=new maplibregl.Marker({element:d,draggable:true,anchor:'bottom'})
+    .setLngLat([lng,lat]).addTo(map);
+  dropM.on('dragend',function(){var q=dropM.getLngLat();movePlacing(q.lat,q.lng,true);});
+  closeSheet();                       // 開いている詳細を閉じる（重なり防止）
+  document.body.classList.add('placing');
+  cf.classList.add('on');cf.classList.remove('pick');
+  map.easeTo({center:[lng,lat],zoom:Math.max(map.getZoom(),16.4),duration:480});
+  askPlace(lat,lng);
+ }catch(e){showErr('[startPlacing] '+dump(e));}
+}
+function movePlacing(lat,lng,drag){
+  if(!placing)return;
+  placing.lat=lat;placing.lng=lng;
+  if(!drag&&dropM)dropM.setLngLat([lng,lat]);
+  cf.classList.remove('pick');askPlace(lat,lng);
+}
+async function askPlace(lat,lng){
+ try{
+  var my=++askSeq;
+  cfName.textContent='場所を調べています…';cfAsk.textContent='この場所でいいですか？';
+  var r=await revGeo(lat,lng);
+  if(my!==askSeq||!placing)return;
+  placing.place=r.name;
+  if(r.near&&!placing.known)placing.known=r.near.n;
+  cfName.textContent=r.name;
+  var ex=[placing.gname,placing.budget].filter(Boolean).join(' ・ ');
+  cfAsk.textContent=ex||(r.near?('近く：'+r.near.n):'この場所でいいですか？');
+ }catch(e){showErr('[askPlace] '+dump(e));}
+}
+function endPlacing(){
+  if(dropM){dropM.remove();dropM=null;}
+  placing=null;cf.classList.remove('on','pick');
+  document.body.classList.remove('placing');
+}
+document.getElementById('cf-yes').onclick=function(){
+  if(!placing)return;var p=placing;endPlacing();openAdd(p);};
+document.getElementById('cf-no').onclick=function(){
+  if(!placing)return;cf.classList.add('pick');
+  cfName.textContent='地図をタップして選び直してください';
+  cfAsk.textContent='ピンを長押しして動かすこともできます';};
+document.getElementById('cf-cancel').onclick=endPlacing;
+
+function baseCat(p){
+  var c=((p.class||'')+'/'+(p.subclass||'')).toLowerCase();
+  if(/cafe|coffee|tea/.test(c))return '喫茶';
+  if(/bar|pub|alcohol|nightclub/.test(c))return '酒';
+  if(/restaurant|fast_food|food|noodle/.test(c))return '食';
+  if(/park|garden|playground/.test(c))return '園';
+  if(/worship|shinto|temple|shrine/.test(c))return '社';
+  if(/book|library/.test(c))return '本';
+  if(/onsen|spa|bath|sauna/.test(c))return '湯';
+  return '景';
+}
+map.on('click',function(e){
+  if(placing){ movePlacing(e.lngLat.lat,e.lngLat.lng); return; }
+
+  var pad=20,box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]],fs=[];
+  try{ fs=map.queryRenderedFeatures(box); }catch(_){}
+
+  /* 優先順位をはっきり決める。
+     ① 自分の思い出　② フレンド　③ 読み込んだ場所　④ 地図に元からある店
+     上のものが見つかったら、そこで打ち止め。
+     こうしないと、記録を押したのに「この場所でいいですか」も一緒に出てしまう */
+  function nearest(list){
+    var best=null,bd=1e9;
+    fs.forEach(function(f){
+      if(!f.layer||list.indexOf(f.layer.id)<0)return;
+      if(!f.geometry||f.geometry.type!=='Point')return;
+      var q=map.project(f.geometry.coordinates);
+      var d=Math.hypot(q.x-e.point.x,q.y-e.point.y);
+      if(d<bd){bd=d;best=f;}
+    });
+    return best;
+  }
+
+  var f=nearest(['photo-ic','mine-ring','mine-ic']);
+  if(f){
+    var s=spots.filter(function(x){return x.n===f.properties.n;})[0];
+    if(s){ openPlace(s,true); return; }
+  }
+
+  f=nearest(['frnd-ring','frnd-ic']);
+  if(f){
+    var ks=Object.keys(others);
+    for(var i=0;i<ks.length;i++){
+      if(others[ks[i]].n===f.properties.n){ openPlace(others[ks[i]],false); return; }
+    }
+  }
+
+  f=nearest(['spot-dot','spot-ic']);
+  if(f){
+    var p3=pois.filter(function(x){return x.n===f.properties.n;})[0];
+    if(p3){ openPlace(p3,false); return; }
+  }
+
+  var best=null,bd=1e9;
+  fs.forEach(function(x){
+    if(!x.geometry||x.geometry.type!=='Point')return;
+    if(x.sourceLayer!=='poi'||!x.properties||!x.properties.name)return;
+    var q=map.project(x.geometry.coordinates);
+    var d=Math.hypot(q.x-e.point.x,q.y-e.point.y);
+    if(d<bd){bd=d;best=x;}
+  });
+  if(best){
+    var pr=best.properties,c=best.geometry.coordinates;
+    var nm=pr['name:ja']||pr.name;
+    var known=pois.filter(function(x){return x.n===nm;})[0];
+    openPlace(known||{n:nm,c:baseCat(pr),lat:c[1],lng:c[0],
+      gname:pr.subclass||pr.class||''},false);
+    return;
+  }
+
+  startPlacing(e.lngLat.lat,e.lngLat.lng,{});
+});
+
+/* ---------- 地名を調べる ---------- */
+const gcache=new Map();
+async function revGeo(lat,lng){
+  var key=lat.toFixed(4)+','+lng.toFixed(4);
+  if(gcache.has(key))return gcache.get(key);
+  var near=null,nd=1e9;
+  pois.concat(spots).forEach(function(p){if(!valid(p))return;
+    var d=Math.hypot((p.lat-lat)*111000,(p.lng-lng)*91000);
+    if(d<nd){nd=d;near=p;}});
+  if(nd>90)near=null;
+  var name=null;
+  try{
+    // 写真EXIF由来の座標も含め、位置情報を第三者へ直接送らない。
+    // Worker 側でキャッシュ・レート制限して地名へ変換する。
+    var r=await fetch(SERVER+'/api/reverse?zoom=18&lat='+encodeURIComponent(lat)+
+      '&lng='+encodeURIComponent(lng));
+    if(r.ok){var j=await r.json(),a=j.address||{};
+      var seq=[a.province||a.state,a.city||a.town||a.village||a.county,
+        a.city_district||a.suburb,a.neighbourhood||a.quarter,a.road],o=[];
+      seq.forEach(function(v){if(v&&o.indexOf(v)<0)o.push(v);});
+      if(o.length)name=o.join('');
+      if(j.name&&name&&name.indexOf(j.name)<0)name=j.name+'（'+name+'）';
+      else if(j.name&&!name)name=j.name;
+      // Worker の簡潔な応答 {name:"…"} も受け付ける。
+      if(!name&&j.name)name=j.name;}
+  }catch(e){}
+  if(!name&&near)name=near.n+' のあたり';
+  if(!name)name=lat.toFixed(5)+', '+lng.toFixed(5);
+  var out={name:name,near:near};gcache.set(key,out);return out;
+}
