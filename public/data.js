@@ -70,30 +70,105 @@ async function loadHP(){
       budget:s.budget,photo:s.photo||'',src:'hp'});n++;});
   return n;
 }
-const WSKIP=/学校|高校|中学|小学|大学|病院|株式会社|放送局|変電|工場/;
-function wikiCat(s){s=String(s||'');
-  if(/寺|神社|大社|神宮|教会/.test(s))return '社';
-  if(/公園|庭園/.test(s))return '園';
-  if(/温泉|銭湯/.test(s))return '湯';
-  return '景';}
+/* ============================================================
+   Wikipedia
+
+   座標のついた記事を拾うだけでなく、
+   ・カテゴリを見て「観光地かどうか」を判断する
+   ・直近の閲覧数を見て「いま話題かどうか」を判断する
+   この2つを足すと、ただの一覧が「行きたい場所の地図」になる。
+   ============================================================ */
+
+/* 出したくないもの */
+const WSKIP=/学校|高校|中学|小学|大学|病院|株式会社|放送局|変電|工場|廃止|事件|事故/;
+
+/* カテゴリから、そこがどういう場所かを見分ける。
+   Wikipediaの記事には「Category:日本の城」のような分類が付いている */
+const WCAT=[
+  [/温泉|銭湯|浴場/,                          '湯', 3],
+  [/神社|寺院|寺|大社|神宮|仏閣|霊場/,         '社', 3],
+  [/公園|庭園|植物園|渓谷|滝|湖沼|山|海岸|岬/, '園', 3],
+  [/城|城郭|史跡|重要文化財|国宝|遺跡|古墳/,   '景', 4],
+  [/美術館|博物館|資料館|記念館|水族館|動物園/,'景', 4],
+  [/観光地|名所|景勝地|日本百|世界遺産/,       '景', 5],
+  [/駅|空港|港/,                              '景', 1],
+  [/図書館|書店/,                             '本', 2]
+];
+
+/* 記事のカテゴリと説明から、種類と「観光地らしさ」を出す */
+function wikiJudge(title, desc, cats){
+  var s=String(title||'')+' '+String(desc||'')+' '+(cats||[]).join(' ');
+  var cat='景', score=0;
+  for(var i=0;i<WCAT.length;i++){
+    if(WCAT[i][0].test(s)){
+      if(WCAT[i][2]>score){ cat=WCAT[i][1]; score=WCAT[i][2]; }
+    }
+  }
+  return {cat:cat, score:score};
+}
+
+/* 直近7日の閲覧数。いま人が見ている場所ほど、話題になっている。
+   サーバー側で1日ぶん残しているので、同じ場所を何度開いても呼び出しは増えない */
+async function wikiViews(titles){
+  if(!titles.length)return {};
+  try{
+    var r=await fetch(SERVER+'/api/wiki?mode=views&titles='+
+      encodeURIComponent(titles.slice(0,12).join('|')));
+    if(!r.ok)return {};
+    var j=await r.json();
+    return j.views||{};
+  }catch(e){ return {}; }
+}
+
 async function loadWiki(){
   try{
     var c=map.getCenter(),b=map.getBounds();
     var rad=Math.min(10000,Math.max(500,Math.round(Math.abs(b.getNorth()-c.lat)*111000)));
-    var u='https://ja.wikipedia.org/w/api.php?action=query&format=json&origin=*'+
-      '&generator=geosearch&ggscoord='+c.lat.toFixed(6)+'%7C'+c.lng.toFixed(6)+
-      '&ggsradius='+rad+'&ggslimit=60&prop=coordinates%7Cdescription%7Cpageimages'+
-      '&piprop=thumbnail&pithumbsize=240';
-    var r=await fetch(u); if(!r.ok)return 0;
-    var j=await r.json(),pg=(j.query&&j.query.pages)||{},seen=dedupe(),n=0;
-    Object.keys(pg).forEach(function(k){
-      var p=pg[k],co=p.coordinates&&p.coordinates[0]; if(!co||!p.title)return;
-      var ds=p.description||''; if(WSKIP.test(p.title+ds))return;
-      var key=p.title+Number(co.lat).toFixed(4); if(seen[key])return; seen[key]=1;
-      pois.push({n:p.title,c:wikiCat(p.title+ds),lat:Number(co.lat),lng:Number(co.lon),
-        gname:ds,photo:p.thumbnail?p.thumbnail.source:'',src:'wiki'});n++;});
+
+    /* サーバーを通す。
+       こちらの名乗りを付けないと、Wikipediaから遮断される決まりになった */
+    var r=await fetch(SERVER+'/api/wiki?mode=near&lat='+c.lat.toFixed(6)+
+      '&lng='+c.lng.toFixed(6)+'&radius='+rad);
+    if(!r.ok)return 0;
+    var j=await r.json();
+    var seen=dedupe();
+
+    var list=[];
+    (j.pages||[]).forEach(function(p){
+      if(!p.title||!isFinite(p.lat)||!isFinite(p.lng))return;
+      var ds=p.desc||'';
+      if(WSKIP.test(p.title+ds))return;
+      var key=p.title+Number(p.lat).toFixed(4); if(seen[key])return; seen[key]=1;
+
+      var jd=wikiJudge(p.title, ds, p.cats||[]);
+      list.push({
+        n:p.title, c:jd.cat, lat:Number(p.lat), lng:Number(p.lng),
+        gname:ds, photo:p.photo||'', src:'wiki', spot:jd.score
+      });
+    });
+
+    /* 観光地らしいものを前に。写真があるものも上げる */
+    list.sort(function(a,x){
+      return (x.spot+(x.photo?1:0)) - (a.spot+(a.photo?1:0));
+    });
+
+    /* 上位の閲覧数を見て、話題のものに印をつける */
+    try{
+      var pv=await wikiViews(list.slice(0,12).map(function(o){return o.n;}));
+      var vals=Object.keys(pv).map(function(k){return pv[k];})
+        .filter(function(v){return v>0;}).sort(function(a,b){return a-b;});
+      var mid=vals.length? vals[Math.floor(vals.length/2)] : 0;
+      list.forEach(function(o){
+        o.views=pv[o.n]||0;
+        // 周りの2倍以上見られていれば「話題」とみなす
+        o.hot = (mid>0 && o.views > mid*2 && o.views > 300);
+      });
+    }catch(e){}
+
+    var n=0;
+    list.forEach(function(o){ pois.push(o); n++; });
     return n;
-  }catch(e){return 0;}
+  }catch(e){ return 0; }
 }
 
 
@@ -169,7 +244,7 @@ async function search(v){
 
   // ② Google。曖昧な言葉や、ここに無い場所を拾う
   try{
-    var rg=await api('/api/gsearch?q='+encodeURIComponent(v)+
+    var rg=await fetch(SERVER+'/api/gsearch?q='+encodeURIComponent(v)+
       '&lat='+c.lat+'&lng='+c.lng);
     var jg=await rg.json();
     var have={}; out.forEach(function(o){ have[o.n]=1; });
@@ -182,18 +257,14 @@ async function search(v){
     });
   }catch(e){}
 
-  // ③ 地名。検索語を第三者へ直接送らず、Worker がキャッシュ・制限した
-  // 同一オリジンの窓口を通す。公開の地理サービスは Worker 側だけが使う。
+  // ③ 地名
   try{
-    var r2=await fetch(SERVER+'/api/geocode?limit=4&q='+encodeURIComponent(v.slice(0,120)));
-    if(!r2.ok)throw new Error('geocode unavailable');
+    var r2=await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=4'+
+      '&accept-language=ja&countrycodes=jp&q='+encodeURIComponent(v));
     var j2=await r2.json();
-    var places=Array.isArray(j2)?j2:(j2.places||[]);
-    places.forEach(function(p){
-      var lat=Number(p.lat),lng=Number(p.lng==null?p.lon:p.lng);
-      if(!isFinite(lat)||!isFinite(lng))return;
+    (j2||[]).forEach(function(p){
       out.push({k:'地名',n:p.name||String(p.display_name).split(',')[0],
-        sub:p.display_name||'',lat:lat,lng:lng});});
+        sub:p.display_name,lat:Number(p.lat),lng:Number(p.lon)});});
   }catch(e){}
 
   draw(out,null);
