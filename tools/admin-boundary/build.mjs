@@ -103,7 +103,7 @@ export function decodeRings(encoded) {
   return rings;
 }
 
-function readDbf(path) {
+export function readDbf(path) {
   const data = readFileSync(path), records = data.readUInt32LE(4);
   const headerLength = data.readUInt16LE(8), recordLength = data.readUInt16LE(10), fields = [];
   for (let offset = 32; data[offset] !== 0x0d; offset += 32) {
@@ -118,7 +118,7 @@ function readDbf(path) {
   return rows;
 }
 
-async function* readShapes(path) {
+export async function* readShapes(path) {
   const stream = createReadStream(path, { start: 100 });
   let pending = Buffer.alloc(0);
   for await (const chunk of stream) {

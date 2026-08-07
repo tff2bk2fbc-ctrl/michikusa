@@ -8,6 +8,8 @@
     "boundary:build": "node tools/admin-boundary/build.mjs",
     "address:enrich": "node tools/address-db/enrich-abr.mjs",
     "places:build": "node tools/places/build.mjs",
+    "wikimedia:analyze": "node tools/wikimedia/analyze.mjs",
+    "wikimedia:build": "node tools/wikimedia/build.mjs",
     "address:test": "node --test tools/address-db/build.test.mjs",
     "check": "node --check src/index.js && node --test tools/address-db/build.test.mjs tools/admin-boundary/build.test.mjs"
   }

@@ -57,7 +57,7 @@ export default {
       if (p === "/api/health") {
         return cors(json({
           ok: true,
-          build: "api-26"
+          build: "api-27"
         }));
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, request, env));
@@ -2146,6 +2146,8 @@ async function wikiNear(url, env) {
   const lng = Number(url.searchParams.get("lng"));
   if (!validCoords(lat, lng)) return json({ error: "lat / lng が必要です" }, 400);
   const radius = Math.min(10_000, Math.max(500, Number(url.searchParams.get("radius") || 3000)));
+  const local = await wikiNearFromD1(lat, lng, radius, env);
+  if (local) return json(local);
   const cacheKey = "wiki_" + lat.toFixed(2) + "," + lng.toFixed(2) + "," + Math.round(radius / 1000);
   const cached = await dataCacheGet(env, cacheKey, 86400);
   if (cached) return json(Object.assign({ cached: true }, cached));
@@ -2183,6 +2185,45 @@ async function wikiNear(url, env) {
     };
   }));
   return json(out);
+}
+
+async function wikiNearFromD1(lat, lng, radius, env) {
+  const databases = ADDRESS_DB_BINDINGS.map((name) => env[name]).filter(Boolean);
+  if (!databases.length) return null;
+  const latDelta = radius / 110_540;
+  const lngDelta = radius / Math.max(1, 111_320 * Math.cos(lat * Math.PI / 180));
+  const minGridLat = Math.floor((lat - latDelta) * 100), maxGridLat = Math.floor((lat + latDelta) * 100);
+  const minGridLng = Math.floor((lng - lngDelta) * 100), maxGridLng = Math.floor((lng + lngDelta) * 100);
+  const latE6 = Math.round(lat * 1e6), lngE6 = Math.round(lng * 1e6);
+  const found = [];
+  // Workersの同時外部接続上限6本を超えないよう、地域DBを2回に分ける。
+  for (let offset = 0; offset < databases.length; offset += 6) {
+    const batches = await Promise.all(databases.slice(offset, offset + 6).map(async function (db) {
+      try {
+        const result = await db.prepare(`
+          SELECT page_id,title,type,lat_e6,lng_e6
+          FROM wikipedia_places
+          WHERE grid_lat BETWEEN ? AND ? AND grid_lng BETWEEN ? AND ?
+          ORDER BY ((lat_e6-?)*(lat_e6-?))+((lng_e6-?)*(lng_e6-?))
+          LIMIT 160
+        `).bind(minGridLat, maxGridLat, minGridLng, maxGridLng,
+                latE6, latE6, lngE6, lngE6).all();
+        return result.results || [];
+      } catch (error) { return []; }
+    }));
+    found.push(...batches.flat());
+  }
+  if (!found.length) return null;
+  const pages = found.map(function (row) {
+    const pageLat = row.lat_e6 / 1e6, pageLng = row.lng_e6 / 1e6;
+    return {
+      title: row.title, lat: pageLat, lng: pageLng, desc: "", photo: "", cats: [],
+      type: row.type || "", distance_m: Math.round(geoDistanceMeters(lat, lng, pageLat, pageLng)),
+      page_id: row.page_id
+    };
+  }).filter((page) => page.distance_m <= radius)
+    .sort((a, b) => a.distance_m - b.distance_m).slice(0, 60);
+  return pages.length ? { count: pages.length, pages, source: "jawiki-dump" } : null;
 }
 
 async function wikiViews(url, env) {
