@@ -273,6 +273,10 @@ function afterStyle(){
     scanSprite();
     if(Object.keys(SPRITE||{}).length) render(true);
   },1200);
+
+  /* 現在地が取れなくても、いま見えている辺りは必ず読む。
+     ここを現在地まかせにすると、位置を断った人が空の地図を見ることになる */
+  setTimeout(function(){ autoLoad(true); },1400);
   if(!locDone && !window.__homed){ window.__homed=1; goHome(false); }
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
