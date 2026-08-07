@@ -61,7 +61,8 @@ async function loadHP(){
   var half=Math.abs(b.getNorth()-c.lat)*111000;
   var range=half<=300?1:half<=500?2:half<=1000?3:half<=2000?4:5;
   var r=await fetch(SERVER+'/api/hotpepper?lat='+c.lat+'&lng='+c.lng+'&range='+range+'&pages=3');
-  var j=await r.json(); if(j.error){setTip(j.error);return 0;}
+  var j=await r.json();
+  if(j.error){ loadLog.err='食: '+j.error; setTip(j.error); return 0; }
   var seen=dedupe(),n=0;
   (j.shops||[]).forEach(function(s){
     if(!isFinite(s.lat)||!isFinite(s.lng))return;
@@ -129,8 +130,9 @@ async function loadWiki(){
        こちらの名乗りを付けないと、Wikipediaから遮断される決まりになった */
     var r=await fetch(SERVER+'/api/wiki?mode=near&lat='+c.lat.toFixed(6)+
       '&lng='+c.lng.toFixed(6)+'&radius='+rad);
-    if(!r.ok)return 0;
+    if(!r.ok){ loadLog.err='wiki HTTP '+r.status; return 0; }
     var j=await r.json();
+    if(j.error) loadLog.err='wiki: '+j.error;
     var seen=dedupe();
 
     var list=[];
@@ -168,7 +170,7 @@ async function loadWiki(){
     var n=0;
     list.forEach(function(o){ pois.push(o); n++; });
     return n;
-  }catch(e){ return 0; }
+  }catch(e){ loadLog.err='wiki: '+String(e&&e.message||e); return 0; }
 }
 
 
