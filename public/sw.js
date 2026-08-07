@@ -4,6 +4,9 @@
 const CACHE='spota-v3';
 
 self.addEventListener('install', function(){ self.skipWaiting(); });
+self.addEventListener('message', function(e){
+  if(e.data && e.data.type==='SKIP_WAITING') self.skipWaiting();
+});
 self.addEventListener('activate', function(e){
   // 古い版は捨てる
   e.waitUntil(caches.keys().then(function(ks){
