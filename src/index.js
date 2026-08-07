@@ -724,7 +724,6 @@ async function rakuten(url, env) {
   const ak = await cfg(env, "rakuten_key");
   if (!id) return json({ error: "楽天のアプリケーションIDが未設定です" }, 500);
   if (!ak) return json({ error: "楽天のアクセスキーが未設定です（rakuten_key）" }, 500);
-
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
   if (!isFinite(lat) || !isFinite(lng)) return json({ error: "lat / lng が必要です" }, 400);
