@@ -4,10 +4,23 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v73';
+var BUILD='v74';
 /* 一度読んだものを端末に残す。次からは待たずに出せる */
 if('serviceWorker' in navigator && location.protocol==='https:'){
-  navigator.serviceWorker.register('/sw.js').catch(function(){});
+  navigator.serviceWorker.register('/sw.js').then(function(reg){
+    /* 版が変わったら、残してあるものを捨てて入れ替える。
+       これをしないと、古いままの画面が出続ける */
+    reg.update();
+    var last=null;
+    try{ last=localStorage.getItem('mk_build'); }catch(e){}
+    if(last && last!==BUILD){
+      if(window.caches) caches.keys().then(function(ks){
+        ks.forEach(function(k){ caches.delete(k); });
+      });
+      if(reg.waiting) reg.waiting.postMessage({type:'SKIP_WAITING'});
+    }
+    try{ localStorage.setItem('mk_build',BUILD); }catch(e){}
+  }).catch(function(){});
 }
 var T0=performance.now(), TT=[];
 function mark(n){ TT.push([n, Math.round(performance.now()-T0)]); }
