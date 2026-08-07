@@ -7,24 +7,32 @@ const TAGS=[['amenity','public_bath','湯'],['shop','bakery','喫茶'],['shop','
 const OVER=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
 let busy=false;
 const cells={};
-let loadLog={run:0,hp:0,wiki:0,rk:0,err:''};
+let loadLog={run:0,hp:0,wiki:0,rk:0,ours:0,err:'',skip:''};
 
 /* この辺りのデータを取りに行く。
-   同じところを何度も叩かないよう、約1km四方の区画で覚えておく */
+   同じところを何度も叩かないよう、約1km四方の区画で覚えておく。
+   force が true なら、記録を無視して必ず取りに行く */
 async function autoLoad(force){
   try{
-    if(busy||placing)return;
-    if(map.getZoom()<14.5)return;
+    // なぜ走らなかったかを残す。原因の切り分けのため
+    if(busy){ loadLog.skip='ほかの取得が動いている'; return; }
+    if(placing && !force){ loadLog.skip='場所を置いている途中'; return; }
+    var z=map.getZoom();
+    if(z<13){ loadLog.skip='引きすぎ ('+z.toFixed(1)+')'; return; }
+
     var c=map.getCenter(), cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
-    if(!force&&cells[cell])return;
-    cells[cell]=1; busy=true; loadLog.run++;
+    if(!force&&cells[cell]){ loadLog.skip='この辺りは取得済み'; return; }
+
+    cells[cell]=1; busy=true; loadLog.run++; loadLog.skip='';
 
     // まず自分たちが貯めたものから。外へは足りない分だけ取りに行く
-    var mine=await loadOurs();
-    var n=await loadHP();
-    var w=await loadWiki();
-    var rk=await loadRakuten();
-    loadLog.hp+=n; loadLog.wiki+=w; loadLog.rk+=rk; loadLog.ours=(loadLog.ours||0)+mine;
+    var mine=0,n=0,w=0,rk=0;
+    try{ mine=await loadOurs(); }catch(e){ loadLog.err='自前: '+e; }
+    try{ n=await loadHP(); }catch(e){ loadLog.err='食: '+e; }
+    try{ w=await loadWiki(); }catch(e){ loadLog.err='名所: '+e; }
+    try{ rk=await loadRakuten(); }catch(e){ loadLog.err='宿: '+e; }
+
+    loadLog.hp+=n; loadLog.wiki+=w; loadLog.rk+=rk; loadLog.ours+=mine;
 
     var t=mine+n+w+rk;
     if(t){ render(true); setTip('この辺りを '+t+' 件 読み込みました'); }
