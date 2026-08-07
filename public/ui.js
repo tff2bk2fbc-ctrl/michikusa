@@ -34,19 +34,21 @@
 /* ============================================================
    片手ズーム
 
-   画面の右端を上下になぞると、拡大・縮小できる。
-   両手が使えないときのため。
-   ・上へ → 寄る
-   ・下へ → 引く
-   縦に動いたときだけ効かせて、地図を動かす操作と喧嘩しないようにする。
+   指1本で拡大縮小したいが、地図を動かす操作と取り合ってしまう。
+   そこで「長押ししてから上下」という合図にする。
+
+   ・どこでも長押し（0.35秒）→ ズームに入る
+   ・そのまま上へ → 寄る／下へ → 引く
+   ・速く動かすほど大きく変わる
+
+   長押しせずに動かせば、これまで通り地図が動く。
    ============================================================ */
 (function(){
   var el2=document.getElementById('map');
-  var W=44;                 // 右端からこの幅の中で始めたときだけ
-  var on=false, y0=0, z0=0, moved=0;
+  var armed=false;        // 長押しが成立したか
+  var y0=0, x0=0, z0=0, timer=null;
+  var lastY=0, lastT=0, speed=0;
   var hint=null;
-
-  function edge(x){ return x > window.innerWidth - W; }
 
   function showBar(v){
     if(!hint){
@@ -64,29 +66,41 @@
   }
 
   el2.addEventListener('touchstart',function(e){
-    if(e.touches.length!==1)return;
-    if(!edge(e.touches[0].clientX))return;
-    on=true; moved=0;
-    y0=e.touches[0].clientY; lastY=y0; lastT=performance.now(); speed=0;
+    if(e.touches.length!==1){ cancel(); return; }
+    var t=e.touches[0];
+    y0=t.clientY; x0=t.clientX;
+    lastY=y0; lastT=performance.now(); speed=0;
     z0=map.getZoom();
-    showBar(true); setBar(z0);
+    armed=false;
+    clearTimeout(timer);
+    timer=setTimeout(function(){
+      armed=true;
+      map.dragPan.disable();          // 地図が動かないようにする
+      showBar(true); setBar(z0);
+      if(navigator.vibrate) navigator.vibrate(8);   // 入ったことを指に伝える
+    },350);
   },{passive:true});
 
-  var lastY=0, lastT=0, speed=0, zAcc=0;
   el2.addEventListener('touchmove',function(e){
-    if(!on||e.touches.length!==1)return;
-    var y=e.touches[0].clientY, now=performance.now();
-    var dy=y0-y;
-    moved=Math.max(moved,Math.abs(dy));
-    if(moved<6)return;
-    e.preventDefault();
+    if(e.touches.length!==1){ cancel(); return; }
+    var t=e.touches[0];
 
-    /* 速く動かすほど、大きく変える。
+    if(!armed){
+      // 長押しの前に動いたら、地図を動かす操作とみなす
+      if(Math.abs(t.clientY-y0)>10||Math.abs(t.clientX-x0)>10) clearTimeout(timer);
+      return;
+    }
+
+    e.preventDefault();
+    var y=t.clientY, now=performance.now();
+    var dy=y0-y;                      // 上へ動かすと正 → 寄る
+
+    /* 速く動かすほど大きく変える。
        ゆっくりなら細かく、素早くなら一気に */
     var dt=Math.max(1,now-lastT);
-    var v=Math.abs(y-lastY)/dt*1000;          // 1秒あたりの移動量
+    var v=Math.abs(y-lastY)/dt*1000;
     speed=speed*0.7+v*0.3;
-    var gain=3.5+Math.min(9, speed/260*9);    // 3.5〜12.5段階ぶん
+    var gain=3.5+Math.min(9, speed/260*9);
     lastY=y; lastT=now;
 
     var z=z0+(dy/window.innerHeight)*gain;
@@ -95,15 +109,15 @@
     setBar(z);
   },{passive:false});
 
-  function end(){
-    if(!on)return;
-    on=false;
+  function cancel(){
+    clearTimeout(timer);
+    if(armed){ map.dragPan.enable(); }
+    armed=false;
     showBar(false);
   }
-  el2.addEventListener('touchend',end,{passive:true});
-  el2.addEventListener('touchcancel',end,{passive:true});
+  el2.addEventListener('touchend',cancel,{passive:true});
+  el2.addEventListener('touchcancel',cancel,{passive:true});
 })();
-
 
 /* ============================================================
    下のバナーの動き
