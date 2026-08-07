@@ -170,7 +170,8 @@ function showDiag(){
     var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:16px">'+
       '<div style="font-size:17px;font-weight:700;margin-bottom:12px">診断</div>'+
       '<div style="font-size:13px;line-height:2.1;margin-bottom:14px">'+
-        'BUILD '+BUILD+'<br>'+
+        'アプリ <b>'+BUILD+'</b>　サーバー <b id="srv">…</b><br>'+
+        '<span id="srvq" style="color:var(--dim)"></span><br>'+
         '起動：'+TT.map(function(x){return x[0]+' '+x[1]+'ms';}).join(' / ')+
         (window.__tStyle?('　見た目の取得 '+window.__tStyle+'ms'):'')+'<br>'+
         'ズーム <b>'+map.getZoom().toFixed(2)+'</b>（写真は '+PHOTO_ZOOM+' 以上）<br>'+
@@ -197,6 +198,28 @@ function showDiag(){
       '<button class="btn" id="reload">この辺りを読み込む</button>'+
       '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>');
     s.querySelector('#x').onclick=closeSheet;
+
+    /* サーバー側の版も見る。
+       片方だけ古いと、原因の切り分けに時間がかかるため */
+    fetch(SERVER+'/api/health?d='+Date.now())
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var e2=s.querySelector('#srv');
+        if(!e2)return;
+        e2.textContent=j.build||'?';
+        var q=j.quota||{};
+        var line=s.querySelector('#srvq');
+        if(line){
+          line.innerHTML='使用量：検索 '+((q.gsearch||{}).used||0)+'／'+((q.gsearch||{}).limit||0)+
+            '　写真判定 '+((q.vision||{}).used||0)+'　提案 '+((q.gemini||{}).used||0)+
+            '　合計 '+(q['合計円']||0)+'円';
+        }
+      })
+      .catch(function(){
+        var e2=s.querySelector('#srv');
+        if(e2){ e2.textContent='つながらない'; e2.style.color='var(--warn)'; }
+      });
+
     var rl=s.querySelector('#reload');
     if(rl) rl.onclick=async function(){
       rl.textContent='読み込んでいます…';
