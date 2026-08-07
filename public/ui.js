@@ -151,6 +151,8 @@
 
   document.getElementById('btn-cam').addEventListener('pointerdown',sweep);
   document.getElementById('btn-night').addEventListener('pointerdown',sweep);
+  var bs=document.getElementById('btn-style');
+  if(bs) bs.addEventListener('pointerdown',sweep);
   window.addEventListener('resize',function(){ pill.classList.remove('on'); });
 })();
 
@@ -178,11 +180,16 @@ function showDiag(){
         (loadLog.err?('<br><span style="color:var(--warn)">取得エラー：'+
           esc(loadLog.err)+'</span>'):'')+'<br>'+
         '写真つきの場所 <b>'+withPhoto+'</b> 件<br>'+
+        '観光地らしい場所 '+pois.filter(function(p){return (p.spot||0)>=3;}).length+
+          ' 件／話題 '+pois.filter(function(p){return p.hot;}).length+' 件<br>'+
         '写真の丸：作成 <b>'+photoDiag.try+'</b>／成功 <b>'+photoDiag.ok+'</b>'+
           '／読込失敗 <b>'+photoDiag.ngLoad+'</b>／登録失敗 <b>'+photoDiag.ngAdd+'</b>'+
         (photoDiag.last?('<br><span style="color:var(--warn)">直近のエラー：'+
           esc(photoDiag.last)+'</span>'):'')+
-        '<br>地図の絵の総数 '+all.length+
+        '<br>地図の絵：数えた '+all.length+
+        '／listImages '+(typeof map.listImages==='function'?
+          (function(){try{return (map.listImages()||[]).length;}catch(e){return 'エラー';}})():'なし')+
+        '<br>取得の失敗：'+(loadLog.err||'なし')+
       '</div>'+
       '<div style="font-size:12.5px;line-height:2;margin-bottom:14px">'+picks+'</div>'+
       '<button class="btn g" id="x">とじる</button></div>');
