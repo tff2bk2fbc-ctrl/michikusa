@@ -177,7 +177,9 @@ function showDiag(){
         '思い出 '+spots.length+' 件／読み込んだ場所 <b>'+pois.length+'</b> 件<br>'+
         '取得：実行 '+loadLog.run+' 回／自前 '+(loadLog.ours||0)+
           '／飲食 '+loadLog.hp+'／名所 '+loadLog.wiki+'／宿 '+loadLog.rk+
-        (loadLog.err?('<br><span style="color:var(--warn)">取得エラー：'+
+        (loadLog.skip?('<br><span style="color:var(--warn)">走らない理由：'+
+          esc(loadLog.skip)+'</span>'):'')+
+        (loadLog.err?('<br><span style="color:var(--warn)">エラー：'+
           esc(loadLog.err)+'</span>'):'')+'<br>'+
         '写真つきの場所 <b>'+withPhoto+'</b> 件<br>'+
         '観光地らしい場所 '+pois.filter(function(p){return (p.spot||0)>=3;}).length+
@@ -192,8 +194,16 @@ function showDiag(){
         '<br>取得の失敗：'+(loadLog.err||'なし')+
       '</div>'+
       '<div style="font-size:12.5px;line-height:2;margin-bottom:14px">'+picks+'</div>'+
-      '<button class="btn g" id="x">とじる</button></div>');
+      '<button class="btn" id="reload">この辺りを読み込む</button>'+
+      '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>');
     s.querySelector('#x').onclick=closeSheet;
+    var rl=s.querySelector('#reload');
+    if(rl) rl.onclick=async function(){
+      rl.textContent='読み込んでいます…';
+      closeSheet();
+      await autoLoad(true);
+      setTimeout(showDiag,500);
+    };
   }catch(e){ showErr('[diag] '+dump(e)); }
 }
 if(location.search.indexOf('diag=1')>=0) setTimeout(showDiag,1500);
