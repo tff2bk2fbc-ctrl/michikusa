@@ -7,28 +7,31 @@
    ============================================================ */
 
 /* 写真をサーバーへ。原本と表示用を別々に持つ */
-async function uploadPhoto(postId, dataUrl){
+async function uploadPhoto(postId, photoId, dataUrl){
   try{
     var blob=await (await fetch(dataUrl)).blob();
-    var pid=nid();
+    var pid=photoId;
+    async function put(kind,body,type){
+      var r=await api('/api/photo?post_id='+encodeURIComponent(postId)+
+        '&photo_id='+encodeURIComponent(pid)+'&kind='+kind,
+        {method:'PUT',headers:{'Content-Type':type},body:body});
+      if(!r.ok)throw new Error('photo upload '+r.status);
+    }
     // 原本
-    await api('/api/photo?post_id='+postId+'&photo_id='+pid+'&kind=orig',
-      {method:'PUT',headers:{'Content-Type':blob.type||'image/jpeg'},body:blob});
+    await put('orig',blob,blob.type||'image/jpeg');
     // 表示用（軽くしたもの）
-    var view=await resize(dataUrl,1600,.86);
+    var view=await resize(dataUrl,2560,.90);
     if(view){
       var vb=await (await fetch(view)).blob();
-      await api('/api/photo?post_id='+postId+'&photo_id='+pid+'&kind=view',
-        {method:'PUT',headers:{'Content-Type':'image/jpeg'},body:vb});
+      await put('view',vb,'image/jpeg');
     }
-    var th=await resize(dataUrl,400,.8);
+    var th=await resize(dataUrl,512,.82);
     if(th){
       var tb=await (await fetch(th)).blob();
-      await api('/api/photo?post_id='+postId+'&photo_id='+pid+'&kind=thumb',
-        {method:'PUT',headers:{'Content-Type':'image/jpeg'},body:tb});
+      await put('thumb',tb,'image/jpeg');
     }
-    return pid;
-  }catch(e){ return null; }
+    return true;
+  }catch(e){ return false; }
 }
 function resize(dataUrl,max,q){
   return new Promise(function(res){
@@ -52,29 +55,37 @@ async function pushOne(rec){
     // 他人に見せるものは、先に写真を確かめる
     if(rec.photo && rec.visibility!=='private'){
       try{
-        var vr=await fetch(SERVER+'/api/vision',{method:'POST',
+        var vr=await api('/api/vision',{method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({image:String(rec.photo)})});
+        if(!vr.ok)throw new Error('moderation unavailable');
         var vj=await vr.json();
-        if(vj && vj.ok===false){
-          rec.visibility='private';       // 出さずに、自分だけのものにする
-          setTip('この写真は自分だけの記録にしました');
-        }
-      }catch(e){}
+        if(!vj || vj.ok!==true)throw new Error('moderation rejected');
+      }catch(e){
+        rec.visibility='private';
+        setTip('写真を確認できないため、自分だけの記録にしました');
+      }
     }
-    var r=await api('/api/posts',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        title:rec.n, category:rec.c, tag:rec.tag||'', place_name:rec.place||'',
-        lat:rec.lat, lng:rec.lng,
-        taken_at:rec.d?Date.parse(rec.d):null,
-        visibility:rec.visibility||null
-      })});
-    if(!r.ok)return false;
-    var j=await r.json();
-    rec.server_id=j.id;
-    rec.visibility=j.visibility;
-    if(rec.photo) await uploadPhoto(j.id, rec.photo);
+    if(!rec.server_id){
+      var r=await api('/api/posts',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          title:rec.n, category:rec.c, tag:rec.tag||'', place_name:rec.place||'',
+          lat:rec.lat, lng:rec.lng,
+          taken_at:rec.d?Date.parse(rec.d):null,
+          visibility:rec.visibility||null
+        })});
+      if(!r.ok)return false;
+      var j=await r.json();
+      rec.server_id=j.id;
+      rec.visibility=j.visibility;
+      await dbPut('spots',rec);
+    }
+    if(rec.photo){
+      rec.server_photo_id=rec.server_photo_id||nid();
+      await dbPut('spots',rec);
+      if(!(await uploadPhoto(rec.server_id,rec.server_photo_id,rec.photo)))return false;
+    }
     rec.synced=1;
     await dbPut('spots',rec);
     return true;
@@ -158,14 +169,22 @@ function showInbox(t){
     box=el('<div class="inbox" id="inbox"></div>');
     document.body.appendChild(box);
   }
-  var img=t.photo_id?(SERVER+'/api/photo/'+t.photo_id+'/thumb'):'';
   box.innerHTML='<div class="r">'+
-    (img?'<img src="'+img+'">':'<img>')+
+    '<img id="ib-img">'+
     '<div class="t"><b>'+esc(t.from.name)+' がタグ付けしました</b>'+
     '<span>'+esc(t.title||t.place_name||'')+'</span></div></div>'+
     '<div class="b"><button id="ib-no">いらない</button>'+
     '<button class="y" id="ib-yes">自分の思い出にする</button></div>';
   box.classList.add('on');
+
+  if(t.photo_id){
+    api('/api/photo/'+encodeURIComponent(t.photo_id)+'/thumb')
+      .then(function(r){if(!r.ok)throw new Error('photo '+r.status);return r.blob();})
+      .then(function(blob){
+        var im=box.querySelector('#ib-img');if(!im)return;
+        var u=URL.createObjectURL(blob);im.onload=function(){URL.revokeObjectURL(u);};im.src=u;
+      }).catch(function(){});
+  }
 
   async function reply(take){
     box.classList.remove('on');

@@ -31,51 +31,57 @@ export default {
     if (!p.startsWith("/api/")) {
       const res = await env.ASSETS.fetch(request);
       const ct = res.headers.get("Content-Type") || "";
+      const h = new Headers(res.headers);
       if (ct.includes("text/html")) {
-        const h = new Headers(res.headers);
         h.set("Cache-Control", "no-cache, no-store, must-revalidate");
-        return new Response(res.body, { status: res.status, headers: h });
+        h.set("Content-Security-Policy", [
+          "default-src 'self'",
+          "script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com",
+          "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+          "img-src 'self' data: blob: https:",
+          "connect-src 'self' https:",
+          "font-src 'self' data: https:",
+          "worker-src 'self' blob:",
+          "frame-src https://*.firebaseapp.com https://accounts.google.com",
+          "object-src 'none'",
+          "base-uri 'self'",
+          "frame-ancestors 'none'"
+        ].join("; "));
       }
-      return res;
+      return secure(new Response(res.body, { status: res.status, headers: h }));
     }
 
     if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
 
     try {
       if (p === "/api/health") {
-        const k = await getHpKey(env);
         return cors(json({
           ok: true,
-          build: "api-25",
-          hasKey: !!k.key,          // ホットペッパー
-          keySource: k.src,
-          hasRakuten: !!(await cfg(env, "rakuten_id")),
-          hasRakutenKey: !!(await cfg(env, "rakuten_key")),
-          hasGoogle: !!(await cfg(env, "google_key")),
-          quota: await quotaState(env),
-          hasDB: !!env.DB,
-          hasR2: !!env.PHOTOS,
-          firebase: env.FIREBASE_PROJECT_ID || null
+          build: "api-26"
         }));
       }
-      if (p === "/api/hotpepper") return cors(await hotpepper(url, env));
-      if (p === "/api/rakuten")   return cors(await rakuten(url, env));
+      if (p === "/api/hotpepper") return cors(await hotpepper(url, request, env));
+      if (p === "/api/rakuten")   return cors(await rakuten(url, request, env));
       if (p === "/api/places")    return cors(await nearbyPlaces(url, env));
-      if (p === "/api/wiki")      return cors(await wiki(url, env));
-      if (p === "/api/vision" && request.method === "POST")  return cors(await vision(request, env, me));
+      if (p === "/api/geocode")   return cors(await geocode(url, request, env));
+      if (p === "/api/reverse")   return cors(await reverseGeocode(url, request, env));
+      if (p === "/api/wiki")      return cors(await wiki(url, request, env));
+      if (p === "/api/img")       return secure(await proxyImage(url, request, env));
+
+      // ---- ここから先はログインが必要 ----
+      const me = await authenticate(request, env);
+      if (!me) return cors(json({ error: "ログインが必要です" }, 401));
+
+      // 外部の有料APIと、ユーザーに紐づく通知・タグ操作は必ず認証後に置く。
+      if (p === "/api/gsearch")   return cors(await gsearch(url, env, me));
+      if (p === "/api/vision" && request.method === "POST") return cors(await vision(request, env, me));
       if (p === "/api/suggest" && request.method === "POST") return cors(await suggest(request, env, me));
       if (p === "/api/push/token" && request.method === "POST") return cors(await saveToken(request, env, me));
       if (p === "/api/push/test"  && request.method === "POST") return cors(await pushTest(env, me));
       if (p === "/api/tags" && request.method === "POST")  return cors(await addTags(request, env, me));
       if (p === "/api/tags" && request.method === "GET")   return cors(await myTags(env, me));
       if (p === "/api/tags/accept" && request.method === "POST") return cors(await takeTag(request, env, me));
-      if (p === "/api/img")       return await proxyImage(url);
 
-      // ---- ここから先はログインが必要 ----
-      const me = await authenticate(request, env);
-      if (!me) return cors(json({ error: "ログインが必要です" }, 401));
-
-      if (p === "/api/gsearch")   return cors(await gsearch(url, env, me));
       if (p === "/api/me" && request.method === "GET")    return cors(json(await getMe(env, me)));
       if (p === "/api/me" && request.method === "PATCH")  return cors(await patchMe(request, env, me));
 
@@ -97,7 +103,9 @@ export default {
 
       return cors(json({ error: "そのAPIはありません" }, 404));
     } catch (e) {
-      return cors(json({ error: "サーバー内エラー: " + (e && e.message) }, 500));
+      // DB名や外部APIの詳細を利用者へ返さない。
+      console.error("api error", e);
+      return cors(json({ error: "サーバー内エラー" }, 500));
     }
   }
 };
@@ -290,13 +298,42 @@ async function patchMe(request, env, me) {
    ============================================================ */
 
 async function createPost(request, env, me) {
-  const b = await request.json();
+  const parsed = await limitedJson(request, 24_000);
+  if (parsed.error) return parsed.error;
+  const b = parsed.value;
   const lat = Number(b.lat), lng = Number(b.lng);
-  if (!isFinite(lat) || !isFinite(lng)) return json({ error: "位置が不正です" }, 400);
+  if (!validCoords(lat, lng)) return json({ error: "位置が不正です" }, 400);
+
+  const title = limitedText(b.title, 120);
+  const category = limitedText(b.category || "景", 16);
+  const tag = limitedText(b.tag, 80);
+  const placeName = limitedText(b.place_name, 160);
+  const body = limitedText(b.body, 4000);
+  const placeIdText = limitedText(b.place_id, 200);
+  const placeId = placeIdText || null;
+  if ([title, category, tag, placeName, body, placeIdText].includes(null)) {
+    return json({ error: "投稿の文字数が上限を超えています" }, 413);
+  }
+
+  let fixedLat = null, fixedLng = null, fixedLabel = null;
+  if (b.fixed_lat != null || b.fixed_lng != null) {
+    fixedLat = Number(b.fixed_lat);
+    fixedLng = Number(b.fixed_lng);
+    fixedLabel = limitedText(b.fixed_label, 160);
+    if (!validCoords(fixedLat, fixedLng) || fixedLabel === null) {
+      return json({ error: "固定位置が不正です" }, 400);
+    }
+  }
+
+  if (!(await userLimit(env, me.id, "posts-hour", hourKey(), 30)) ||
+      !(await userLimit(env, me.id, "posts-day", dayKey(), 200))) {
+    return json({ error: "投稿回数が多すぎます。しばらく待ってください" }, 429);
+  }
 
   const now = Date.now();
   const vis = ["private", "friends", "public"].includes(b.visibility)
-    ? b.visibility : me.default_visibility;
+    ? b.visibility
+    : (["private", "friends", "public"].includes(me.default_visibility) ? me.default_visibility : "private");
 
   const [aLat, aLng] = snap(lat, lng, 500);    // だいたい
   const [rLat, rLng] = snap(lat, lng, 2000);   // エリア
@@ -310,10 +347,10 @@ async function createPost(request, env, me) {
       taken_at,created_at,visibility,publish_at
     ) VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?, ?,?,?,?)
   `).bind(
-    id, me.id, b.place_id || null, b.title || "", b.category || "景",
-    b.tag || "", b.place_name || "", b.body || "",
+    id, me.id, placeId, title || "", category || "景",
+    tag || "", placeName || "", body || "",
     lat, lng, aLat, aLng, rLat, rLng,
-    b.fixed_lat ?? null, b.fixed_lng ?? null, b.fixed_label || null,
+    fixedLat, fixedLng, fixedLabel,
     b.taken_at || null, now, vis, now + (me.publish_delay_sec || 0) * 1000
   ).run();
 
@@ -329,7 +366,7 @@ async function createPost(request, env, me) {
       const who = me.display_name || me.handle || "フレンド";
       for (const f of (fr.results || [])) {
         await sendPush(env, f.uid, who + " が思い出を残しました",
-          b.title || b.place_name || "", { lat: String(lat), lng: String(lng), post: id });
+          title || placeName || "", { post: id });
       }
     } catch (e) {}
   }
@@ -338,18 +375,38 @@ async function createPost(request, env, me) {
 }
 
 async function patchPost(id, request, env, me) {
-  const b = await request.json();
-  const own = await env.DB.prepare("SELECT user_id FROM posts WHERE id=?").bind(id).first();
+  const parsed = await limitedJson(request, 16_000);
+  if (parsed.error) return parsed.error;
+  const b = parsed.value;
+  const own = await env.DB.prepare("SELECT user_id,visibility FROM posts WHERE id=?").bind(id).first();
   if (!own || own.user_id !== me.id) return json({ error: "権限がありません" }, 403);
 
+  if (!(await userLimit(env, me.id, "post-edits-hour", hourKey(), 60))) {
+    return json({ error: "更新回数が多すぎます。しばらく待ってください" }, 429);
+  }
+
   const sets = [], vals = [];
-  if (["private", "friends", "public"].includes(b.visibility)) { sets.push("visibility=?"); vals.push(b.visibility); }
-  for (const k of ["title", "tag", "category", "body"]) {
-    if (k in b) { sets.push(k + "=?"); vals.push(b[k]); }
+  if (["private", "friends", "public"].includes(b.visibility)) {
+    if (b.visibility !== "private" && !(await ensurePostPhotosModerated(env, me, id))) {
+      return json({ error: "画像の安全確認が完了していないため公開できません" }, 409);
+    }
+    sets.push("visibility=?"); vals.push(b.visibility);
+  }
+  const textLimits = { title: 120, tag: 80, category: 16, body: 4000 };
+  for (const k of Object.keys(textLimits)) {
+    if (!(k in b)) continue;
+    const v = limitedText(b[k], textLimits[k]);
+    if (v === null) return json({ error: k + " の文字数が上限を超えています" }, 413);
+    sets.push(k + "=?"); vals.push(v);
   }
   if ("fixed_lat" in b) {
+    const fLat = Number(b.fixed_lat), fLng = Number(b.fixed_lng);
+    const fLabel = limitedText(b.fixed_label, 160);
+    if (!validCoords(fLat, fLng) || fLabel === null) {
+      return json({ error: "固定位置が不正です" }, 400);
+    }
     sets.push("fixed_lat=?", "fixed_lng=?", "fixed_label=?");
-    vals.push(b.fixed_lat, b.fixed_lng, b.fixed_label || null);
+    vals.push(fLat, fLng, fLabel || null);
   }
   if (!sets.length) return json({ ok: true });
   vals.push(id);
@@ -449,35 +506,101 @@ async function coordsFor(env, row) {
    ============================================================ */
 
 async function putPhoto(url, request, env, me) {
-  const postId = url.searchParams.get("post_id");
+  const postId = String(url.searchParams.get("post_id") || "");
   const kind = url.searchParams.get("kind");            // orig / view / thumb
   if (!["orig", "view", "thumb"].includes(kind)) return json({ error: "kind が不正です" }, 400);
 
-  const own = await env.DB.prepare("SELECT user_id FROM posts WHERE id=?").bind(postId).first();
+  const own = await env.DB.prepare(
+    "SELECT user_id, visibility FROM posts WHERE id=? AND deleted_at IS NULL"
+  ).bind(postId).first();
   if (!own || own.user_id !== me.id) return json({ error: "権限がありません" }, 403);
 
-  const photoId = url.searchParams.get("photo_id") || uuid();
+  const requestedId = String(url.searchParams.get("photo_id") || "");
+  if (requestedId && !/^[A-Za-z0-9_-]{8,80}$/.test(requestedId)) {
+    return json({ error: "photo_id が不正です" }, 400);
+  }
+  const photoId = requestedId || uuid();
+  const exists = await env.DB.prepare(
+    "SELECT id,user_id,post_id FROM photos WHERE id=?"
+  ).bind(photoId).first();
+  // クライアント採番との互換性は残すが、既存IDの更新は所有者と投稿を厳格に照合する。
+  if (exists && (exists.user_id !== me.id || exists.post_id !== postId)) {
+    return json({ error: "その写真IDは使用できません" }, 409);
+  }
+
+  const ct = (request.headers.get("Content-Type") || "").split(";")[0].toLowerCase();
+  if (!["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"].includes(ct)) {
+    return json({ error: "対応していない画像形式です" }, 415);
+  }
+  const maxBytes = kind === "orig" ? 25_000_000 : kind === "view" ? 8_000_000 : 1_500_000;
+  const declared = Number(request.headers.get("Content-Length") || 0);
+  if (declared > maxBytes) return json({ error: "画像が大きすぎます" }, 413);
+  const bytes = await request.arrayBuffer();
+  if (!bytes.byteLength || bytes.byteLength > maxBytes) {
+    return json({ error: "画像サイズが不正です" }, 413);
+  }
+  if (!validImageBytes(bytes, ct)) {
+    return json({ error: "画像の内容と形式が一致しません" }, 415);
+  }
+
+  if (!exists) {
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM photos WHERE post_id=?")
+      .bind(postId).first();
+    if ((Number(count && count.n) || 0) >= 12) return json({ error: "写真は12枚までです" }, 409);
+  }
+  if (!(await userLimit(env, me.id, "photo-requests-hour", hourKey(), 80)) ||
+      !(await userLimit(env, me.id, "photo-bytes-day", dayKey(), 300_000_000, bytes.byteLength)) ||
+      !(await userLimit(env, me.id, "photo-bytes-total", "all", 5_000_000_000, bytes.byteLength))) {
+    return json({ error: "画像の利用上限に達しました" }, 429);
+  }
+
+  let moderation = "not-required";
+  if (own.visibility !== "private") {
+    moderation = await moderateUploadedPhoto(env, me, bytes);
+    if (moderation !== "ok") {
+      // 判定不能も公開しない。画像自体は本人の非公開記録として保存できる。
+      await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
+        .bind(postId, me.id).run();
+    }
+  }
+
   const key = `u/${me.id}/${postId}/${photoId}-${kind}.jpg`;
 
-  await env.PHOTOS.put(key, request.body, {
-    httpMetadata: { contentType: request.headers.get("Content-Type") || "image/jpeg" }
+  await env.PHOTOS.put(key, bytes, {
+    httpMetadata: { contentType: ct }
   });
 
   const col = kind === "orig" ? "key_orig" : kind === "view" ? "key_view" : "key_thumb";
-  const exists = await env.DB.prepare("SELECT id FROM photos WHERE id=?").bind(photoId).first();
   if (exists) {
-    await env.DB.prepare(`UPDATE photos SET ${col}=? WHERE id=?`).bind(key, photoId).run();
-  } else {
     await env.DB.prepare(
-      `INSERT INTO photos (id,post_id,user_id,${col},created_at) VALUES (?,?,?,?,?)`
-    ).bind(photoId, postId, me.id, key, Date.now()).run();
+      `UPDATE photos SET ${col}=? WHERE id=? AND user_id=? AND post_id=?`
+    ).bind(key, photoId, me.id, postId).run();
+  } else {
+    try {
+      await env.DB.prepare(
+        `INSERT INTO photos (id,post_id,user_id,${col},created_at) VALUES (?,?,?,?,?)`
+      ).bind(photoId, postId, me.id, key, Date.now()).run();
+    } catch (e) {
+      // DBへ参照を残せなかった新規オブジェクトは、その場で回収する。
+      await env.PHOTOS.delete(key);
+      throw e;
+    }
   }
-  return json({ photo_id: photoId, kind });
+  if (own.visibility !== "private" && moderation !== "ok") {
+    // 並行PATCHとの競合後も、判定不能な画像を公開状態に残さない。
+    await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
+      .bind(postId, me.id).run();
+  }
+  return json({ photo_id: photoId, kind, moderation });
 }
 
 /** GET /api/photo/{photoId}/{kind} — 見てよい相手かを必ず確かめてから返す */
 async function getPhoto(path, env, me) {
   const [, , , photoId, kind] = path.split("/");
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(photoId || "") ||
+      !["orig", "view", "thumb"].includes(kind)) {
+    return json({ error: "見つかりません" }, 404);
+  }
   const ph = await env.DB.prepare("SELECT * FROM photos WHERE id=?").bind(photoId).first();
   if (!ph) return json({ error: "見つかりません" }, 404);
 
@@ -485,12 +608,17 @@ async function getPhoto(path, env, me) {
     .bind(ph.post_id).first();
   if (!post) return json({ error: "見つかりません" }, 404);
 
+  // 原本にはEXIF位置情報が残り得る。実際にアップロードした本人だけへ返す。
+  if (kind === "orig" && !String(ph.key_orig || "").startsWith(`u/${me.id}/`)) {
+    return json({ error: "権限がありません" }, 403);
+  }
+
   if (post.user_id !== me.id) {
     if (post.publish_at > Date.now() || post.visibility === "private") {
       return json({ error: "権限がありません" }, 403);
     }
     const tagged = await env.DB.prepare(
-      "SELECT 1 FROM post_tags WHERE post_id=? AND user_id=?"
+      "SELECT 1 FROM post_tags WHERE post_id=? AND user_id=? AND status IN ('pending','accepted')"
     ).bind(post.id, me.id).first();
     if (!tagged && post.visibility === "friends" &&
         !(await areFriends(env, me.id, post.user_id))) {
@@ -625,7 +753,7 @@ async function getHpKey(env) {
   return { key: v, src: v ? "d1" : "none" };
 }
 
-async function hotpepper(url, env) {
+async function hotpepper(url, request, env) {
   const got = await getHpKey(env);
   const key = got.key;
   if (!key) return json({ error: "ホットペッパーのキーが見つかりません（envにもD1にもありません）" }, 500);
@@ -633,12 +761,21 @@ async function hotpepper(url, env) {
   const lat = url.searchParams.get("lat"), lng = url.searchParams.get("lng");
   const range = url.searchParams.get("range") || "5";
   const keyword = url.searchParams.get("keyword") || "";
+  if (keyword.length > 120 || !/^[1-5]$/.test(range)) {
+    return json({ error: "検索条件が不正です" }, 400);
+  }
   // キーワード検索のときは位置が無くてもよい（全国から探す）
   if (!keyword && (!lat || !lng)) return json({ error: "lat / lng が必要です" }, 400);
+  if ((lat || lng) && !validCoords(Number(lat), Number(lng))) {
+    return json({ error: "位置が不正です" }, 400);
+  }
+  if (!(await publicAllowance(request, env, "hotpepper", 120, 500))) {
+    return json({ error: "検索回数が多すぎます" }, 429);
+  }
 
   const shops = [];
   let available = 0;
-  const pages = Math.min(3, Number(url.searchParams.get("pages") || 2));
+  const pages = Math.min(3, Math.max(1, Number.parseInt(url.searchParams.get("pages") || "2", 10) || 2));
 
   for (let page = 0; page < pages; page++) {
     const api = new URL(HP);
@@ -693,6 +830,86 @@ function uuid() {
     : "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 }
 
+function limitedText(value, max) {
+  const s = String(value == null ? "" : value).trim();
+  return s.length <= max ? s : null;
+}
+
+function validCoords(lat, lng) {
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+/** Content-Typeの申告だけでなく、代表的な画像シグネチャも確認する。 */
+function validImageBytes(buffer, contentType) {
+  const b = new Uint8Array(buffer);
+  if (contentType === "image/jpeg") return b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+  if (contentType === "image/png") return b.length >= 8 &&
+    b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 &&
+    b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a;
+  if (contentType === "image/webp") return b.length >= 12 &&
+    String.fromCharCode(...b.slice(0, 4)) === "RIFF" &&
+    String.fromCharCode(...b.slice(8, 12)) === "WEBP";
+  if (contentType === "image/heic" || contentType === "image/heif") {
+    return b.length >= 12 && String.fromCharCode(...b.slice(4, 8)) === "ftyp";
+  }
+  return false;
+}
+
+/** Content-Length が無い場合も、実際に読んだUTF-8バイト数で制限する。 */
+async function limitedJson(request, maxBytes) {
+  const declared = Number(request.headers.get("Content-Length") || 0);
+  if (declared > maxBytes) return { error: json({ error: "入力が大きすぎます" }, 413) };
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+    return { error: json({ error: "入力が大きすぎます" }, 413) };
+  }
+  try {
+    const value = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("object required");
+    return { value };
+  } catch (e) {
+    return { error: json({ error: "JSONが不正です" }, 400) };
+  }
+}
+
+function hourKey() {
+  return new Date().toISOString().slice(0, 13);
+}
+
+function dayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * D1の1文だけで加算と上限判定を行う。同時リクエストでも読み取り→更新の隙間を作らない。
+ * app_config が使えない場合は、安全側へ倒して利用を止める。
+ */
+async function atomicLimit(env, key, limit, amount) {
+  amount = Number(amount || 1);
+  if (!Number.isSafeInteger(amount) || amount <= 0 || amount > limit) return false;
+  try {
+    const r = await env.DB.prepare(`
+      INSERT INTO app_config (k,v) VALUES (?,?)
+      ON CONFLICT(k) DO UPDATE SET v=CAST(app_config.v AS INTEGER)+?
+       WHERE CAST(app_config.v AS INTEGER)+? <= ?
+    `).bind(key, String(amount), amount, amount, limit).run();
+    return !!(r.meta && r.meta.changes === 1);
+  } catch (e) {
+    return false;
+  }
+}
+
+function userLimit(env, userId, name, window, limit, amount) {
+  return atomicLimit(env, `ul_${name}_${window}_${userId}`, limit, amount || 1);
+}
+
+async function shortHash(value) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return Array.from(new Uint8Array(buf).slice(0, 12))
+    .map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+}
+
 function json(obj, status) {
   return new Response(JSON.stringify(obj), {
     status: status || 200,
@@ -705,7 +922,18 @@ function cors(res) {
   h.set("Access-Control-Allow-Origin", "*");
   h.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
   h.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
-  return new Response(res.body, { status: res.status, headers: h });
+  return secure(new Response(res.body, { status: res.status, headers: h }));
+}
+
+/** HTMLだけでなくJS/CSS/画像/APIにも、安全な既定ヘッダーを付ける。 */
+function secure(res) {
+  const h = new Headers(res.headers);
+  h.set("X-Content-Type-Options", "nosniff");
+  h.set("X-Frame-Options", "DENY");
+  h.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  h.set("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()");
+  h.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
 
 
@@ -719,7 +947,7 @@ function cors(res) {
    新方式では applicationId に加えて accessKey がヘッダーで必須。 */
 const RK = "https://openapi.rakuten.co.jp/engine/api/Travel/SimpleHotelSearch/20260731";
 
-async function rakuten(url, env) {
+async function rakuten(url, request, env) {
   const id = await cfg(env, "rakuten_id");
   const ak = await cfg(env, "rakuten_key");
   if (!id) return json({ error: "楽天のアプリケーションIDが未設定です" }, 500);
@@ -727,7 +955,10 @@ async function rakuten(url, env) {
 
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
-  if (!isFinite(lat) || !isFinite(lng)) return json({ error: "lat / lng が必要です" }, 400);
+  if (!validCoords(lat, lng)) return json({ error: "lat / lng が必要です" }, 400);
+  if (!(await publicAllowance(request, env, "rakuten", 60, 300))) {
+    return json({ error: "検索回数が多すぎます" }, 429);
+  }
 
   let km = Number(url.searchParams.get("km") || 3);
   if (!isFinite(km)) km = 3;
@@ -763,13 +994,7 @@ async function rakuten(url, env) {
 
   if (!res.ok) {
     if (res.status === 404) return json({ count: 0, hotels: [] });   // 該当なし
-    return json({
-      error: "楽天トラベル HTTP " + res.status,
-      detail: body ? (body.error_description || body.error) : text.slice(0, 400),
-      sentSite: site,
-      idLen: String(id).trim().length,
-      keyLen: String(ak).trim().length
-    }, 502);
+    return json({ error: "楽天トラベルを利用できません" }, 502);
   }
   if (body && body.error) {
     return json({ error: "楽天: " + (body.error_description || body.error) }, 502);
@@ -821,9 +1046,10 @@ const IMG_OK = [
   "img.hotp.jp"
 ];
 
-async function proxyImage(url) {
+async function proxyImage(url, request, env) {
   const src = url.searchParams.get("u");
   if (!src) return new Response("u が必要です", { status: 400 });
+  if (src.length > 2048) return new Response("URLが長すぎます", { status: 400 });
 
   let t;
   try { t = new URL(src); } catch (e) { return new Response("URLが不正です", { status: 400 }); }
@@ -834,6 +1060,9 @@ async function proxyImage(url) {
     return t.hostname === d || t.hostname.endsWith("." + d);
   });
   if (!okHost) return new Response("その場所は許可していません", { status: 403 });
+  if (!(await publicAllowance(request, env, "image-proxy", 180, 1000))) {
+    return new Response("利用回数が多すぎます", { status: 429 });
+  }
 
   const res = await fetch(t.toString(), {
     cf: { cacheTtl: 86400, cacheEverything: true },
@@ -841,16 +1070,328 @@ async function proxyImage(url) {
   });
   if (!res.ok) return new Response("取得できません " + res.status, { status: 502 });
 
-  const ct = res.headers.get("Content-Type") || "";
-  if (!ct.startsWith("image/")) return new Response("画像ではありません", { status: 415 });
+  const ct = (res.headers.get("Content-Type") || "").split(";")[0].toLowerCase();
+  if (!["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"].includes(ct)) {
+    return new Response("対応していない画像です", { status: 415 });
+  }
+  const declared = Number(res.headers.get("Content-Length") || 0);
+  if (declared > 10_000_000) return new Response("画像が大きすぎます", { status: 413 });
+  const bytes = await res.arrayBuffer();
+  if (!bytes.byteLength || bytes.byteLength > 10_000_000) {
+    return new Response("画像サイズが不正です", { status: 413 });
+  }
 
-  return new Response(res.body, {
+  return new Response(bytes, {
     headers: {
       "Content-Type": ct,
       "Cache-Control": "public, max-age=604800",
       "Access-Control-Allow-Origin": "*"
     }
   });
+}
+
+
+/* ============================================================
+   地名検索 / 逆引き（Nominatim 中継）
+
+   ブラウザから第三者へ検索語や写真位置を直接送らず、固定した上流だけを使う。
+   同じ問い合わせはエッジキャッシュし、未キャッシュ時は利用者・全体の両方を制限する。
+   ============================================================ */
+const NOMINATIM = "https://nominatim.openstreetmap.org";
+const NOMINATIM_UA = "Spota/1.0 (+https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev)";
+
+async function clientRateId(request) {
+  // IPそのものはD1へ残さず、短い一方向ハッシュだけを回数キーに使う。
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  return "client-" + await shortHash(ip);
+}
+
+async function publicAllowance(request, env, name, hourly, daily) {
+  const client = await clientRateId(request);
+  return (await userLimit(env, client, name + "-hour", hourKey(), hourly)) &&
+    (await userLimit(env, client, name + "-day", dayKey(), daily));
+}
+
+async function nominatimAllowance(request, env, name, hourly) {
+  const client = await clientRateId(request);
+  if (!(await userLimit(env, client, "nominatim-" + name, hourKey(), hourly))) return false;
+  // 公開サービスの利用規約に合わせ、キャッシュミスはアプリ全体で毎秒1回まで。
+  if (!(await atomicLimit(env, "nom_sec_" + new Date().toISOString().slice(0, 19), 1, 1))) return false;
+  return atomicLimit(env, "nom_day_" + dayKey(), 5000, 1);
+}
+
+async function cachedNominatim(cacheKey, ttl, load) {
+  const cache = caches.default;
+  const req = new Request("https://spota-cache.invalid/" + cacheKey);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  const res = await load();
+  if (res.ok) {
+    const h = new Headers(res.headers);
+    h.set("Cache-Control", "public, max-age=" + ttl);
+    const cached = new Response(res.body, { status: res.status, headers: h });
+    await cache.put(req, cached.clone());
+    return cached;
+  }
+  return res;
+}
+
+async function geocode(url, request, env) {
+  if (request.method !== "GET") return json({ error: "GETだけです" }, 405);
+  const q = String(url.searchParams.get("q") || "").trim();
+  if (!q || q.length > 120 || /[\u0000-\u001f]/.test(q)) {
+    return json({ error: "検索語が不正です" }, 400);
+  }
+  const limit = Math.min(4, Math.max(1, Number.parseInt(url.searchParams.get("limit") || "4", 10) || 4));
+  const key = "geocode?q=" + encodeURIComponent(q.toLocaleLowerCase("ja")) + "&limit=" + limit;
+  return cachedNominatim(key, 86400, async function () {
+    if (!(await nominatimAllowance(request, env, "search", 40))) {
+      return json({ error: "地名検索が混み合っています" }, 429);
+    }
+    const up = new URL(NOMINATIM + "/search");
+    up.searchParams.set("q", q);
+    up.searchParams.set("format", "jsonv2");
+    up.searchParams.set("addressdetails", "1");
+    up.searchParams.set("accept-language", "ja");
+    up.searchParams.set("countrycodes", "jp");
+    up.searchParams.set("limit", String(limit));
+    const r = await fetch(up, { headers: { "User-Agent": NOMINATIM_UA, "Accept": "application/json" } });
+    if (!r.ok) return json({ error: "地名検索を利用できません" }, 502);
+    const rows = await r.json();
+    const places = (Array.isArray(rows) ? rows : []).slice(0, limit).map(function (p) {
+      const lat = Number(p.lat), lng = Number(p.lon);
+      if (!validCoords(lat, lng)) return null;
+      return {
+        name: limitedText(p.name || String(p.display_name || "").split(",")[0], 160) || "",
+        display_name: limitedText(p.display_name, 500) || "",
+        lat: String(lat), lon: String(lng), lng: String(lng),
+        type: limitedText(p.type, 80) || ""
+      };
+    }).filter(Boolean);
+    return json({ places });
+  });
+}
+
+async function reverseGeocode(url, request, env) {
+  if (request.method !== "GET") return json({ error: "GETだけです" }, 405);
+  let lat = Number(url.searchParams.get("lat"));
+  let lng = Number(url.searchParams.get("lng"));
+  if (!validCoords(lat, lng)) return json({ error: "位置が不正です" }, 400);
+  // 約11m単位へ丸め、端末由来の過剰に細かい座標を第三者へ渡さない。
+  lat = Math.round(lat * 10_000) / 10_000;
+  lng = Math.round(lng * 10_000) / 10_000;
+  const zoom = Math.min(18, Math.max(3, Number.parseInt(url.searchParams.get("zoom") || "18", 10) || 18));
+
+  // 国交省データを入れたD1があれば最優先する。外部へ座標を送らず、地域を1つずつ
+  // 追加できる。未接続・未収録地域だけ従来のNominatimへフォールバックする。
+  const local = await reverseFromAddressDb(lat, lng, env);
+  if (local) return json(local);
+
+  const key = "reverse?lat=" + lat.toFixed(4) + "&lng=" + lng.toFixed(4) + "&zoom=" + zoom;
+  return cachedNominatim(key, 604800, async function () {
+    if (!(await nominatimAllowance(request, env, "reverse", 120))) {
+      return json({ error: "地名検索が混み合っています" }, 429);
+    }
+    const up = new URL(NOMINATIM + "/reverse");
+    up.searchParams.set("lat", lat.toFixed(4));
+    up.searchParams.set("lon", lng.toFixed(4));
+    up.searchParams.set("zoom", String(zoom));
+    up.searchParams.set("format", "jsonv2");
+    up.searchParams.set("addressdetails", "1");
+    up.searchParams.set("accept-language", "ja");
+    const r = await fetch(up, { headers: { "User-Agent": NOMINATIM_UA, "Accept": "application/json" } });
+    if (!r.ok) return json({ error: "地名検索を利用できません" }, 502);
+    const p = await r.json();
+    const src = p && typeof p.address === "object" ? p.address : {};
+    const address = {};
+    for (const k of ["province", "state", "city", "town", "village", "county",
+                     "city_district", "suburb", "neighbourhood", "quarter", "road"]) {
+      const v = limitedText(src[k], 160);
+      if (v) address[k] = v;
+    }
+    return json({
+      name: limitedText(p && p.name, 160) || "",
+      display_name: limitedText(p && p.display_name, 500) || "",
+      address,
+      lat: String(lat), lon: String(lng)
+    });
+  });
+}
+
+const ADDRESS_DB_BINDINGS = [
+  "ADDR_HOKKAIDO", "ADDR_TOHOKU", "ADDR_TOKYO", "ADDR_SOUTH_KANTO",
+  "ADDR_NORTH_KANTO", "ADDR_CHUBU", "ADDR_KINKI", "ADDR_CHUGOKU_SHIKOKU",
+  "ADDR_KYUSHU_OKINAWA"
+];
+
+async function reverseFromAddressDb(lat, lng, env) {
+  const databases = ADDRESS_DB_BINDINGS.map((name) => env[name]).filter(Boolean);
+  if (!databases.length) return null;
+  const latE6 = Math.round(lat * 1e6), lngE6 = Math.round(lng * 1e6);
+  const admin = await findAdminArea(latE6, lngE6, databases);
+  // 全国9地域すべてに行政区域テーブルがあり、どの面にも属さない場合は海上として扱う。
+  // 隣接市区町村の代表点を誤って返さず、外部サービスにも座標を送らない。
+  if (admin.complete && !admin.area) {
+    return {
+      name: "海上",
+      display_name: "海上",
+      address: {},
+      lat: String(lat), lon: String(lng),
+      source: "mlit-n03",
+      offshore: true
+    };
+  }
+  const gridLat = Math.floor(lat * 500), gridLng = Math.floor(lng * 500);
+  const searchDatabases = admin.db ? [admin.db] : databases;
+  // 街区代表点が疎い山間部・離島では、行政区域を固定したまま探索範囲だけを広げる。
+  // 隣の市区町村へは越境しない。
+  for (const radius of [1, 3, 10, 50, 250]) {
+    const rows = await Promise.all(searchDatabases.map(async function (db) {
+      try {
+        const result = await db.prepare(`
+          SELECT ap.lat_e6,ap.lng_e6,ap.block,
+                 pr.name AS prefecture,mu.name AS municipality,
+                 COALESCE(atr.official_name,t.name) AS town,t.locality,
+                 atr.machiaza_id,atr.post_code
+          FROM address_points ap
+          JOIN address_towns t ON t.id=ap.town_id
+          JOIN address_municipalities mu ON mu.id=t.municipality_id
+          JOIN address_prefectures pr ON pr.id=mu.prefecture_id
+          LEFT JOIN address_town_registry atr ON atr.town_id=t.id
+          WHERE ap.grid_lat BETWEEN ? AND ? AND ap.grid_lng BETWEEN ? AND ?
+            AND (? IS NULL OR (pr.name=? AND mu.name=?))
+          ORDER BY ((ap.lat_e6-?)*(ap.lat_e6-?))+((ap.lng_e6-?)*(ap.lng_e6-?))
+          LIMIT 64
+        `).bind(gridLat - radius, gridLat + radius, gridLng - radius, gridLng + radius,
+                admin.area ? admin.area.lg_code : null,
+                admin.area ? admin.area.prefecture : "",
+                admin.area ? admin.area.municipality : "",
+                latE6, latE6, lngE6, lngE6).all();
+        return result.results || [];
+      } catch (error) {
+        // 段階導入中に未初期化DBがあっても外部フォールバックを止めない。
+        console.error("address db error", error);
+        return [];
+      }
+    }));
+    const candidates = rows.flat();
+    if (!candidates.length) continue;
+    let best = null, bestDistance = Infinity;
+    for (const row of candidates) {
+      const distance = geoDistanceMeters(latE6 / 1e6, lngE6 / 1e6, row.lat_e6 / 1e6, row.lng_e6 / 1e6);
+      if (distance < bestDistance) { best = row; bestDistance = distance; }
+    }
+    if (!best) continue;
+    const address = {
+      state: best.prefecture,
+      city: best.municipality,
+      town: best.town
+    };
+    if (best.locality) address.neighbourhood = best.locality;
+    const parts = [best.prefecture, best.municipality, best.town, best.locality, best.block].filter(Boolean);
+    const nearby = await nearestLocalPlace(latE6, lngE6, admin.db || databases[0]);
+    return {
+      name: [best.town, best.locality, best.block].filter(Boolean).join(""),
+      display_name: parts.join(""),
+      address,
+      lat: String(lat), lon: String(lng),
+      source: "mlit",
+      lg_code: admin.area ? admin.area.lg_code : undefined,
+      machiaza_id: best.machiaza_id || undefined,
+      postcode: best.post_code || undefined,
+      nearby_place: nearby || undefined,
+      distance_m: Math.round(bestDistance)
+    };
+  }
+  return null;
+}
+
+async function nearestLocalPlace(latE6, lngE6, db) {
+  const gridLat = Math.floor((latE6 / 1e6) * 100), gridLng = Math.floor((lngE6 / 1e6) * 100);
+  try {
+    for (const radius of [1, 3, 10]) {
+      const result = await db.prepare(`
+        SELECT id,kind,name,detail,lat_e6,lng_e6,source
+        FROM nearby_places
+        WHERE grid_lat BETWEEN ? AND ? AND grid_lng BETWEEN ? AND ?
+        LIMIT 96
+      `).bind(gridLat-radius, gridLat+radius, gridLng-radius, gridLng+radius).all();
+      let best = null, distance = Infinity;
+      for (const row of result.results || []) {
+        const candidate = geoDistanceMeters(latE6/1e6, lngE6/1e6, row.lat_e6/1e6, row.lng_e6/1e6);
+        if (candidate < distance) { best = row; distance = candidate; }
+      }
+      if (best && distance <= 20_000) return { id: best.id, kind: best.kind, name: best.name, detail: best.detail, source: best.source, distance_m: Math.round(distance) };
+    }
+  } catch (error) {
+    // 段階導入中に場所テーブルがなくても住所検索は継続する。
+  }
+  return null;
+}
+
+async function findAdminArea(latE6, lngE6, databases) {
+  let ready = 0;
+  // Workersの同時外部接続上限は6本。9地域を2回に分け、見つけたDBだけを後続検索に使う。
+  for (let offset = 0; offset < databases.length; offset += 6) {
+    const results = await Promise.all(databases.slice(offset, offset + 6).map(async function (db) {
+      try {
+        const result = await db.prepare(`
+          SELECT lg_code,prefecture,municipality,rings
+          FROM admin_boundaries
+          WHERE min_lat_e6<=? AND max_lat_e6>=? AND min_lng_e6<=? AND max_lng_e6>=?
+          LIMIT 256
+        `).bind(latE6, latE6, lngE6, lngE6).all();
+        ready++;
+        return { db, rows: result.results || [] };
+      } catch (error) {
+        return { db, rows: [] };
+      }
+    }));
+    for (const result of results) for (const row of result.rows) {
+      try {
+        if (pointInPolygonRings(lngE6, latE6, decodeBoundaryRings(row.rings))) return { complete: false, area: row, db: result.db };
+      } catch (error) {
+        console.error("admin boundary decode error", error);
+      }
+    }
+  }
+  return { complete: ready === ADDRESS_DB_BINDINGS.length, area: null, db: null };
+}
+
+function decodeBoundaryRings(encoded) {
+  if (!String(encoded || "").startsWith("v1:")) return JSON.parse(encoded);
+  const binary = atob(encoded.slice(3)), bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  let offset = 0;
+  const read = () => { let value = 0, scale = 1, byte; do { byte = bytes[offset++]; value += (byte & 127) * scale; scale *= 128; } while (byte & 128); return value; };
+  const unzigzag = (value) => value % 2 ? -(value + 1) / 2 : value / 2;
+  const rings = [], count = read();
+  for (let r = 0; r < count; r++) {
+    const ring = []; let lng = 0, lat = 0, points = read();
+    while (points--) { lng += unzigzag(read()); lat += unzigzag(read()); ring.push([lng, lat]); }
+    rings.push(ring);
+  }
+  return rings;
+}
+
+function pointInPolygonRings(lngE6, latE6, rings) {
+  let inside = false;
+  for (const ring of rings) {
+    let hit = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+      if ((yi > latE6) !== (yj > latE6) && lngE6 < ((xj - xi) * (latE6 - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+    if (hit) inside = !inside;
+  }
+  return inside;
+}
+
+function geoDistanceMeters(lat1, lng1, lat2, lng2) {
+  const rad = Math.PI / 180;
+  const a1 = lat1 * rad, a2 = lat2 * rad;
+  const dLat = (lat2 - lat1) * rad, dLng = (lng2 - lng1) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a1) * Math.cos(a2) * Math.sin(dLng / 2) ** 2;
+  return 12_742_000 * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 
@@ -871,8 +1412,13 @@ async function gsearch(url, env, me) {
 
   const q = (url.searchParams.get("q") || "").trim();
   if (!q) return json({ error: "探す言葉が必要です" }, 400);
+  if (q.length > 120) return json({ error: "検索語が長すぎます" }, 400);
 
-  if (!(await useQuota(env, "gsearch", me && me.id))) {
+  if (!(await userLimit(env, me.id, "gsearch-hour", hourKey(), 60)) ||
+      !(await userLimit(env, me.id, "gsearch-day", dayKey(), 300))) {
+    return json({ error: "検索回数が多すぎます" }, 429);
+  }
+  if (!(await useQuota(env, "gsearch"))) {
     return json({ count: 0, places: [], capped: true });   // 上限。黙って空を返す
   }
 
@@ -886,7 +1432,7 @@ async function gsearch(url, env, me) {
     maxResultCount: 10
   };
   // 近くを優先する。位置が分かるときだけ
-  if (isFinite(lat) && isFinite(lng)) {
+  if (validCoords(lat, lng)) {
     body.locationBias = {
       circle: { center: { latitude: lat, longitude: lng }, radius: 30000 }
     };
@@ -1026,72 +1572,18 @@ async function savePlaces(env, list) {
      Vision 判定  … 900 枚（無料枠 1,000 の手前）
      Gemini       … 1,200 回
    ============================================================ */
-/* 実際の単価（2026年時点）
-     Places 検索  … 5.24円/回   ← 桁違いに高い。無料枠は月5,000回
-     Vision       … 0.25円/回   ← 無料枠は月1,000回
-     Gemini       … 約0.05円/回
-
-   無料枠を超えた瞬間から実費になるので、手前でしっかり止める。 */
-const LIMITS = { gsearch: 400, vision: 300, gemini: 800 };
-
-/* 1人あたりの1日の上限。誰か一人が使い切らないように */
-const DAILY_PER_USER = { gsearch: 20, vision: 30, gemini: 40 };
+const LIMITS = { gsearch: 4500, vision: 900, gemini: 1200 };
 
 function monthKey() {
   const d = new Date();
   return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
 }
 
-function dayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
-/** 1回ぶん使う。全体の上限か、その人の1日の上限を超えていたら false */
-async function useQuota(env, name, userId) {
+/** 1回ぶん使う。上限を超えていたら false */
+async function useQuota(env, name) {
   const k = "q_" + name + "_" + monthKey();
-  try {
-    // ① その人の1日の上限
-    if (userId) {
-      const dk = "d_" + name + "_" + userId + "_" + dayKey();
-      const d = await env.DB.prepare("SELECT v FROM app_config WHERE k=?").bind(dk).first();
-      const dUsed = d ? Number(d.v) || 0 : 0;
-      if (dUsed >= (DAILY_PER_USER[name] || 0)) return false;
-      await env.DB.prepare(
-        "INSERT INTO app_config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=?"
-      ).bind(dk, String(dUsed + 1), String(dUsed + 1)).run();
-    }
-    // ② 全体の上限
-    const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?").bind(k).first();
-    const used = r ? Number(r.v) || 0 : 0;
-    if (used >= (LIMITS[name] || 0)) return false;
-    await env.DB.prepare(
-      "INSERT INTO app_config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=?"
-    ).bind(k, String(used + 1), String(used + 1)).run();
-    return true;
-  } catch (e) {
-    return false;   // 数えられないときは使わせない（安全側）
-  }
+  return atomicLimit(env, k, LIMITS[name] || 0, 1);
 }
-
-const UNIT_YEN = { gsearch: 5.24, vision: 0.25, gemini: 0.05 };
-
-async function quotaState(env) {
-  const out = {};
-  let total = 0;
-  for (const name of Object.keys(LIMITS)) {
-    try {
-      const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?")
-        .bind("q_" + name + "_" + monthKey()).first();
-      const used = r ? Number(r.v) || 0 : 0;
-      const yen = Math.round(used * (UNIT_YEN[name] || 0));
-      total += yen;
-      out[name] = { used, limit: LIMITS[name], yen };
-    } catch (e) { out[name] = { used: -1, limit: LIMITS[name] }; }
-  }
-  out.合計円 = total;
-  return out;
-}
-
 
 /* ============================================================
    写真を見て判断する
@@ -1099,7 +1591,7 @@ async function quotaState(env) {
    ① 安全確認（Vision）… 不適切な画像を弾く。公開する以上、必須
    ② ひとことの提案（Gemini）… 「何を食べた？」の候補を出す
 
-   どちらも回数の上限つき。超えたら黙って何もしない。
+   どちらも回数の上限つき。安全確認は判定不能時も必ず非公開側へ倒す。
    ============================================================ */
 
 const VISION = "https://vision.googleapis.com/v1/images:annotate";
@@ -1108,13 +1600,41 @@ const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2
 /** 写真が出しても大丈夫かを確かめる */
 async function vision(request, env, me) {
   const key = await cfg(env, "google_key");
-  if (!key) return json({ ok: true, skipped: "キー未設定" });
+  if (!key) return json({ ok: false, error: "安全確認を利用できません" }, 503);
 
-  const b = await request.json();
-  const img = String(b.image || "").replace(/^data:image\/\w+;base64,/, "");
+  const parsed = await limitedJson(request, 14_000_000);
+  if (parsed.error) return parsed.error;
+  const img = cleanBase64Image(parsed.value.image);
   if (!img) return json({ error: "画像が必要です" }, 400);
 
-  if (!(await useQuota(env, "vision", me && me.id))) return json({ ok: true, skipped: "上限" });
+  const cached = await getModerationCache(env, me.id, img);
+  if (cached) return json({ ok: cached.state === "ok", reason: cached.reason, labels: [] });
+
+  if (!(await userLimit(env, me.id, "vision-hour", hourKey(), 30)) ||
+      !(await userLimit(env, me.id, "vision-day", dayKey(), 120)) ||
+      !(await useQuota(env, "vision"))) {
+    return json({ ok: false, error: "安全確認の利用上限です" }, 429);
+  }
+
+  const result = await callVision(key, img);
+  if (result.state === "error") {
+    return json({ ok: false, error: "画像を安全確認できません" }, 503);
+  }
+  await putModerationCache(env, me.id, img, result);
+  return json({
+    ok: result.state === "ok",
+    reason: result.state === "bad" ? "不適切な内容の可能性" : null,
+    labels: result.labels
+  });
+}
+
+function cleanBase64Image(value) {
+  const img = String(value || "").replace(/^data:image\/[A-Za-z0-9.+-]+;base64,/, "");
+  if (!img || img.length > 13_500_000 || !/^[A-Za-z0-9+/=\s]+$/.test(img)) return null;
+  return img.replace(/\s/g, "");
+}
+
+async function callVision(key, img) {
 
   const res = await fetch(VISION + "?key=" + encodeURIComponent(key), {
     method: "POST",
@@ -1122,16 +1642,18 @@ async function vision(request, env, me) {
     body: JSON.stringify({
       requests: [{
         image: { content: img },
-        // 安全確認だけにする。内容の判定は使っていないのに、
-        // 一緒に要求すると倍の料金がかかっていた
-        features: [{ type: "SAFE_SEARCH_DETECTION" }]
+        features: [
+          { type: "SAFE_SEARCH_DETECTION" },
+          { type: "LABEL_DETECTION", maxResults: 6 }
+        ]
       }]
     })
   });
 
-  if (!res.ok) return json({ ok: true, skipped: "HTTP " + res.status });
+  if (!res.ok) return { state: "error", labels: [] };
   const j = await res.json();
   const r = (j.responses && j.responses[0]) || {};
+  if (r.error || !r.safeSearchAnnotation) return { state: "error", labels: [] };
   const ss = r.safeSearchAnnotation || {};
 
   const bad = ["LIKELY", "VERY_LIKELY"];
@@ -1140,7 +1662,74 @@ async function vision(request, env, me) {
 
   const labels = (r.labelAnnotations || []).map(function (x) { return x.description; });
 
-  return json({ ok: !ng, reason: ng ? "不適切な内容の可能性" : null, labels: labels });
+  return { state: ng ? "bad" : "ok", labels: labels };
+}
+
+async function moderationKey(userId, img) {
+  return "mod_" + dayKey() + "_" + userId + "_" + await shortHash(img);
+}
+
+async function getModerationCache(env, userId, img) {
+  try {
+    const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?")
+      .bind(await moderationKey(userId, img)).first();
+    if (!r || !["ok", "bad"].includes(r.v)) return null;
+    return { state: r.v, reason: r.v === "bad" ? "不適切な内容の可能性" : null };
+  } catch (e) { return null; }
+}
+
+async function putModerationCache(env, userId, img, result) {
+  if (!["ok", "bad"].includes(result.state)) return;
+  try {
+    await env.DB.prepare(
+      "INSERT INTO app_config (k,v) VALUES (?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v"
+    ).bind(await moderationKey(userId, img), result.state).run();
+  } catch (e) {}
+}
+
+function bytesToBase64(buffer) {
+  const u = new Uint8Array(buffer);
+  let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+/** 公開・フレンド向け画像は、クライアント申告を信じずWorker自身でも判定する。 */
+async function moderateUploadedPhoto(env, me, bytes) {
+  const img = bytesToBase64(bytes);
+  const cached = await getModerationCache(env, me.id, img);
+  if (cached) return cached.state;
+  const key = await cfg(env, "google_key");
+  if (!key ||
+      !(await userLimit(env, me.id, "vision-hour", hourKey(), 30)) ||
+      !(await userLimit(env, me.id, "vision-day", dayKey(), 120)) ||
+      !(await useQuota(env, "vision"))) return "error";
+  const result = await callVision(key, img);
+  await putModerationCache(env, me.id, img, result);
+  return result.state;
+}
+
+async function ensurePostPhotosModerated(env, me, postId) {
+  const rows = await env.DB.prepare(
+    "SELECT key_orig,key_view,key_thumb FROM photos WHERE post_id=? AND user_id=?"
+  ).bind(postId, me.id).all();
+  return moderatePhotoRows(env, me, rows.results || []);
+}
+
+async function moderatePhotoRows(env, me, rows) {
+  for (const ph of rows) {
+    for (const col of ["key_orig", "key_view", "key_thumb"]) {
+      if (!ph[col]) continue;
+      const obj = await env.PHOTOS.get(ph[col]);
+      if (!obj) return false;
+      const bytes = await obj.arrayBuffer();
+      if (!bytes.byteLength || bytes.byteLength > 10_000_000) return false;
+      if ((await moderateUploadedPhoto(env, me, bytes)) !== "ok") return false;
+    }
+  }
+  return true;
 }
 
 /** 写真を見て、ひとことの候補を出す */
@@ -1148,11 +1737,17 @@ async function suggest(request, env, me) {
   const key = await cfg(env, "google_key");
   if (!key) return json({ items: [] });
 
-  const b = await request.json();
-  const img = String(b.image || "").replace(/^data:image\/\w+;base64,/, "");
+  const parsed = await limitedJson(request, 14_000_000);
+  if (parsed.error) return parsed.error;
+  const b = parsed.value;
+  const img = cleanBase64Image(b.image);
   if (!img) return json({ items: [] });
 
-  if (!(await useQuota(env, "gemini", me && me.id))) return json({ items: [] });
+  if (!(await userLimit(env, me.id, "suggest-hour", hourKey(), 30)) ||
+      !(await userLimit(env, me.id, "suggest-day", dayKey(), 120))) {
+    return json({ error: "提案の利用回数が多すぎます" }, 429);
+  }
+  if (!(await useQuota(env, "gemini"))) return json({ items: [] });
 
   const cat = String(b.category || "");
   const ask = (cat === "景" || cat === "社" || cat === "園")
@@ -1195,14 +1790,20 @@ async function suggest(request, env, me) {
 
 /** 通知の宛先を預かる */
 async function saveToken(request, env, me) {
-  const b = await request.json();
+  const parsed = await limitedJson(request, 8_000);
+  if (parsed.error) return parsed.error;
+  const b = parsed.value;
   const t = String(b.token || "").trim();
-  if (!t) return json({ error: "宛先が必要です" }, 400);
+  if (!t || t.length > 4096 || /\s/.test(t)) return json({ error: "宛先が不正です" }, 400);
+  if (!(await userLimit(env, me.id, "push-token-hour", hourKey(), 20))) {
+    return json({ error: "登録回数が多すぎます" }, 429);
+  }
+  const platform = ["ios", "android", "web"].includes(b.platform) ? b.platform : "ios";
   await env.DB.prepare(`
     INSERT INTO push_tokens (token, user_id, platform, updated_at)
     VALUES (?,?,?,?)
     ON CONFLICT(token) DO UPDATE SET user_id=excluded.user_id, updated_at=excluded.updated_at
-  `).bind(t, me.id, b.platform || "ios", Date.now()).run();
+  `).bind(t, me.id, platform, Date.now()).run();
   return json({ ok: true });
 }
 
@@ -1316,6 +1917,9 @@ async function sendPush(env, userId, title, body, data) {
 
 /** 自分に試しに送る */
 async function pushTest(env, me) {
+  if (!(await userLimit(env, me.id, "push-test-hour", hourKey(), 10))) {
+    return json({ error: "テスト回数が多すぎます" }, 429);
+  }
   const n = await sendPush(env, me.id, "spota", "通知はこの音で届きます", { test: "1" });
   return json({ sent: n });
 }
@@ -1333,10 +1937,19 @@ async function pushTest(env, me) {
    ============================================================ */
 
 async function addTags(request, env, me) {
-  const b = await request.json();
+  const parsed = await limitedJson(request, 12_000);
+  if (parsed.error) return parsed.error;
+  const b = parsed.value;
   const postId = String(b.post_id || "");
-  const ids = (b.user_ids || []).slice(0, 20);
+  const ids = Array.isArray(b.user_ids)
+    ? Array.from(new Set(b.user_ids.map(String).filter(function (id) {
+        return /^[A-Za-z0-9_-]{8,80}$/.test(id);
+      }))).slice(0, 20)
+    : [];
   if (!postId || !ids.length) return json({ error: "指定が足りません" }, 400);
+  if (!(await userLimit(env, me.id, "tags-hour", hourKey(), 30))) {
+    return json({ error: "タグ付け回数が多すぎます" }, 429);
+  }
 
   const own = await env.DB.prepare("SELECT * FROM posts WHERE id=? AND user_id=?")
     .bind(postId, me.id).first();
@@ -1359,7 +1972,7 @@ async function addTags(request, env, me) {
 
     await sendPush(env, uid, who + " が思い出にタグ付けしました",
       own.title || own.place_name || "",
-      { lat: String(own.lat), lng: String(own.lng), post: postId, tag: "1" });
+      { post: postId, tag: "1" });
     n++;
   }
   return json({ ok: true, count: n });
@@ -1369,7 +1982,15 @@ async function addTags(request, env, me) {
 async function myTags(env, me) {
   const rows = await env.DB.prepare(`
     SELECT t.post_id, t.created_at,
-           p.title, p.category, p.tag, p.place_name, p.lat, p.lng, p.taken_at,
+           p.title, p.category, p.tag, p.place_name, p.taken_at,
+           p.lat, p.lng, p.approx_lat, p.approx_lng, p.area_lat, p.area_lng,
+           p.fixed_lat, p.fixed_lng,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM friendships f
+              WHERE f.status='accepted'
+                AND ((f.requester_id=t.user_id AND f.addressee_id=p.user_id)
+                  OR (f.requester_id=p.user_id AND f.addressee_id=t.user_id))
+           ) THEN u.friend_precision ELSE u.public_precision END AS precision,
            u.display_name, u.handle, u.id AS from_id
       FROM post_tags t
       JOIN posts p ON p.id = t.post_id AND p.deleted_at IS NULL
@@ -1384,10 +2005,21 @@ async function myTags(env, me) {
     const ph = await env.DB.prepare(
       "SELECT id FROM photos WHERE post_id=? ORDER BY sort_order LIMIT 1"
     ).bind(r.post_id).first();
+    let coords = null;
+    if (r.fixed_lat != null && r.fixed_lng != null) {
+      coords = [r.fixed_lat, r.fixed_lng, "fixed"];
+    } else if (r.precision === "exact") {
+      coords = [r.lat, r.lng, "exact"];
+    } else if (r.precision === "approx") {
+      coords = [r.approx_lat, r.approx_lng, "approx"];
+    } else if (r.precision === "area") {
+      coords = [r.area_lat, r.area_lng, "area"];
+    }
     out.push({
       post_id: r.post_id, title: r.title, category: r.category,
       tag: r.tag, place_name: r.place_name,
-      lat: r.lat, lng: r.lng, taken_at: r.taken_at,
+      lat: coords ? coords[0] : null, lng: coords ? coords[1] : null,
+      precision: coords ? coords[2] : "hidden", taken_at: r.taken_at,
       photo_id: ph ? ph.id : null,
       from: { id: r.from_id, name: r.display_name || r.handle || "" }
     });
@@ -1397,9 +2029,14 @@ async function myTags(env, me) {
 
 /** 「自分の思い出にする」を押したとき。写真ごと自分のものとして作る */
 async function takeTag(request, env, me) {
-  const b = await request.json();
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const b = parsed.value;
   const postId = String(b.post_id || "");
   const take = b.take !== false;
+  if (!(await userLimit(env, me.id, "tag-decisions-hour", hourKey(), 30))) {
+    return json({ error: "操作回数が多すぎます" }, 429);
+  }
 
   const t = await env.DB.prepare(
     "SELECT * FROM post_tags WHERE post_id=? AND user_id=? AND status='pending'"
@@ -1413,12 +2050,40 @@ async function takeTag(request, env, me) {
     return json({ ok: true, taken: false });
   }
 
-  const src = await env.DB.prepare("SELECT * FROM posts WHERE id=? AND deleted_at IS NULL")
+  const src = await env.DB.prepare(`
+    SELECT p.*,u.friend_precision,u.public_precision
+      FROM posts p JOIN users u ON u.id=p.user_id
+     WHERE p.id=? AND p.deleted_at IS NULL
+  `)
     .bind(postId).first();
   if (!src) return json({ error: "元の思い出がありません" }, 404);
 
+  // 受信者へ渡す座標も、投稿者が設定した現在の精度を必ず通す。
+  let shared = null;
+  if (src.fixed_lat != null && src.fixed_lng != null && validCoords(src.fixed_lat, src.fixed_lng)) {
+    shared = [src.fixed_lat, src.fixed_lng];
+  } else {
+    const precision = (await areFriends(env, me.id, src.user_id))
+      ? src.friend_precision : src.public_precision;
+    if (precision === "exact") shared = [src.lat, src.lng];
+    else if (precision === "approx") shared = [src.approx_lat, src.approx_lng];
+    else if (precision === "area") shared = [src.area_lat, src.area_lng];
+  }
+  if (!shared || !validCoords(Number(shared[0]), Number(shared[1]))) {
+    return json({ error: "投稿者が位置を非公開にしています" }, 403);
+  }
+  const sharedLat = Number(shared[0]), sharedLng = Number(shared[1]);
+  const [sharedApproxLat, sharedApproxLng] = snap(sharedLat, sharedLng, 500);
+  const [sharedAreaLat, sharedAreaLng] = snap(sharedLat, sharedLng, 2000);
+
   const now = Date.now();
   const newId = uuid();
+  const phs = await env.DB.prepare("SELECT * FROM photos WHERE post_id=?")
+    .bind(postId).all();
+  let newVisibility = ["private", "friends", "public"].includes(me.default_visibility)
+    ? me.default_visibility : "private";
+  if (newVisibility !== "private" &&
+      !(await moderatePhotoRows(env, me, phs.results || []))) newVisibility = "private";
 
   await env.DB.prepare(`
     INSERT INTO posts (
@@ -1429,14 +2094,12 @@ async function takeTag(request, env, me) {
   `).bind(
     newId, me.id, src.place_id, src.title, src.category, src.tag,
     src.place_name, src.body,
-    src.lat, src.lng, src.approx_lat, src.approx_lng, src.area_lat, src.area_lng,
-    src.taken_at, now, me.default_visibility || "friends",
+    sharedLat, sharedLng, sharedApproxLat, sharedApproxLng, sharedAreaLat, sharedAreaLng,
+    src.taken_at, now, newVisibility,
     now + (me.publish_delay_sec || 0) * 1000
   ).run();
 
   // 写真は同じものを指す。ここで複製すると容量が倍になる
-  const phs = await env.DB.prepare("SELECT * FROM photos WHERE post_id=?")
-    .bind(postId).all();
   for (const ph of (phs.results || [])) {
     await env.DB.prepare(`
       INSERT INTO photos (id,post_id,user_id,key_orig,key_view,key_thumb,
@@ -1455,163 +2118,110 @@ async function takeTag(request, env, me) {
 
 
 /* ============================================================
-   Wikipedia
-
-   ブラウザから直接叩くと、こちらの名乗り（User-Agent）を付けられない。
-   2026年の規約変更で、名乗りのないリクエストは
-   予告なくブロックされることになった。
-
-   そこでサーバーを通し、
-   ・連絡先つきの名乗りを付ける
-   ・結果を1日残して、同じ場所を何度も叩かない
-   ・呼び出しの回数を数える
-   の3つを守る。
+   Wikipedia 周辺記事（最新版UIとの互換機能）
    ============================================================ */
+const WIKI_UA = "spota/1.0 (https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev)";
 
-/* 記事の分類から、どういう場所かを見分ける */
-function wikiCat(s) {
-  s = String(s || "");
-  if (/温泉|銭湯|浴場/.test(s)) return "湯";
-  if (/神社|寺院|寺|大社|神宮|仏閣/.test(s)) return "社";
-  if (/公園|庭園|植物園|渓谷|滝|湖沼/.test(s)) return "園";
-  if (/図書館|書店/.test(s)) return "本";
+function wikiCat(value) {
+  const text = String(value || "");
+  if (/温泉|銭湯|浴場/.test(text)) return "湯";
+  if (/神社|寺院|寺|大社|神宮|仏閣/.test(text)) return "社";
+  if (/公園|庭園|植物園|渓谷|滝|湖沼/.test(text)) return "園";
+  if (/図書館|書店/.test(text)) return "本";
   return "景";
 }
 
-const WIKI_UA = "spota/1.0 (https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev)";
-
-async function wiki(url, env) {
+async function wiki(url, request, env) {
   const mode = url.searchParams.get("mode") || "near";
-
+  if (!(await publicAllowance(request, env, "wiki", 60, 500))) {
+    return json({ error: "検索回数が多すぎます" }, 429);
+  }
   if (mode === "near") return wikiNear(url, env);
   if (mode === "views") return wikiViews(url, env);
   return json({ error: "mode が不正です" }, 400);
 }
 
-/** この辺りの記事を返す。座標・説明・分類・画像つき */
 async function wikiNear(url, env) {
   const lat = Number(url.searchParams.get("lat"));
   const lng = Number(url.searchParams.get("lng"));
-  if (!isFinite(lat) || !isFinite(lng)) return json({ error: "lat / lng が必要です" }, 400);
-
-  let rad = Number(url.searchParams.get("radius") || 3000);
-  rad = Math.min(10000, Math.max(500, rad));
-
-  // 同じあたりは1日に1度だけ取りに行く
-  const cell = lat.toFixed(2) + "," + lng.toFixed(2) + "," + Math.round(rad / 1000);
-  const ck = "wiki_" + cell;
-  const cached = await cacheGet(env, ck, 86400);
+  if (!validCoords(lat, lng)) return json({ error: "lat / lng が必要です" }, 400);
+  const radius = Math.min(10_000, Math.max(500, Number(url.searchParams.get("radius") || 3000)));
+  const cacheKey = "wiki_" + lat.toFixed(2) + "," + lng.toFixed(2) + "," + Math.round(radius / 1000);
+  const cached = await dataCacheGet(env, cacheKey, 86400);
   if (cached) return json(Object.assign({ cached: true }, cached));
 
   const api = new URL("https://ja.wikipedia.org/w/api.php");
-  api.searchParams.set("action", "query");
-  api.searchParams.set("format", "json");
-  api.searchParams.set("formatversion", "2");
-  api.searchParams.set("generator", "geosearch");
-  api.searchParams.set("ggscoord", lat.toFixed(6) + "|" + lng.toFixed(6));
-  api.searchParams.set("ggsradius", String(rad));
-  api.searchParams.set("ggslimit", "60");
-  api.searchParams.set("prop", "coordinates|description|pageimages|categories");
-  api.searchParams.set("cllimit", "30");
-  api.searchParams.set("clshow", "!hidden");
-  api.searchParams.set("piprop", "thumbnail");
-  api.searchParams.set("pithumbsize", "320");
-
-  const res = await fetch(api.toString(), {
+  for (const [key, value] of Object.entries({
+    action: "query", format: "json", formatversion: "2", generator: "geosearch",
+    ggscoord: lat.toFixed(6) + "|" + lng.toFixed(6), ggsradius: String(radius),
+    ggslimit: "60", prop: "coordinates|description|pageimages|categories",
+    cllimit: "30", clshow: "!hidden", piprop: "thumbnail", pithumbsize: "320"
+  })) api.searchParams.set(key, value);
+  const response = await fetch(api, {
     headers: { "User-Agent": WIKI_UA, "Accept": "application/json" },
     cf: { cacheTtl: 86400, cacheEverything: true }
   });
-  if (!res.ok) {
-    if (res.status === 429) return json({ error: "混みあっています", pages: [] }, 200);
-    return json({ error: "Wikipedia HTTP " + res.status, pages: [] }, 200);
-  }
-
-  const j = await res.json();
-  const pages = ((j.query && j.query.pages) || []).map(function (p) {
-    const co = (p.coordinates && p.coordinates[0]) || null;
-    if (!co) return null;
+  if (!response.ok) return json({ error: "Wikipediaを利用できません", pages: [] }, 200);
+  const body = await response.json();
+  const pages = ((body.query && body.query.pages) || []).map(function (page) {
+    const coordinate = page.coordinates && page.coordinates[0];
+    if (!coordinate || !validCoords(coordinate.lat, coordinate.lon)) return null;
     return {
-      title: p.title,
-      lat: co.lat, lng: co.lon,
-      desc: p.description || "",
-      photo: p.thumbnail ? p.thumbnail.source : "",
-      cats: (p.categories || []).map(function (c) {
-        return String(c.title || "").replace(/^Category:/, "");
-      })
+      title: limitedText(page.title, 200) || "", lat: coordinate.lat, lng: coordinate.lon,
+      desc: limitedText(page.description, 500) || "",
+      photo: page.thumbnail ? page.thumbnail.source : "",
+      cats: (page.categories || []).slice(0, 30).map((item) => String(item.title || "").replace(/^Category:/, ""))
     };
   }).filter(Boolean);
-
   const out = { count: pages.length, pages };
-  await cacheSet(env, ck, out);
-
-  // 取ってきたものは、こちらの場所マスタにも残す。
-  // 貯まるほど、外へ取りに行く回数が減る
-  await savePlaces(env, pages.map(function (p) {
+  await dataCacheSet(env, cacheKey, out);
+  await savePlaces(env, pages.map(function (page) {
     return {
-      n: p.title, lat: p.lat, lng: p.lng,
-      c: wikiCat(p.title + " " + p.desc + " " + p.cats.join(" ")),
-      src: "user", sid: "wk_" + p.title,
-      gname: p.desc || null
+      n: page.title, lat: page.lat, lng: page.lng,
+      c: wikiCat(page.title + " " + page.desc + " " + page.cats.join(" ")),
+      src: "user", sid: "wk_" + page.title, gname: page.desc || null
     };
   }));
-
   return json(out);
 }
 
-/** 記事ごとの、直近7日の閲覧数 */
 async function wikiViews(url, env) {
-  const titles = (url.searchParams.get("titles") || "").split("|")
-    .map(function (s) { return s.trim(); })
-    .filter(Boolean).slice(0, 15);
+  const titles = String(url.searchParams.get("titles") || "").split("|")
+    .map((title) => title.trim()).filter(Boolean).slice(0, 15);
   if (!titles.length) return json({ views: {} });
-
   const end = new Date(Date.now() - 86400000);
   const start = new Date(end.getTime() - 6 * 86400000);
-  const fmt = function (d) { return d.toISOString().slice(0, 10).replace(/-/g, "") + "00"; };
-  const span = fmt(start) + "/" + fmt(end);
-
-  const views = {};
-  const todo = [];
-  for (const t of titles) {
-    const c = await cacheGet(env, "pv_" + span + "_" + t, 86400);
-    if (c) views[t] = c.v; else todo.push(t);
-  }
-
-  // 残りを取りに行く。同時に投げず、順に
-  for (const t of todo) {
+  const formatDate = (date) => date.toISOString().slice(0, 10).replace(/-/g, "") + "00";
+  const span = formatDate(start) + "/" + formatDate(end), views = {};
+  for (const title of titles) {
+    const key = "pv_" + span + "_" + title;
+    const cached = await dataCacheGet(env, key, 86400);
+    if (cached) { views[title] = cached.v; continue; }
     try {
-      const u = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/" +
-        "ja.wikipedia/all-access/user/" +
-        encodeURIComponent(t.replace(/ /g, "_")) + "/daily/" + span;
-      const r = await fetch(u, {
-        headers: { "User-Agent": WIKI_UA },
-        cf: { cacheTtl: 86400, cacheEverything: true }
-      });
-      if (!r.ok) { views[t] = 0; continue; }
-      const jj = await r.json();
-      let sum = 0;
-      (jj.items || []).forEach(function (x) { sum += x.views || 0; });
-      views[t] = sum;
-      await cacheSet(env, "pv_" + span + "_" + t, { v: sum });
-    } catch (e) { views[t] = 0; }
+      const endpoint = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/ja.wikipedia/all-access/user/" +
+        encodeURIComponent(title.replace(/ /g, "_")) + "/daily/" + span;
+      const response = await fetch(endpoint, { headers: { "User-Agent": WIKI_UA }, cf: { cacheTtl: 86400, cacheEverything: true } });
+      if (!response.ok) { views[title] = 0; continue; }
+      const body = await response.json();
+      views[title] = (body.items || []).reduce((sum, item) => sum + (item.views || 0), 0);
+      await dataCacheSet(env, key, { v: views[title] });
+    } catch (error) { views[title] = 0; }
   }
-
   return json({ views });
 }
 
-/* ---- 取ってきたものを残しておく仕組み ---- */
-async function cacheGet(env, key, maxAgeSec) {
+async function dataCacheGet(env, key, maxAgeSeconds) {
   try {
-    const r = await env.DB.prepare("SELECT v, at FROM api_cache WHERE k=?").bind(key).first();
-    if (!r) return null;
-    if (Date.now() - r.at > maxAgeSec * 1000) return null;
-    return JSON.parse(r.v);
-  } catch (e) { return null; }
+    const row = await env.DB.prepare("SELECT v,at FROM api_cache WHERE k=?").bind(key).first();
+    if (!row || Date.now() - row.at > maxAgeSeconds * 1000) return null;
+    return JSON.parse(row.v);
+  } catch (error) { return null; }
 }
-async function cacheSet(env, key, obj) {
+
+async function dataCacheSet(env, key, value) {
   try {
-    await env.DB.prepare(
-      "INSERT INTO api_cache (k,v,at) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=?, at=?"
-    ).bind(key, JSON.stringify(obj), Date.now(), JSON.stringify(obj), Date.now()).run();
-  } catch (e) {}
+    const now = Date.now();
+    await env.DB.prepare("INSERT INTO api_cache (k,v,at) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=?,at=?")
+      .bind(key, JSON.stringify(value), now, JSON.stringify(value), now).run();
+  } catch (error) {}
 }

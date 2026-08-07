@@ -14,6 +14,51 @@
       "binding": "DB",
       "database_name": "michikusa-db",
       "database_id": "e85e9ae2-3905-477b-b6e6-4c3abd9f7e39"
+    },
+    {
+      "binding": "ADDR_HOKKAIDO",
+      "database_name": "michikusa-address-hokkaido",
+      "database_id": "9eac44a0-6811-40cd-bf46-ea22fc41cac2"
+    },
+    {
+      "binding": "ADDR_TOHOKU",
+      "database_name": "michikusa-address-tohoku",
+      "database_id": "706933a8-b17f-4977-a13b-697ec26ca6a2"
+    },
+    {
+      "binding": "ADDR_TOKYO",
+      "database_name": "michikusa-address-tokyo",
+      "database_id": "dd792318-f6b2-438e-9fda-a06ef2074876"
+    },
+    {
+      "binding": "ADDR_SOUTH_KANTO",
+      "database_name": "michikusa-address-south-kanto",
+      "database_id": "35c097d3-c5f1-485e-b5dc-7d8ceccd5139"
+    },
+    {
+      "binding": "ADDR_NORTH_KANTO",
+      "database_name": "michikusa-address-north-kanto",
+      "database_id": "9606d0cd-446b-4430-a6b6-a25abe18177e"
+    },
+    {
+      "binding": "ADDR_CHUBU",
+      "database_name": "michikusa-address-chubu",
+      "database_id": "7852c657-2b22-4735-a0f3-944559aabbbc"
+    },
+    {
+      "binding": "ADDR_KINKI",
+      "database_name": "michikusa-address-kinki",
+      "database_id": "a2a2a551-6d50-4677-a566-88f9cfbb3a1d"
+    },
+    {
+      "binding": "ADDR_CHUGOKU_SHIKOKU",
+      "database_name": "michikusa-address-chugoku-shikoku",
+      "database_id": "d695473d-6795-4184-8295-e4a4b8810168"
+    },
+    {
+      "binding": "ADDR_KYUSHU_OKINAWA",
+      "database_name": "michikusa-address-kyushu-okinawa",
+      "database_id": "5fc63c79-5c0a-4686-b9cd-beccd78f7c7b"
     }
   ],
   "r2_buckets": [

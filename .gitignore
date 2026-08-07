@@ -4,3 +4,8 @@
 .env.*
 node_modules/
 .DS_Store
+
+# 国交省の原本と生成済みD1投入ファイルは容量が大きいためGitへ入れない。
+data/address-source/
+data/reference-source/
+generated/address-db/

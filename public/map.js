@@ -194,6 +194,9 @@ const map=new maplibregl.Map({
     compact:true,
     /* たたんだ状態で出す。ⓘ を押したときだけ開く */
     customAttribution:[
+      '<a href="https://nlftp.mlit.go.jp/ksj/" target="_blank">国土交通省 国土数値情報・位置参照情報（加工）</a>',
+      '<a href="https://www.digital.go.jp/policies/base_registry_address" target="_blank">デジタル庁 アドレス・ベース・レジストリ（加工／CC BY 4.0）</a>',
+      '<a href="https://www.geonames.org/" target="_blank">地名データ © GeoNames, CC BY 4.0</a>',
       '<a href="https://webservice.recruit.co.jp/" target="_blank">Powered by ホットペッパー グルメ</a>',
       '<a href="https://webservice.rakuten.co.jp/" target="_blank">Supported by 楽天ウェブサービス</a>',
       '<a href="https://ja.wikipedia.org/" target="_blank">Wikipedia</a>'
