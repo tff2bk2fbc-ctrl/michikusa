@@ -86,6 +86,7 @@ let theme = (function(){
   try{ return localStorage.getItem('mk_theme')||'apple'; }catch(e){ return 'apple'; }
 })();
 function PAL(){ return (THEMES[theme]||THEMES.apple)[night?'night':'day']; }
+try{ document.body.classList.toggle('paper', theme==='paper'); }catch(e){}
 
 /* 地図の部品の名前から、どの役割かを見分ける */
 function roleOf(L){
@@ -263,6 +264,15 @@ function afterStyle(){
   addPlaceLayers();
   render(true);
   hideSplash();
+
+  /* 絵は少し遅れて揃うことがある。
+     揃ってからもう一度見て、記号を割り当て直す */
+  setTimeout(function(){
+    SPRITE=null;
+    Object.keys(ICON_CACHE).forEach(function(k){delete ICON_CACHE[k];});
+    scanSprite();
+    if(Object.keys(SPRITE||{}).length) render(true);
+  },1200);
   if(!locDone && !window.__homed){ window.__homed=1; goHome(false); }
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
@@ -310,10 +320,17 @@ let SPRITE=null;
 function scanSprite(){
   SPRITE={};
   try{
-    // MapLibre が読み込み済みの絵の名前を全部もらう
-    var names=(map.style&&map.style.imageManager&&map.style.imageManager.images)
-      ? Object.keys(map.style.imageManager.images) : [];
-    if(!names.length&&map.listImages) names=map.listImages();
+    /* 公式に用意されている方法を先に使う。
+       内部の作りに頼ると、地図の版が変わったときに取れなくなる */
+    var names=[];
+    if(typeof map.listImages==='function'){
+      try{ names=map.listImages()||[]; }catch(e){}
+    }
+    if(!names.length){
+      var im=map.style&&map.style.imageManager;
+      if(im&&im.images) names=Object.keys(im.images);
+      else if(im&&im._images) names=Object.keys(im._images);
+    }
     names.forEach(function(n){ SPRITE[n]=1; });
   }catch(e){}
   return SPRITE;
@@ -349,7 +366,8 @@ function fcOf(list,mine){
     .filter(function(p){ return !(big&&mine&&p.photo); })
     .map(function(p){
       return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
-        properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0}};
+        properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0,
+        hot:p.hot?1:0, spot:p.spot||0}};
     })};
 }
 
@@ -378,9 +396,15 @@ function addPlaceLayers(){
   // 地図が元から描いている店（薄い丸に絵）と、大きさも濃さも揃える
   // 地図が元から描いている店とまったく同じ大きさ・濃さにする
   map.addLayer({id:'spot-dot',type:'circle',source:'spot',minzoom:14,paint:{
-    'circle-radius':['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
-    'circle-color':PAL().building,
-    'circle-stroke-width':0,'circle-opacity':.95}});
+    /* いま話題の場所は、少し大きくして縁を光らせる */
+    'circle-radius':['*',
+      ['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
+      ['case',['==',['get','hot'],1],1.35,1]],
+    'circle-color':['case',['==',['get','hot'],1],
+      (night?'#4A4A52':'#FFFFFF'), PAL().building],
+    'circle-stroke-color':night?'#FFC24B':'#E08A00',
+    'circle-stroke-width':['case',['==',['get','hot'],1],1.8,0],
+    'circle-opacity':.95}});
   map.addLayer({id:'spot-ic',type:'symbol',source:'spot',minzoom:14,layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],14,.55,17,.72],
