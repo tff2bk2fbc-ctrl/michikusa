@@ -203,6 +203,9 @@ const map=new maplibregl.Map({
     ]
   }
 });
+// 後から読む分割ファイルへ、地図インスタンスを明示的に渡す。
+// top-level constの暗黙共有に依存すると、読み込み方によって初期化判定が失敗する。
+window.__michikusaMap=map;
 /* 見た目の元を取ってきて、色を変えてから渡す */
 (async function loadStyle(){
   try{

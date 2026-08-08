@@ -1,7 +1,7 @@
 /* 一度読んだものを端末に残しておく仕組み。
    次に開くときは、待たずにそこから出す。
    同時に裏で新しいものを取りに行き、次回はそれを使う。 */
-const CACHE='spota-v7';
+const CACHE='spota-v8';
 
 self.addEventListener('install', function(){ self.skipWaiting(); });
 self.addEventListener('message', function(e){
@@ -26,6 +26,22 @@ self.addEventListener('fetch', function(e){
   const isLib  = /cdnjs|jsdelivr|unpkg|gstatic/.test(url.hostname);
   const isTile = /openfreemap|tiles/.test(url.hostname);
   if(!isSelf && !isLib && !isTile) return;
+
+  // HTMLは常にネットワークを優先する。古いindex.htmlが新しいJSへの更新を
+  // 妨げないようにし、オフライン時だけ保存版へ戻る。
+  if(req.mode==='navigate'){
+    e.respondWith((async function(){
+      const cache=await caches.open(CACHE);
+      try{
+        const res=await fetch(req);
+        if(res&&res.status===200)cache.put(req,res.clone());
+        return res;
+      }catch(err){
+        return (await cache.match(req))||Response.error();
+      }
+    })());
+    return;
+  }
 
   e.respondWith((async function(){
     const cache=await caches.open(CACHE);

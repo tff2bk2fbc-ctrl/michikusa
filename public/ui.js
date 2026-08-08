@@ -45,7 +45,8 @@
    ============================================================ */
 (function(){
   var el2=document.getElementById('map');
-  if(!el2||typeof map==='undefined')return;
+  var zoomMap=window.__michikusaMap;
+  if(!el2||!zoomMap){ window.__oneHandZoom='missing-map'; return; }
   var armed=false, activeId=null, dragWasEnabled=false;
   var y0=0, x0=0, z0=0, timer=null;
   var lastY=0, lastT=0, speed=0;
@@ -62,7 +63,7 @@
   }
   function setBar(z){
     if(!hint)return;
-    var t=(z-map.getMinZoom())/(map.getMaxZoom()-map.getMinZoom());
+    var t=(z-zoomMap.getMinZoom())/(zoomMap.getMaxZoom()-zoomMap.getMinZoom());
     hint.querySelector('b').style.height=Math.max(4,t*100)+'%';
   }
 
@@ -74,15 +75,15 @@
     activeId=e.pointerId;
     y0=e.clientY; x0=e.clientX;
     lastY=y0; lastT=performance.now(); speed=0;
-    z0=map.getZoom();
+    z0=zoomMap.getZoom();
     armed=false;
     clearTimeout(timer);
     timer=setTimeout(function(){
       if(activeId===null)return;
       armed=true;
-      dragWasEnabled=map.dragPan.isEnabled();
-      map.stop();
-      map.dragPan.disable();          // 地図が動かないようにする
+      dragWasEnabled=zoomMap.dragPan.isEnabled();
+      zoomMap.stop();
+      zoomMap.dragPan.disable();          // 地図が動かないようにする
       try{ el2.setPointerCapture(activeId); }catch(err){}
       showBar(true); setBar(z0);
       if(navigator.vibrate) navigator.vibrate(8);   // 入ったことを指に伝える
@@ -115,15 +116,15 @@
     lastY=y; lastT=now;
 
     var z=z0+(dy/window.innerHeight)*gain;
-    z=Math.min(map.getMaxZoom(),Math.max(map.getMinZoom(),z));
-    map.setZoom(z);
+    z=Math.min(zoomMap.getMaxZoom(),Math.max(zoomMap.getMinZoom(),z));
+    zoomMap.setZoom(z);
     setBar(z);
   },{passive:false,capture:true});
 
   function cancel(){
     clearTimeout(timer);
     timer=null;
-    if(armed&&dragWasEnabled){ map.dragPan.enable(); }
+    if(armed&&dragWasEnabled){ zoomMap.dragPan.enable(); }
     if(activeId!==null){
       try{
         if(el2.hasPointerCapture(activeId))el2.releasePointerCapture(activeId);
@@ -138,7 +139,7 @@
   el2.addEventListener('pointercancel',cancel,{passive:true,capture:true});
   el2.addEventListener('lostpointercapture',function(){ if(activeId!==null)cancel(); },{passive:true});
   el2.addEventListener('contextmenu',function(e){ if(armed)e.preventDefault(); },{capture:true});
-  window.__oneHandZoom='pointer-v1';
+  window.__oneHandZoom='pointer-v2';
 })();
 
 /* ============================================================
