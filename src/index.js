@@ -58,7 +58,7 @@ export default {
       if (p === "/api/health") {
         return cors(json({
           ok: true,
-          build: "api-28"
+          build: "api-29"
         }));
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, request, env));
@@ -75,7 +75,9 @@ export default {
 
       // 外部の有料APIと、ユーザーに紐づく通知・タグ操作は必ず認証後に置く。
       if (p === "/api/gsearch")   return cors(await gsearch(url, env, me));
-      if (p === "/api/postal-code") return cors(await postalCodeLookup(url, request, env, me));
+      if (p === "/api/postal-code" && request.method === "POST")
+        return cors(await postalCodeLookup(request, env, me));
+      if (p === "/api/postal-code") return cors(json({ error: "POSTだけです" }, 405));
       if (p === "/api/vision" && request.method === "POST") return cors(await vision(request, env, me));
       if (p === "/api/suggest" && request.method === "POST") return cors(await suggest(request, env, me));
       if (p === "/api/push/token" && request.method === "POST") return cors(await saveToken(request, env, me));
@@ -1142,28 +1144,36 @@ async function cachedNominatim(cacheKey, ttl, load) {
  * 郵便番号から住所を引く。端末から第三者APIへ直接接続させず、Workerで入力検証、
  * キャッシュ、利用制限を行う。上流は日本郵便の公開データを毎日JSON化するMIT実装。
  */
-async function postalCodeLookup(url, request, env, me) {
-  if (request.method !== "GET") return json({ error: "GETだけです" }, 405);
-  const raw = String(url.searchParams.get("postalCode") || url.searchParams.get("q") || "").trim();
+async function postalCodeLookup(request, env, me) {
+  const parsed = await limitedJson(request, 256);
+  if (parsed.error) return parsed.error;
+  const raw = String(parsed.value.postalCode || "").trim();
   if (!/^\d{3}-?\d{4}$/.test(raw)) {
     return json({ error: "郵便番号は7桁で入力してください" }, 400);
   }
   const postalCode = raw.replace("-", "");
+
+  // キャッシュ命中時も制限する。大量の同一検索によるWorker呼び出しDoSを抑える。
+  const rateId = await shortHash(me.id);
+  const minute = new Date().toISOString().slice(0, 16);
+  if (!(await userLimit(env, rateId, "postal-code-minute", minute, 30)) ||
+      !(await userLimit(env, rateId, "postal-code-hour", hourKey(), 120)) ||
+      !(await userLimit(env, rateId, "postal-code-day", dayKey(), 500))) {
+    return json({ error: "郵便番号検索が混み合っています" }, 429);
+  }
+  if (!(await atomicLimit(env, "postal_code_minute_" + minute, 1_000, 1)) ||
+      !(await atomicLimit(env, "postal_code_day_" + dayKey(), 50_000, 1))) {
+    return json({ error: "郵便番号検索が混み合っています" }, 429);
+  }
+
   const cache = caches.default;
   const cacheRequest = new Request("https://spota-cache.invalid/postal-code/" + postalCode);
   const hit = await cache.match(cacheRequest);
   if (hit) return hit;
 
-  if (!(await userLimit(env, me.id, "postal-code-hour", hourKey(), 120)) ||
-      !(await userLimit(env, me.id, "postal-code-day", dayKey(), 500))) {
-    return json({ error: "郵便番号検索が混み合っています" }, 429);
-  }
-  if (!(await atomicLimit(env, "postal_code_day_" + dayKey(), 50_000, 1))) {
-    return json({ error: "郵便番号検索が混み合っています" }, 429);
-  }
-
   const upstream = await fetch(POSTAL_CODE_API + postalCode + ".json", {
-    headers: { "Accept": "application/json" }
+    headers: { "Accept": "application/json" },
+    signal: AbortSignal.timeout(5_000)
   });
   if (upstream.status === 404) return json({ error: "該当する郵便番号がありません" }, 404);
   if (!upstream.ok) return json({ error: "郵便番号検索を利用できません" }, 502);
@@ -1183,12 +1193,16 @@ async function postalCodeLookup(url, request, env, me) {
   const addresses = (Array.isArray(data && data.addresses) ? data.addresses : []).slice(0, 20).map(function (row) {
     function language(value) {
       value = value && typeof value === "object" ? value : {};
+      function addressText(text, max) {
+        // JSONを将来誤ってHTMLへ挿入してもタグとして成立しにくい形へ正規化する。
+        return (limitedText(text, max) || "").replace(/[<>]/g, "");
+      }
       return {
-        prefecture: limitedText(value.prefecture, 80) || "",
-        address1: limitedText(value.address1, 160) || "",
-        address2: limitedText(value.address2, 160) || "",
-        address3: limitedText(value.address3, 160) || "",
-        address4: limitedText(value.address4, 160) || ""
+        prefecture: addressText(value.prefecture, 80),
+        address1: addressText(value.address1, 160),
+        address2: addressText(value.address2, 160),
+        address3: addressText(value.address3, 160),
+        address4: addressText(value.address4, 160)
       };
     }
     return {
