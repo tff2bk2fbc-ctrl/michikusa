@@ -108,13 +108,18 @@ Wikipediaの記事名・位置情報を加工して利用（CC BY-SA 4.0）。�
 
 ## 今回取得しないもの
 
-### 日本郵便 郵便番号CSV
+### 日本郵便 郵便番号データ / jp-postal-code-api
 
-- 提供者: 日本郵便株式会社
-- 公式ページ: https://www.post.japanpost.jp/service/search/zipcode/download/
-- 判断: ダウンロードは可能だが、サイト規約は事前承諾なしの複製・改変・公開・再利用を制限している。
-  商用アプリのデータベースへ組み込む許諾が明確になるまで取得・利用しない
-- 代替: デジタル庁の「町字・郵便番号変換表」の正式性・更新状況を確認してから検討する
+- 原データ提供者: 日本郵便株式会社
+- 原データ公式ページ: https://www.post.japanpost.jp/service/search/zipcode/download/
+- API実装・配信: https://github.com/ttskch/jp-postal-code-api
+- エンドポイント: `https://jp-postal-code-api.ttskch.com/api/v1/{郵便番号}.json`
+- API実装ライセンス: MIT
+- 原データ条件: 日本郵便は郵便番号データについて著作権を主張せず、自由な配布を認めている
+- 更新: GitHub Actionsにより原則毎日更新
+- みちくさでの用途: 郵便番号から住所候補を取得する補助検索。逆ジオコーディング精度の基礎データには使用しない
+- 実装: ブラウザから第三者へ直接送信せず、認証後の`/api/postal-code`で入力検証、応答サイズ制限、24時間キャッシュ、利用者・全体レート制限を行う
+- 運用上の注意: 第三者配信とGitHub Pagesの可用性・帯域に依存する。利用増加時はリポジトリをforkし、Cloudflare上で自己ホストする
 
 ### 非商用指定の観光・施設・自然地名データ
 
