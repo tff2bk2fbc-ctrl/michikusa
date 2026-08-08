@@ -168,3 +168,12 @@
 - WorkerへD1優先の周辺Wikipedia検索を追加した。9DBを同時接続上限に合わせて6+3へ分け、距離順・半径内最大60件を返し、未投入時だけ既存Wikipedia APIへフォールバックする。
 - Wrangler remote previewで本番D1を接続し、`api-27` と東京駅周辺60件を `source: jawiki-dump` で取得した。東京ステーションギャラリー35m、東京駅44mを確認した。
 - remote previewの初回Wikipedia応答は約3.5秒だった。Wikipedia取得は地図表示後の補助データ読込であり、起動必須経路には追加していない。今後、本番計測に基づき地域DBルーティングとキャッシュを調整する。
+
+## 2026-08-08 片手ズーム復旧
+
+- `ZOOM_HANDOFF.md` を確認し、350ms長押し、移動許容10px、上方向で拡大、速度連動3.5〜12.5段階、8ms振動、`touchcancel`復旧という仕様を維持した。
+- 実装は残っていたが、MapLibreと同じイベント伝播段階で処理しており、実機で長押しズームが取りこぼされる可能性があった。
+- `touchstart`、`touchmove`、`touchend`、`touchcancel`をキャプチャ段階で監視し、ズーム成立後の`touchmove`だけをMapLibreへ渡さないようにした。
+- `map.dragPan.disable()`と`enable()`を必ず対にし、2本指・指を離す・OSによる中断で通常操作へ戻す。
+- 右端のズーム目盛りを7px、z-index 65、輪郭・影付きへ変更して視認性を上げた。
+- フロント版を`v79`、Service Worker cacheを`spota-v6`へ更新した。

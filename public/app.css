@@ -249,9 +249,10 @@ body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
 body:not(.dark) .theme-icon .sun{opacity:1;transform:none}
 body:not(.dark) .theme-icon .moon{opacity:0;transform:rotate(70deg) scale(.6)}
 
-.zoombar{position:fixed;right:9px;top:50%;transform:translateY(-50%);
-  width:5px;height:150px;border-radius:99px;background:rgba(128,128,128,.22);
-  z-index:39;opacity:0;transition:opacity .2s;pointer-events:none;
+.zoombar{position:fixed;right:12px;top:50%;transform:translateY(-50%);
+  width:7px;height:150px;border-radius:99px;background:rgba(128,128,128,.3);
+  box-shadow:0 0 0 1px rgba(255,255,255,.22),0 2px 12px rgba(0,0,0,.18);
+  z-index:65;opacity:0;transition:opacity .2s;pointer-events:none;
   display:flex;align-items:flex-end;overflow:hidden}
 .zoombar.on{opacity:1}
 .zoombar b{display:block;width:100%;background:var(--ink);border-radius:99px;

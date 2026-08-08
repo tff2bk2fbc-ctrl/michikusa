@@ -45,6 +45,7 @@
    ============================================================ */
 (function(){
   var el2=document.getElementById('map');
+  if(!el2||typeof map==='undefined')return;
   var armed=false;        // 長押しが成立したか
   var y0=0, x0=0, z0=0, timer=null;
   var lastY=0, lastT=0, speed=0;
@@ -79,7 +80,7 @@
       showBar(true); setBar(z0);
       if(navigator.vibrate) navigator.vibrate(8);   // 入ったことを指に伝える
     },350);
-  },{passive:true});
+  },{passive:true,capture:true});
 
   el2.addEventListener('touchmove',function(e){
     if(e.touches.length!==1){ cancel(); return; }
@@ -91,6 +92,8 @@
       return;
     }
 
+    // キャプチャ段階でMapLibreより先に受け取り、ズーム中だけ地図移動を止める。
+    e.stopPropagation();
     e.preventDefault();
     var y=t.clientY, now=performance.now();
     var dy=y0-y;                      // 上へ動かすと正 → 寄る
@@ -107,7 +110,7 @@
     z=Math.min(map.getMaxZoom(),Math.max(map.getMinZoom(),z));
     map.setZoom(z);
     setBar(z);
-  },{passive:false});
+  },{passive:false,capture:true});
 
   function cancel(){
     clearTimeout(timer);
@@ -115,8 +118,8 @@
     armed=false;
     showBar(false);
   }
-  el2.addEventListener('touchend',cancel,{passive:true});
-  el2.addEventListener('touchcancel',cancel,{passive:true});
+  el2.addEventListener('touchend',cancel,{passive:true,capture:true});
+  el2.addEventListener('touchcancel',cancel,{passive:true,capture:true});
 })();
 
 /* ============================================================
