@@ -34,22 +34,18 @@
 /* ============================================================
    片手ズーム
 
-   指1本で拡大縮小したいが、地図を動かす操作と取り合ってしまう。
-   そこで「長押ししてから上下」という合図にする。
-
-   ・どこでも長押し（0.35秒）→ ズームに入る
-   ・そのまま上へ → 寄る／下へ → 引く
-   ・速く動かすほど大きく変わる
-
-   長押しせずに動かせば、これまで通り地図が動く。
+   ・検索欄の下から下部ナビの上まで、画面右端22%が開始レーン
+   ・レーンに触れた瞬間に開始し、指が外へ出ても継続
+   ・進行方向が上半円（3時→12時→9時）なら拡大
+   ・進行方向が下半円（3時→6時→9時）なら縮小
+   ・移動速度と加速度が大きいほど変化量を増やす
    ============================================================ */
 (function(){
   var el2=document.getElementById('map');
   var zoomMap=window.__michikusaMap;
   if(!el2||!zoomMap){ window.__oneHandZoom='missing-map'; return; }
   var armed=false, activeId=null, dragWasEnabled=false;
-  var y0=0, x0=0, z0=0, timer=null;
-  var lastY=0, lastT=0, speed=0;
+  var lastY=0, lastT=0, lastVelocity=0;
   var hint=null;
 
   function showBar(v){
@@ -67,63 +63,55 @@
     hint.querySelector('b').style.height=Math.max(4,t*100)+'%';
   }
 
+  function inStartLane(e){
+    var top=document.querySelector('.top');
+    var bottom=document.querySelector('.fabs');
+    var minY=top?top.getBoundingClientRect().bottom+8:0;
+    var maxY=bottom?bottom.getBoundingClientRect().top-8:window.innerHeight;
+    var laneWidth=Math.min(132,Math.max(88,window.innerWidth*0.22));
+    return e.clientX>=window.innerWidth-laneWidth&&e.clientY>=minY&&e.clientY<=maxY;
+  }
+
   el2.addEventListener('pointerdown',function(e){
-    // 2本目が触れたら通常のピンチへ戻す。マウスでは左ボタンだけを扱う。
-    if(activeId!==null||!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0)){
-      cancel(); return;
-    }
+    if(activeId!==null){ cancel(); return; }
+    if(!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0)||!inStartLane(e))return;
+    e.stopPropagation();
+    e.preventDefault();
     activeId=e.pointerId;
-    y0=e.clientY; x0=e.clientX;
-    lastY=y0; lastT=performance.now(); speed=0;
-    z0=zoomMap.getZoom();
-    armed=false;
-    clearTimeout(timer);
-    timer=setTimeout(function(){
-      if(activeId===null)return;
-      armed=true;
-      dragWasEnabled=zoomMap.dragPan.isEnabled();
-      zoomMap.stop();
-      zoomMap.dragPan.disable();          // 地図が動かないようにする
-      try{ el2.setPointerCapture(activeId); }catch(err){}
-      showBar(true); setBar(z0);
-      if(navigator.vibrate) navigator.vibrate(8);   // 入ったことを指に伝える
-    },350);
-  },{passive:true,capture:true});
+    armed=true;
+    lastY=e.clientY; lastT=performance.now(); lastVelocity=0;
+    dragWasEnabled=zoomMap.dragPan.isEnabled();
+    zoomMap.stop();
+    zoomMap.dragPan.disable();
+    try{ el2.setPointerCapture(activeId); }catch(err){}
+    showBar(true); setBar(zoomMap.getZoom());
+    if(navigator.vibrate)navigator.vibrate(8);
+  },{passive:false,capture:true});
 
   el2.addEventListener('pointermove',function(e){
-    if(e.pointerId!==activeId)return;
-
-    if(!armed){
-      // 長押しの前に動いたら、地図を動かす操作とみなす
-      if(Math.abs(e.clientY-y0)>10||Math.abs(e.clientX-x0)>10){
-        clearTimeout(timer); timer=null;
-      }
-      return;
-    }
-
-    // キャプチャ段階でMapLibreより先に受け取り、ズーム中だけ地図移動を止める。
+    if(!armed||e.pointerId!==activeId)return;
     e.stopPropagation();
     e.preventDefault();
     var y=e.clientY, now=performance.now();
-    var dy=y0-y;                      // 上へ動かすと正 → 寄る
+    var step=lastY-y;                 // 上方向が正、下方向が負
+    var dt=Math.max(8,now-lastT)/1000;
+    var velocity=step/dt;
+    var acceleration=(velocity-lastVelocity)/dt;
+    var speedBoost=1+Math.min(2,Math.abs(velocity)/900);
+    var accelBoost=1+Math.min(1.5,Math.abs(acceleration)/8000);
+    var delta=(step/window.innerHeight)*7*speedBoost*accelBoost;
+    if(Math.abs(step)<0.5)delta=0;
 
-    /* 速く動かすほど大きく変える。
-       ゆっくりなら細かく、素早くなら一気に */
-    var dt=Math.max(1,now-lastT);
-    var v=Math.abs(y-lastY)/dt*1000;
-    speed=speed*0.7+v*0.3;
-    var gain=3.5+Math.min(9, speed/260*9);
-    lastY=y; lastT=now;
-
-    var z=z0+(dy/window.innerHeight)*gain;
+    var z=zoomMap.getZoom()+delta;
     z=Math.min(zoomMap.getMaxZoom(),Math.max(zoomMap.getMinZoom(),z));
     zoomMap.setZoom(z);
     setBar(z);
+
+    lastY=y; lastT=now;
+    lastVelocity=lastVelocity*0.55+velocity*0.45;
   },{passive:false,capture:true});
 
   function cancel(){
-    clearTimeout(timer);
-    timer=null;
     if(armed&&dragWasEnabled){ zoomMap.dragPan.enable(); }
     if(activeId!==null){
       try{
@@ -133,13 +121,14 @@
     activeId=null;
     armed=false;
     dragWasEnabled=false;
+    lastVelocity=0;
     showBar(false);
   }
   el2.addEventListener('pointerup',cancel,{passive:true,capture:true});
   el2.addEventListener('pointercancel',cancel,{passive:true,capture:true});
   el2.addEventListener('lostpointercapture',function(){ if(activeId!==null)cancel(); },{passive:true});
   el2.addEventListener('contextmenu',function(e){ if(armed)e.preventDefault(); },{capture:true});
-  window.__oneHandZoom='pointer-v2';
+  window.__oneHandZoom='right-lane-v1';
 })();
 
 /* ============================================================
