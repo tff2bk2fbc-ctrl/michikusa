@@ -9,6 +9,18 @@
   "vars": {
     "FIREBASE_PROJECT_ID": "michikusa-e34df"
   },
+  "ratelimits": [
+    {
+      "name": "POSTAL_USER_RATE_LIMITER",
+      "namespace_id": "10001",
+      "simple": { "limit": 30, "period": 60 }
+    },
+    {
+      "name": "POSTAL_GLOBAL_RATE_LIMITER",
+      "namespace_id": "10002",
+      "simple": { "limit": 1000, "period": 60 }
+    }
+  ],
   "d1_databases": [
     {
       "binding": "DB",

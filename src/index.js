@@ -58,7 +58,7 @@ export default {
       if (p === "/api/health") {
         return cors(json({
           ok: true,
-          build: "api-29"
+          build: "api-30"
         }));
       }
       if (p === "/api/hotpepper") return cors(await hotpepper(url, request, env));
@@ -1155,14 +1155,14 @@ async function postalCodeLookup(request, env, me) {
 
   // キャッシュ命中時も制限する。大量の同一検索によるWorker呼び出しDoSを抑える。
   const rateId = await shortHash(me.id);
-  const minute = new Date().toISOString().slice(0, 16);
-  if (!(await userLimit(env, rateId, "postal-code-minute", minute, 30)) ||
+  const userBurst = await env.POSTAL_USER_RATE_LIMITER.limit({ key: rateId });
+  const globalBurst = await env.POSTAL_GLOBAL_RATE_LIMITER.limit({ key: "postal-code" });
+  if (!userBurst.success || !globalBurst.success ||
       !(await userLimit(env, rateId, "postal-code-hour", hourKey(), 120)) ||
       !(await userLimit(env, rateId, "postal-code-day", dayKey(), 500))) {
     return json({ error: "郵便番号検索が混み合っています" }, 429);
   }
-  if (!(await atomicLimit(env, "postal_code_minute_" + minute, 1_000, 1)) ||
-      !(await atomicLimit(env, "postal_code_day_" + dayKey(), 50_000, 1))) {
+  if (!(await atomicLimit(env, "postal_code_day_" + dayKey(), 50_000, 1))) {
     return json({ error: "郵便番号検索が混み合っています" }, 429);
   }
 
