@@ -46,7 +46,7 @@
 (function(){
   var el2=document.getElementById('map');
   if(!el2||typeof map==='undefined')return;
-  var armed=false;        // 長押しが成立したか
+  var armed=false, activeId=null, dragWasEnabled=false;
   var y0=0, x0=0, z0=0, timer=null;
   var lastY=0, lastT=0, speed=0;
   var hint=null;
@@ -66,36 +66,44 @@
     hint.querySelector('b').style.height=Math.max(4,t*100)+'%';
   }
 
-  el2.addEventListener('touchstart',function(e){
-    if(e.touches.length!==1){ cancel(); return; }
-    var t=e.touches[0];
-    y0=t.clientY; x0=t.clientX;
+  el2.addEventListener('pointerdown',function(e){
+    // 2本目が触れたら通常のピンチへ戻す。マウスでは左ボタンだけを扱う。
+    if(activeId!==null||!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0)){
+      cancel(); return;
+    }
+    activeId=e.pointerId;
+    y0=e.clientY; x0=e.clientX;
     lastY=y0; lastT=performance.now(); speed=0;
     z0=map.getZoom();
     armed=false;
     clearTimeout(timer);
     timer=setTimeout(function(){
+      if(activeId===null)return;
       armed=true;
+      dragWasEnabled=map.dragPan.isEnabled();
+      map.stop();
       map.dragPan.disable();          // 地図が動かないようにする
+      try{ el2.setPointerCapture(activeId); }catch(err){}
       showBar(true); setBar(z0);
       if(navigator.vibrate) navigator.vibrate(8);   // 入ったことを指に伝える
     },350);
   },{passive:true,capture:true});
 
-  el2.addEventListener('touchmove',function(e){
-    if(e.touches.length!==1){ cancel(); return; }
-    var t=e.touches[0];
+  el2.addEventListener('pointermove',function(e){
+    if(e.pointerId!==activeId)return;
 
     if(!armed){
       // 長押しの前に動いたら、地図を動かす操作とみなす
-      if(Math.abs(t.clientY-y0)>10||Math.abs(t.clientX-x0)>10) clearTimeout(timer);
+      if(Math.abs(e.clientY-y0)>10||Math.abs(e.clientX-x0)>10){
+        clearTimeout(timer); timer=null;
+      }
       return;
     }
 
     // キャプチャ段階でMapLibreより先に受け取り、ズーム中だけ地図移動を止める。
     e.stopPropagation();
     e.preventDefault();
-    var y=t.clientY, now=performance.now();
+    var y=e.clientY, now=performance.now();
     var dy=y0-y;                      // 上へ動かすと正 → 寄る
 
     /* 速く動かすほど大きく変える。
@@ -114,12 +122,23 @@
 
   function cancel(){
     clearTimeout(timer);
-    if(armed){ map.dragPan.enable(); }
+    timer=null;
+    if(armed&&dragWasEnabled){ map.dragPan.enable(); }
+    if(activeId!==null){
+      try{
+        if(el2.hasPointerCapture(activeId))el2.releasePointerCapture(activeId);
+      }catch(err){}
+    }
+    activeId=null;
     armed=false;
+    dragWasEnabled=false;
     showBar(false);
   }
-  el2.addEventListener('touchend',cancel,{passive:true,capture:true});
-  el2.addEventListener('touchcancel',cancel,{passive:true,capture:true});
+  el2.addEventListener('pointerup',cancel,{passive:true,capture:true});
+  el2.addEventListener('pointercancel',cancel,{passive:true,capture:true});
+  el2.addEventListener('lostpointercapture',function(){ if(activeId!==null)cancel(); },{passive:true});
+  el2.addEventListener('contextmenu',function(e){ if(armed)e.preventDefault(); },{capture:true});
+  window.__oneHandZoom='pointer-v1';
 })();
 
 /* ============================================================
