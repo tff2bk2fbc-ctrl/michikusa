@@ -34,7 +34,7 @@
 /* ============================================================
    片手ズーム
 
-   ・検索欄の下から下部ナビの上まで、画面右端22%が開始レーン
+   ・画面中央右側の短いレーンだけが開始範囲
    ・レーンに触れた瞬間に開始し、指が外へ出ても継続
    ・進行方向が上半円（3時→12時→9時）なら拡大
    ・進行方向が下半円（3時→6時→9時）なら縮小
@@ -64,11 +64,12 @@
   }
 
   function inStartLane(e){
-    var top=document.querySelector('.top');
-    var bottom=document.querySelector('.fabs');
-    var minY=top?top.getBoundingClientRect().bottom+8:0;
-    var maxY=bottom?bottom.getBoundingClientRect().top-8:window.innerHeight;
-    var laneWidth=Math.min(132,Math.max(88,window.innerWidth*0.22));
+    // 画像の赤枠に合わせ、右端約16%・画面高の中央約24%だけを開始範囲にする。
+    var laneWidth=Math.min(104,Math.max(64,window.innerWidth*0.16));
+    var laneHeight=window.innerHeight*0.24;
+    var centerY=window.innerHeight*0.475;
+    var minY=centerY-laneHeight/2;
+    var maxY=centerY+laneHeight/2;
     return e.clientX>=window.innerWidth-laneWidth&&e.clientY>=minY&&e.clientY<=maxY;
   }
 
@@ -128,7 +129,7 @@
   el2.addEventListener('pointercancel',cancel,{passive:true,capture:true});
   el2.addEventListener('lostpointercapture',function(){ if(activeId!==null)cancel(); },{passive:true});
   el2.addEventListener('contextmenu',function(e){ if(armed)e.preventDefault(); },{capture:true});
-  window.__oneHandZoom='right-lane-v1';
+  window.__oneHandZoom='right-middle-lane-v1';
 })();
 
 /* ============================================================
