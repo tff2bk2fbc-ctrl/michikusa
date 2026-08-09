@@ -579,19 +579,32 @@ function openMyQR(){
     return;
   }
   var url=(SERVER||location.origin)+'/?add='+encodeURIComponent(hd);
-  var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px;text-align:center">'+
-    '<div style="font-size:18px;font-weight:700;margin-bottom:4px">わたしのQR</div>'+
-    '<div style="font-size:13px;color:var(--dim);margin-bottom:18px">'+
-      '相手にカメラで読んでもらってください</div>'+
-    '<div id="qrbox" style="display:flex;justify-content:center;margin-bottom:16px;'+
-      'min-height:240px;align-items:center"></div>'+
-    '<div style="font-size:20px;font-weight:700;letter-spacing:.04em">@'+esc(hd)+'</div>'+
-    '<div style="font-size:12px;color:var(--dim);margin-top:6px">'+
-      '読めないときは、このIDを直接入れてもらってください</div>'+
-    '<button class="btn" id="share" style="margin-top:20px">リンクを送る</button>'+
-    '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>');
-  qrInto(s.querySelector('#qrbox'),url,240);
+  var name=(meP&&meP.display_name)||hd;
+  var tiles=''; for(var ti=0;ti<12;ti++)tiles+='<i></i>';
+  var s=showSheet('<div class="qr-profile"><div class="qr-collage">'+tiles+'</div><div class="qr-veil"></div>'+
+    '<div class="qr-glass"><div class="qr-avatar">●</div><div class="qr-name">'+esc(name)+'</div>'+
+    '<div class="qr-handle">SPOTA · @'+esc(hd)+'</div><div class="qr-box" id="qrbox"></div></div>'+
+    '<div class="qr-actions"><button class="btn" id="share">リンクを送る</button>'+
+    '<button class="btn" id="copy">コピー</button></div>'+
+    '<button class="btn g" id="x" style="position:relative;margin-top:10px">とじる</button></div>');
+  var photos=spots.filter(function(p){return p.photo;}).slice(-12).reverse();
+  var collageTiles=Array.prototype.slice.call(s.querySelectorAll('.qr-collage i'));
+  (async function(){
+    // 原寸を並べず、小さな背景用画像を1枚ずつ作ってメモリの山を避ける。
+    for(var i=0;i<photos.length&&i<collageTiles.length;i++){
+      if(!collageTiles[i].isConnected)return;
+      var thumb=await resize(photos[i].photo,260,.68);
+      if(!thumb)continue;
+      var im=document.createElement('img'); im.src=thumb; im.alt='';
+      collageTiles[i].replaceChildren(im);
+    }
+  })();
+  qrInto(s.querySelector('#qrbox'),url,220);
   s.querySelector('#x').onclick=closeSheet;
+  s.querySelector('#copy').onclick=function(){
+    if(navigator.clipboard)navigator.clipboard.writeText(url).then(function(){setTip('リンクをコピーしました');});
+    else setTip(url);
+  };
   s.querySelector('#share').onclick=function(){
     if(navigator.share){
       navigator.share({title:'フレンドになりませんか',text:'@'+hd,url:url}).catch(function(){});
@@ -600,6 +613,30 @@ function openMyQR(){
       setTip('リンクをコピーしました');
     }
   };
+}
+
+async function openFriendMap(hd){
+  if(!fbUser){setTip('先にログインしてください');return;}
+  setTip('@'+hd+' の地図を読み込んでいます…');
+  try{
+    var r=await api('/api/posts?user='+encodeURIComponent(hd)+'&limit=300');
+    var j=await r.json();
+    if(!r.ok)throw new Error(j.error||'地図を開けませんでした');
+    var rows=(j.posts||[]).filter(function(p){return !p.mine;});
+    if(!rows.length){setTip('表示できる思い出はまだありません');return;}
+    others={};
+    rows.forEach(function(p){
+      others[p.id]={n:p.title,c:p.category,lat:p.lat,lng:p.lng,
+        gname:(p.author&&p.author.name?p.author.name+' の思い出':''),
+        tag:p.tag||'',author:p.author,precision:p.precision,friend:true};
+    });
+    closeSheet(); render(true);
+    var bounds=new maplibregl.LngLatBounds();
+    rows.forEach(function(p){bounds.extend([p.lng,p.lat]);});
+    if(rows.length===1)map.easeTo({center:[rows[0].lng,rows[0].lat],zoom:15.5,duration:850});
+    else map.fitBounds(bounds,{padding:54,maxZoom:15.5,duration:900});
+    setTip('@'+hd+' の地図を表示しました');
+  }catch(e){setTip(e.message||'地図を開けませんでした');}
 }
 
 /* --- 読み取ったあと --- */
@@ -624,11 +661,13 @@ async function addByHandle(hd){
     if(!fbUser)return;
     clearInterval(t);
     var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
-      '<div style="font-size:18px;font-weight:700;margin-bottom:8px">フレンドになりますか</div>'+
-      '<div style="font-size:20px;font-weight:700;margin-bottom:18px">@'+esc(hd)+'</div>'+
+      '<div style="font-size:18px;font-weight:700;margin-bottom:8px">@'+esc(hd)+'</div>'+
+      '<div class="qr-map-intro">公開されている思い出を地図で見るか、フレンド申請できます。</div>'+
+      '<button class="btn" id="open-map">相手の地図を開く</button>'+
       '<button class="btn" id="ok">申請する</button>'+
       '<button class="btn g" id="x" style="margin-top:8px">やめる</button></div>');
     s.querySelector('#x').onclick=closeSheet;
+    s.querySelector('#open-map').onclick=function(){openFriendMap(hd);};
     s.querySelector('#ok').onclick=function(){ closeSheet(); addByHandle(hd); };
   },1200);
   setTimeout(function(){clearInterval(t);},20000);

@@ -59,7 +59,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-31"
+          build: "api-32"
         }));
       }
       if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
@@ -434,8 +434,13 @@ async function deletePost(id, env, me) {
  * 座標の出し分けもSQLの中で済ませ、真の座標が外に出ないようにする。
  */
 async function listPosts(url, env, me) {
-  const s = Number(url.searchParams.get("s")), w = Number(url.searchParams.get("w"));
-  const n = Number(url.searchParams.get("n")), e = Number(url.searchParams.get("e"));
+  const targetHandle = String(url.searchParams.get("user") || "").trim();
+  if (targetHandle && !/^[a-zA-Z0-9_.-]{3,30}$/.test(targetHandle))
+    return json({ error: "ユーザーIDが不正です" }, 400);
+  const s = targetHandle ? -90 : Number(url.searchParams.get("s"));
+  const w = targetHandle ? -180 : Number(url.searchParams.get("w"));
+  const n = targetHandle ? 90 : Number(url.searchParams.get("n"));
+  const e = targetHandle ? 180 : Number(url.searchParams.get("e"));
   if (![s, w, n, e].every(isFinite)) return json({ error: "範囲の指定が不正です" }, 400);
 
   const now = Date.now();
@@ -475,9 +480,10 @@ async function listPosts(url, env, me) {
          WHERE (b.blocker_id=?1 AND b.blocked_id=p.user_id)
             OR (b.blocker_id=p.user_id AND b.blocked_id=?1)
       )
+      AND (?8='' OR u.handle=?8)
     ORDER BY p.taken_at DESC, p.created_at DESC
     LIMIT ?7
-  `).bind(me.id, s - 0.05, n + 0.05, w - 0.05, e + 0.05, now, limit).all();
+  `).bind(me.id, s - 0.05, n + 0.05, w - 0.05, e + 0.05, now, limit, targetHandle).all();
 
   // 精度に応じた座標を、別クエリで安全に付け直す
   const out = [];
