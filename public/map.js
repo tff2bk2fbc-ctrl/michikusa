@@ -407,9 +407,11 @@ function addPlaceLayers(){
   // 地図が元から描いている店とまったく同じ大きさ・濃さにする
   map.addLayer({id:'spot-dot',type:'circle',source:'spot',minzoom:14,paint:{
     /* いま話題の場所は、少し大きくして縁を光らせる */
-    'circle-radius':['*',
-      ['interpolate',['linear'],['zoom'],14,7,16,8.5,18,10],
-      ['case',['==',['get','hot'],1],1.35,1]],
+    // zoom式はMapLibreの制約に合わせて最上位をinterpolateにする。
+    'circle-radius':['interpolate',['linear'],['zoom'],
+      14,['case',['==',['get','hot'],1],9.45,7],
+      16,['case',['==',['get','hot'],1],11.475,8.5],
+      18,['case',['==',['get','hot'],1],13.5,10]],
     'circle-color':['case',['==',['get','hot'],1],
       (night?'#4A4A52':'#FFFFFF'), PAL().building],
     'circle-stroke-color':night?'#FFC24B':'#E08A00',

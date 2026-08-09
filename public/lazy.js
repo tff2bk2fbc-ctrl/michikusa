@@ -11,15 +11,13 @@ function need(name){
   if(_loading[name]) return _loading[name];
 
   var SRC={
-    // 外部ライブラリは必ず同じ版を読む。版なしURLは配布元の更新だけで
-    // 動作や供給物が変わるので使わない。SRI はビルドで検証したハッシュを
-    // 持てるセルフホスト化のタイミングで追加する（推測した値は設定しない）。
-    exifr:  ['https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js',
-             'https://unpkg.com/exifr@7.1.3/dist/lite.umd.js'],
-    qrcode: ['https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js',
-             'https://unpkg.com/qrcode@1.5.4/build/qrcode.min.js'],
-    firebase:['https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',
-              'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js']
+    // 版を固定し、取得済みファイルのSHA-384と一致したときだけ実行する。
+    exifr:  [{src:'https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/lite.umd.js',integrity:'sha384-KRanV2NRwHPanp7iM6nlLQC5jPCTscSYMko30dLJHzNXJaUNtcucWv+SOi3jV3PE'},
+             {src:'https://unpkg.com/exifr@7.1.3/dist/lite.umd.js',integrity:'sha384-KRanV2NRwHPanp7iM6nlLQC5jPCTscSYMko30dLJHzNXJaUNtcucWv+SOi3jV3PE'}],
+    qrcode: [{src:'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js',integrity:'sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU'},
+             {src:'https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js',integrity:'sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU'}],
+    firebase:[{src:'https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',integrity:'sha384-ZaR6mWzmJtrRibZ1Vm7SoHFr8OXjyAuGAXalGDKqbxFT18oi/z+oZLIRFkpeNor1'},
+              {src:'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js',integrity:'sha384-I1LYojsZ5RM1cOda44Z2h42Qa6YfsQ1XkXxREnhp4ueYBR/4d1pG1K+NZM537Vsj'}]
   };
   var list=SRC[name]||[];
 
@@ -37,9 +35,10 @@ function need(name){
     })();
 
     function done(){ _loaded[name]=1; res(true); }
-    function one(src,ok,ng){
+    function one(asset,ok,ng){
       var s=document.createElement('script');
-      s.src=src; s.async=true; s.crossOrigin='anonymous';
+      s.src=asset.src; s.integrity=asset.integrity;
+      s.async=true; s.crossOrigin='anonymous';
       s.onload=ok; s.onerror=ng;
       document.head.appendChild(s);
     }

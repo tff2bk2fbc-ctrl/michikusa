@@ -26,6 +26,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
+    const respond = (response) => cors(response, request);
 
     // 静的ファイル。HTMLだけは毎回確認させる
     // （Safariが強くキャッシュするため、更新が反映されない事故を防ぐ）
@@ -40,7 +41,7 @@ export default {
           "script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com",
           "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
           "img-src 'self' data: blob: https:",
-          "connect-src 'self' https:",
+          "connect-src 'self' https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems",
           "font-src 'self' data: https:",
           "worker-src 'self' blob:",
           "frame-src https://*.firebaseapp.com https://accounts.google.com",
@@ -52,65 +53,69 @@ export default {
       return secure(new Response(res.body, { status: res.status, headers: h }));
     }
 
-    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+    if (request.method === "OPTIONS") return respond(new Response(null, { status: 204 }));
 
     try {
       if (p === "/api/health") {
-        return cors(json({
+        return respond(json({
           ok: true,
-          build: "api-30"
+          build: "api-31"
         }));
       }
-      if (p === "/api/hotpepper") return cors(await hotpepper(url, request, env));
-      if (p === "/api/rakuten")   return cors(await rakuten(url, request, env));
-      if (p === "/api/places")    return cors(await nearbyPlaces(url, env));
-      if (p === "/api/geocode")   return cors(await geocode(url, request, env));
-      if (p === "/api/reverse")   return cors(await reverseGeocode(url, request, env));
-      if (p === "/api/wiki")      return cors(await wiki(url, request, env));
+      if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
+      if (p === "/api/rakuten")   return respond(await rakuten(url, request, env));
+      if (p === "/api/places")    return respond(await nearbyPlaces(url, env));
+      if (p === "/api/geocode")   return respond(await geocode(url, request, env));
+      if (p === "/api/reverse")   return respond(await reverseGeocode(url, request, env));
+      if (p === "/api/wiki")      return respond(await wiki(url, request, env));
       if (p === "/api/img")       return secure(await proxyImage(url, request, env));
 
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
-      if (!me) return cors(json({ error: "ログインが必要です" }, 401));
+      if (!me) return respond(json({ error: "ログインが必要です" }, 401));
 
       // 外部の有料APIと、ユーザーに紐づく通知・タグ操作は必ず認証後に置く。
-      if (p === "/api/gsearch")   return cors(await gsearch(url, env, me));
+      if (p === "/api/gsearch")   return respond(await gsearch(url, env, me));
       if (p === "/api/postal-code" && request.method === "POST")
-        return cors(await postalCodeLookup(request, env, me));
-      if (p === "/api/postal-code") return cors(json({ error: "POSTだけです" }, 405));
-      if (p === "/api/vision" && request.method === "POST") return cors(await vision(request, env, me));
-      if (p === "/api/suggest" && request.method === "POST") return cors(await suggest(request, env, me));
-      if (p === "/api/push/token" && request.method === "POST") return cors(await saveToken(request, env, me));
-      if (p === "/api/push/test"  && request.method === "POST") return cors(await pushTest(env, me));
-      if (p === "/api/tags" && request.method === "POST")  return cors(await addTags(request, env, me));
-      if (p === "/api/tags" && request.method === "GET")   return cors(await myTags(env, me));
-      if (p === "/api/tags/accept" && request.method === "POST") return cors(await takeTag(request, env, me));
+        return respond(await postalCodeLookup(request, env, me));
+      if (p === "/api/postal-code") return respond(json({ error: "POSTだけです" }, 405));
+      if (p === "/api/vision" && request.method === "POST") return respond(await vision(request, env, me));
+      if (p === "/api/suggest" && request.method === "POST") return respond(await suggest(request, env, me));
+      if (p === "/api/push/token" && request.method === "POST") return respond(await saveToken(request, env, me));
+      if (p === "/api/push/test"  && request.method === "POST") return respond(await pushTest(env, me));
+      if (p === "/api/tags" && request.method === "POST")  return respond(await addTags(request, env, me));
+      if (p === "/api/tags" && request.method === "GET")   return respond(await myTags(env, me));
+      if (p === "/api/tags/accept" && request.method === "POST") return respond(await takeTag(request, env, me));
 
-      if (p === "/api/me" && request.method === "GET")    return cors(json(await getMe(env, me)));
-      if (p === "/api/me" && request.method === "PATCH")  return cors(await patchMe(request, env, me));
+      if (p === "/api/me" && request.method === "GET")    return respond(json(await getMe(env, me)));
+      if (p === "/api/me" && request.method === "PATCH")  return respond(await patchMe(request, env, me));
 
-      if (p === "/api/posts" && request.method === "GET")  return cors(await listPosts(url, env, me));
-      if (p === "/api/posts" && request.method === "POST") return cors(await createPost(request, env, me));
+      if (p === "/api/posts" && request.method === "GET")  return respond(await listPosts(url, env, me));
+      if (p === "/api/posts" && request.method === "POST") return respond(await createPost(request, env, me));
       if (p.startsWith("/api/posts/") && request.method === "DELETE")
-        return cors(await deletePost(p.split("/")[3], env, me));
+        return respond(await deletePost(p.split("/")[3], env, me));
       if (p.startsWith("/api/posts/") && request.method === "PATCH")
-        return cors(await patchPost(p.split("/")[3], request, env, me));
+        return respond(await patchPost(p.split("/")[3], request, env, me));
 
-      if (p === "/api/photo" && request.method === "PUT")  return cors(await putPhoto(url, request, env, me));
+      if (p === "/api/photo" && request.method === "PUT")  return respond(await putPhoto(url, request, env, me));
       if (p.startsWith("/api/photo/") && request.method === "GET")
-        return cors(await getPhoto(p, env, me));
+        return respond(await getPhoto(p, env, me));
 
-      if (p === "/api/friends" && request.method === "GET")  return cors(json(await listFriends(env, me)));
-      if (p === "/api/friends/request") return cors(await friendRequest(request, env, me));
-      if (p === "/api/friends/accept")  return cors(await friendAccept(request, env, me));
-      if (p === "/api/block")           return cors(await blockUser(request, env, me));
+      if (p === "/api/friends" && request.method === "GET")  return respond(json(await listFriends(env, me)));
+      if (p === "/api/friends/request") return respond(await friendRequest(request, env, me));
+      if (p === "/api/friends/accept")  return respond(await friendAccept(request, env, me));
+      if (p === "/api/block")           return respond(await blockUser(request, env, me));
 
-      return cors(json({ error: "そのAPIはありません" }, 404));
+      return respond(json({ error: "そのAPIはありません" }, 404));
     } catch (e) {
       // DB名や外部APIの詳細を利用者へ返さない。
       console.error("api error", e);
-      return cors(json({ error: "サーバー内エラー" }, 500));
+      return respond(json({ error: "サーバー内エラー" }, 500));
     }
+  },
+
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(cleanupTransientConfig(env));
   }
 };
 
@@ -908,6 +913,25 @@ function userLimit(env, userId, name, window, limit, amount) {
   return atomicLimit(env, `ul_${name}_${window}_${userId}`, limit, amount || 1);
 }
 
+/** 日次Cron。期限の切れた一時カウンターだけを削除し、設定値は残す。 */
+async function cleanupTransientConfig(env) {
+  const today = dayKey();
+  const month = monthKey();
+  const statements = [
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'ul\\_%' ESCAPE '\\' AND k NOT LIKE ? AND k NOT LIKE '%\\_all\\_%' ESCAPE '\\'")
+      .bind("%" + today + "%"),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'mod\\_%' ESCAPE '\\' AND k NOT LIKE ?")
+      .bind("mod_" + today + "_%"),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'nom\\_%' ESCAPE '\\' AND k NOT LIKE ?")
+      .bind("%" + today + "%"),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'postal\\_code\\_day\\_%' ESCAPE '\\' AND k<>?")
+      .bind("postal_code_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'q\\_%' ESCAPE '\\' AND k NOT LIKE ?")
+      .bind("%_" + month)
+  ];
+  for (const statement of statements) await statement.run();
+}
+
 async function shortHash(value) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
   return Array.from(new Uint8Array(buf).slice(0, 12))
@@ -921,9 +945,15 @@ function json(obj, status) {
   });
 }
 
-function cors(res) {
+function cors(res, request) {
   const h = new Headers(res.headers);
-  h.set("Access-Control-Allow-Origin", "*");
+  const origin = request.headers.get("Origin");
+  const selfOrigin = new URL(request.url).origin;
+  const allowed = !origin || origin === selfOrigin || origin === "capacitor://localhost" ||
+    origin === "http://localhost" || origin === "null";
+  if (origin && allowed) h.set("Access-Control-Allow-Origin", origin);
+  else h.delete("Access-Control-Allow-Origin");
+  h.append("Vary", "Origin");
   h.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
   h.set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   return secure(new Response(res.body, { status: res.status, headers: h }));

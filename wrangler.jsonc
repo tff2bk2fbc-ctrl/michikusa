@@ -6,6 +6,9 @@
     "directory": "./public",
     "binding": "ASSETS"
   },
+  "triggers": {
+    "crons": ["17 18 * * *"]
+  },
   "vars": {
     "FIREBASE_PROJECT_ID": "michikusa-e34df"
   },

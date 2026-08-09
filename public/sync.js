@@ -445,6 +445,12 @@ function openMe(){
         return '<button class="chip '+(st.default_visibility===o[0]?'on':'')+'" data-v="'+o[0]+'">'+o[1]+'</button>';
       }).join('')+'</div>'+
 
+    '<div class="lab" style="margin-top:22px">郵便番号から住所を調べる</div>'+
+    '<div class="postal-search"><input class="fld" id="postal-input" inputmode="numeric" '+
+      'autocomplete="postal-code" maxlength="8" placeholder="例：100-0014">'+
+      '<button class="btn g" id="postal-search">検索</button></div>'+
+    '<div class="postal-results" id="postal-results" aria-live="polite"></div>'+
+
 
     '<button class="btn g" id="push-test" style="margin-top:20px">通知を試す</button>'+
     '<button class="btn g" id="out" style="margin-top:8px">ログアウト</button>'+
@@ -467,6 +473,45 @@ function openMe(){
 
   var hset=s.querySelector('#h-set');
   if(hset)hset.onclick=function(){ closeSheet(); askingHandle=false; askHandle(); };
+
+  var postalInput=s.querySelector('#postal-input');
+  var postalButton=s.querySelector('#postal-search');
+  var postalResults=s.querySelector('#postal-results');
+  if(postalInput&&postalButton&&postalResults){
+    postalInput.oninput=function(){
+      var digits=postalInput.value.replace(/\D/g,'').slice(0,7);
+      postalInput.value=digits.length>3?digits.slice(0,3)+'-'+digits.slice(3):digits;
+    };
+    postalButton.onclick=async function(){
+      var code=postalInput.value.trim();
+      postalResults.replaceChildren();
+      if(!/^\d{3}-?\d{4}$/.test(code)){
+        postalResults.textContent='郵便番号を7桁で入力してください。'; return;
+      }
+      postalButton.disabled=true; postalButton.textContent='検索中…';
+      try{
+        var r=await api('/api/postal-code',{method:'POST',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({postalCode:code})});
+        var j=await r.json();
+        if(!r.ok)throw new Error(j.error||'検索できませんでした');
+        (j.addresses||[]).forEach(function(row){
+          var a=row&&row.ja||{};
+          var address=[a.prefecture,a.address1,a.address2,a.address3,a.address4].filter(Boolean).join('');
+          if(!address)return;
+          var item=document.createElement('button');
+          item.type='button'; item.className='postal-result'; item.textContent=address;
+          item.onclick=async function(){
+            try{ await navigator.clipboard.writeText(address); setTip('住所をコピーしました'); }
+            catch(e){ setTip(address); }
+          };
+          postalResults.appendChild(item);
+        });
+        if(!postalResults.childNodes.length)postalResults.textContent='住所が見つかりませんでした。';
+      }catch(e){ postalResults.textContent=e.message||'検索できませんでした。'; }
+      postalButton.disabled=false; postalButton.textContent='検索';
+    };
+    postalInput.onkeydown=function(e){ if(e.key==='Enter'){e.preventDefault();postalButton.click();} };
+  }
 
   var th=s.querySelector('#seg-theme');
   if(th) Array.prototype.forEach.call(th.querySelectorAll('.chip'),function(b){
@@ -512,45 +557,18 @@ async function qrInto(el2,text,px){
   function byLib(){
     try{
       if(typeof QRCode==='undefined')return false;
-      var cv=document.createElement('canvas');
-      // 版によって呼び方が違うので、両方試す
-      if(QRCode.toCanvas){
-        el2.innerHTML=''; el2.appendChild(cv);
-        QRCode.toCanvas(cv,text,{width:px,margin:2,errorCorrectionLevel:'M',
-          color:{dark:'#000000',light:'#FFFFFF'}},function(err){
-          if(err){ byImage(); return; }
-          cv.style.borderRadius='10px'; cv.style.display='block';
-        });
-        return true;
-      }
-      if(QRCode.toDataURL){
-        QRCode.toDataURL(text,{width:px,margin:2},function(err,url){
-          if(err){ byImage(); return; }
-          el2.innerHTML='<img src="'+url+'" width="'+px+'" height="'+px+
-            '" style="border-radius:10px;display:block">';
-        });
-        return true;
-      }
-      return false;
+      el2.innerHTML='';
+      new QRCode(el2,{text:text,width:px,height:px,colorDark:'#000000',
+        colorLight:'#FFFFFF',correctLevel:QRCode.CorrectLevel.M});
+      var out=el2.querySelector('canvas,img');
+      if(out){ out.style.borderRadius='10px'; out.style.display='block'; }
+      return !!out;
     }catch(e){ return false; }
   }
 
-  // 部品が無いときは、画像として作ってもらう
-  function byImage(){
-    var u='https://api.qrserver.com/v1/create-qr-code/?size='+px+'x'+px+
-      '&margin=8&data='+encodeURIComponent(text);
-    var im=new Image();
-    im.width=px; im.height=px;
-    im.style.cssText='border-radius:10px;display:block;background:#fff';
-    im.onload=function(){ el2.innerHTML=''; el2.appendChild(im); };
-    im.onerror=function(){
-      el2.innerHTML='<div style="font-size:12px;color:var(--dim);line-height:1.8">'+
-        'QRを作れませんでした。<br>下のIDを直接入れてもらってください。</div>';
-    };
-    im.src=u;
-  }
-
-  if(!byLib()) byImage();
+  // フレンド情報を外部QR生成サービスへ送らず、失敗時はID入力へ案内する。
+  if(!byLib()) el2.innerHTML='<div style="font-size:12px;color:var(--dim);line-height:1.8">'+
+    'QRを作れませんでした。<br>下のIDを直接入れてもらってください。</div>';
 }
 
 /* --- 見せる --- */
