@@ -218,9 +218,7 @@ window.__michikusaMap=map;
     map.once('styledata',function(){ afterStyle(); });
   }catch(e){ showErr('[style] '+dump(e)); hideSplash(); }
 })();
-/* 地図が描けた時点で、待たせている画面を引く */
-map.on('data',function(e){ if(e.tile) hideSplash(); });
-setTimeout(function(){ hideSplash(); },3000);
+/* 最初のタイルだけではまだ地図は未完成。afterStyle後に起動画面を引く。 */
 function applyTint(){
   try{
     if(!baseStyle)return;
