@@ -195,7 +195,8 @@ document.getElementById('btn-loc').onclick=async function(){
   setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
 };
 
-document.getElementById('btn-night').onclick=function(){
-  night=!night; document.body.classList.toggle('dark',night);
-  applyTint(); setTip(night?'夜':'昼');
+window.setColorMode=function(mode){
+  night=mode==='dark'; document.body.classList.toggle('dark',night);
+  try{localStorage.setItem('mk_color_mode',mode);}catch(e){}
+  applyTint(); setTip(night?'ダーク':'ライト');
 };

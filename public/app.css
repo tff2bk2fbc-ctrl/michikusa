@@ -3,18 +3,22 @@ html,body{height:100%;overflow:hidden;
   font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic","Noto Sans JP",system-ui,sans-serif}
 button,input{font-family:inherit;color:inherit;border:none;background:none;outline:none}
 button{cursor:pointer}
+.sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;
+  margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;
+  white-space:nowrap!important;border:0!important}
+button:focus-visible,input:focus-visible{outline:3px solid #2E6DB4;outline-offset:2px}
 
 /* 昼 */
-body{--glass:rgba(255,255,255,.10);--glassline:rgba(0,0,0,.05);
-  --gtop:.34;--gbot:.05;--gside:.16;--rim:.70;--sheen:.12;
+body{--glass:rgba(248,248,246,.38);--glassline:rgba(255,255,255,.42);
+  --gtop:.38;--gbot:.05;--gside:.16;--rim:.70;--sheen:.19;
   --glareC:rgba(255,255,255,.34);--pillC:rgba(0,0,0,.07);--camring:rgba(255,255,255,.42);
   --bg:#EFEDE8;--sf:#FFFFFF;--ink:#111111;--dim:#787878;--line:#E6E4E0;
   --ring:#FFFFFF;--chip:#F0F0F0;--btn:#111111;--btnink:#FFFFFF;--warn:#D93025;
   --sh:0 2px 10px rgba(0,0,0,.14);--sh2:0 -4px 26px rgba(0,0,0,.12);
   background:var(--bg);color:var(--ink);transition:background .4s,color .4s}
 /* 夜 */
-body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
-  --gtop:.34;--gbot:.06;--gside:.16;--rim:.70;--sheen:.12;
+body.dark{--glass:rgba(28,28,30,.34);--glassline:rgba(255,255,255,.18);
+  --gtop:.24;--gbot:.06;--gside:.12;--rim:.50;--sheen:.10;
   --glareC:rgba(255,255,255,.30);--pillC:rgba(255,255,255,.10);--camring:rgba(255,255,255,.10);
   --bg:#121214;--sf:#1E1E22;--ink:#F2F2F4;--dim:#9E9EA4;--line:#32323A;
   --ring:#121214;--chip:#2C2C33;--btn:#F2F2F4;--btnink:#121214;--warn:#FF6B60;
@@ -197,33 +201,23 @@ body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
    ============================================================ */
 .fabs{position:fixed;left:12px;right:12px;z-index:36;
   bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
-  display:flex;align-items:center;gap:6px;
-  padding:9px 11px;border-radius:34px;
+  display:flex;align-items:center;
+  min-height:70px;padding:7px 9px;border-radius:28px;border:1px solid var(--glassline);
   background:var(--glass);
-  backdrop-filter:blur(1px) saturate(1.1);-webkit-backdrop-filter:blur(1px) saturate(1.1);
+  backdrop-filter:blur(22px) saturate(1.6) contrast(1.04);
+  -webkit-backdrop-filter:blur(22px) saturate(1.6) contrast(1.04);
   box-shadow:
-    0 10px 34px rgba(0,0,0,.26),
+    0 12px 32px rgba(20,22,24,.20),
     inset 0 1px 0 rgba(255,255,255,var(--gtop)),
-    inset 0 -1px 0 rgba(0,0,0,var(--gbot)),
-    inset 1px 0 0 rgba(255,255,255,var(--gside)),
-    inset -1px 0 0 rgba(255,255,255,var(--gside));
+    inset 0 -1px 0 rgba(0,0,0,var(--gbot));
   overflow:hidden;
   transition:transform .34s cubic-bezier(.2,.9,.25,1),opacity .28s}
 .fabs.hide{transform:translateY(160%);opacity:0;pointer-events:none}
 
 /* 縁の光。上と下で強さを変えると、面が上を向いて見える */
-.rim{position:absolute;inset:0;border-radius:34px;pointer-events:none;padding:1px;
-  background:linear-gradient(160deg,
-    rgba(255,255,255,var(--rim)) 0%,
-    rgba(255,255,255,0) 32%,
-    rgba(255,255,255,0) 68%,
-    rgba(255,255,255,calc(var(--rim) * .55)) 100%);
-  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
-  -webkit-mask-composite:xor;mask-composite:exclude}
-
 /* 表面の反射。上半分だけ明るくする */
-.sheen{position:absolute;left:0;right:0;top:0;height:52%;
-  border-radius:34px 34px 0 0;pointer-events:none;
+.sheen{position:absolute;left:1px;right:1px;top:1px;height:45%;
+  border-radius:27px 27px 18px 18px;pointer-events:none;
   background:linear-gradient(180deg,rgba(255,255,255,var(--sheen)),transparent)}
 
 /* 上を走る光 */
@@ -234,7 +228,8 @@ body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
 .fabs.lit .glare{opacity:1;animation:sweep 1.4s cubic-bezier(.4,0,.2,1)}
 @keyframes sweep{to{left:125%}}
 
-.nav-items{position:relative;display:flex;align-items:center;gap:2px;flex:1;min-width:0}
+.nav-items{position:relative;display:grid;grid-template-columns:repeat(5,minmax(44px,1fr));
+  align-items:center;gap:2px;flex:1;min-width:0}
 
 /* 押した場所へ滑って動く枠 */
 .pill{position:absolute;top:0;height:100%;border-radius:26px;
@@ -244,15 +239,15 @@ body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
   pointer-events:none}
 .pill.on{opacity:1}
 
-.nav-btn{position:relative;flex:1;min-width:0;padding:8px 2px;border-radius:26px;
+.nav-btn{position:relative;min-width:44px;min-height:52px;padding:8px 2px;border-radius:20px;
   color:var(--dim);transition:color .28s;background:none}
 .nav-btn.on{color:var(--ink)}
-.bc{display:flex;flex-direction:column;align-items:center;gap:3px}
-.bc svg{width:20px;height:20px;flex:0 0 20px}
+.bc{display:flex;align-items:center;justify-content:center}
+.bc svg{width:23px;height:23px;flex:0 0 23px}
 .bc span{font-size:9.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
 
 /* 撮るボタン。板から少し浮かせる */
-.cam{flex:0 0 auto;width:54px;height:54px;border-radius:50%;margin:0 4px;
+.cam{width:54px;height:54px;border-radius:50%;margin:auto;
   background:var(--btn);color:var(--btnink);
   display:flex;align-items:center;justify-content:center;
   box-shadow:0 4px 14px rgba(0,0,0,.32),0 0 0 4px var(--camring);
@@ -260,18 +255,26 @@ body.dark{--glass:rgba(22,22,26,.10);--glassline:rgba(255,255,255,.08);
 .cam:active{transform:scale(.9)}
 .cam svg{width:24px;height:24px}
 
-.divider{width:1px;height:26px;background:rgba(255,255,255,var(--rim));
-  flex:0 0 1px;margin:0 2px}
+@supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+  .fabs{background:rgba(248,248,246,.94)} body.dark .fabs{background:rgba(28,28,30,.94)}}
 
-.theme-btn{flex:0 0 38px;height:38px;border-radius:50%;color:var(--dim);
-  display:flex;align-items:center;justify-content:center;transition:color .28s}
-.theme-icon{position:relative;width:20px;height:20px}
-.theme-icon svg{position:absolute;inset:0;width:20px;height:20px;
-  transition:opacity .34s,transform .44s cubic-bezier(.34,1.3,.5,1)}
-.theme-icon .sun{opacity:0;transform:rotate(-70deg) scale(.6)}
-.theme-icon .moon{opacity:1;transform:none}
-body:not(.dark) .theme-icon .sun{opacity:1;transform:none}
-body:not(.dark) .theme-icon .moon{opacity:0;transform:rotate(70deg) scale(.6)}
+/* プロフィール A：写真棚。地図と同じシステムフォントで統一する。 */
+.me-profile{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic","Noto Sans JP",system-ui,sans-serif}
+.me-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.me-title{font-size:22px;font-weight:700;line-height:1.3}.me-meta{font-size:12px;color:var(--dim);margin-top:4px}
+.me-close{width:44px;height:44px;display:grid;place-items:center;font-size:22px}
+.me-strip{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:3px;height:78px;margin:18px 0 8px}
+.me-strip i{display:block;background:linear-gradient(145deg,#718079,#d9d1bb)}
+.me-strip i:nth-child(2){background:linear-gradient(145deg,#b99b73,#e6dfcf)}
+.me-strip i:nth-child(3){background:linear-gradient(145deg,#637f90,#dbe2dc)}
+.me-row{width:100%;min-height:52px;border-top:1px solid var(--line);display:flex;align-items:center;
+  gap:10px;text-align:left;font-size:14px}.me-row:last-child{border-bottom:1px solid var(--line)}
+.me-row b{font-weight:650}.me-row small{margin-left:auto;color:var(--dim);font-size:11.5px}
+.me-section{font-size:11.5px;color:var(--dim);margin:20px 0 5px}
+.me-profile .chips{border-bottom:1px solid var(--line);gap:20px;overflow:visible;margin:0}
+.me-profile .chip{min-height:44px;padding:0;background:none;border-radius:0;color:var(--dim)}
+.me-profile .chip.on{background:none;color:var(--ink);text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:7px}
+.me-profile .fld{border-radius:0;background:none;border-bottom:1px solid var(--ink);padding-inline:4px}
 
 .zoombar{position:fixed;right:12px;top:50%;transform:translateY(-50%);
   width:7px;height:150px;border-radius:99px;background:rgba(128,128,128,.3);

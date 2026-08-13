@@ -413,17 +413,14 @@ function openMe(){
 
   var st=(meP&&meP.settings)||{};
   var unsynced=spots.filter(function(s){return !s.synced;}).length;
-  html+='<div style="font-size:19px;font-weight:700">'+esc(fbUser.displayName||'名前未設定')+'</div>'+
-    '<div style="font-size:12.5px;color:var(--dim);margin:4px 0 4px">'+
-      spots.length+' の思い出'+(unsynced?('　未保存 '+unsynced+'件'):'　すべて保存済み')+'</div>'+
-    '<div style="font-size:12px;color:var(--dim);margin-bottom:16px">'+
-      'あなたのID：<b id="myhandle">'+esc((meP&&meP.handle)||'（未設定）')+'</b></div>'+
+  html+='<div class="me-profile">'+
+    '<div class="me-head"><div><div class="me-title">'+esc(fbUser.displayName||'プロフィール')+'</div>'+
+    '<div class="me-meta">'+spots.length+' の思い出'+(unsynced?('　未保存 '+unsynced+'件'):'　すべて保存済み')+'</div></div>'+
+    '<button class="me-close" id="x" aria-label="プロフィールを閉じる">×</button></div>'+
+    '<div class="me-strip" aria-label="思い出の写真"><i></i><i></i><i></i></div>'+
+    '<button class="me-row" id="fr"><b>フレンド</b><small>QR・申請を見る　›</small></button>'+
 
-    '<button class="btn" id="fr">フレンド</button>'+
-
-
-
-    '<div class="lab" style="margin-top:20px">あなたのID</div>'+
+    '<div class="me-section">あなたのID</div>'+
     ((meP&&meP.handle)
       ? ('<div class="fld" style="opacity:.7">@'+esc(meP.handle)+'</div>'+
          '<div style="font-size:11.5px;color:var(--dim);margin-top:-4px;line-height:1.7">'+
@@ -432,29 +429,27 @@ function openMe(){
          '<div style="font-size:11.5px;color:var(--dim);margin-top:6px;line-height:1.7">'+
          'フレンドはこのIDであなたを探します。</div>'))+
 
-    '<div class="lab" style="margin-top:22px">地図の見た目</div>'+
-    '<div class="chips" id="seg-theme">'+
-      Object.keys(THEMES).map(function(k){
-        return '<button class="chip '+(theme===k?'on':'')+'" data-v="'+k+'">'+
-          esc(THEMES[k].name)+'</button>';
-      }).join('')+'</div>'+
+    '<div class="me-section">地図</div>'+
+    '<div class="chips" id="seg-color" role="radiogroup" aria-label="地図の表示モード">'+
+      '<button class="chip '+(!night?'on':'')+'" data-v="light" role="radio" aria-checked="'+(!night)+'">ライト</button>'+
+      '<button class="chip '+(night?'on':'')+'" data-v="dark" role="radio" aria-checked="'+night+'">ダーク</button></div>'+
 
-    '<div class="lab" style="margin-top:22px">新しい思い出をだれに見せるか</div>'+
+    '<div class="me-section">新しい思い出をだれに見せるか</div>'+
     '<div class="chips" id="seg-vis">'+
       [['private','自分だけ'],['friends','フレンド'],['public','みんな']].map(function(o){
         return '<button class="chip '+(st.default_visibility===o[0]?'on':'')+'" data-v="'+o[0]+'">'+o[1]+'</button>';
       }).join('')+'</div>'+
 
-    '<div class="lab" style="margin-top:22px">郵便番号から住所を調べる</div>'+
+    '<div class="me-section">郵便番号から住所を調べる</div>'+
     '<div class="postal-search"><input class="fld" id="postal-input" inputmode="numeric" '+
       'autocomplete="postal-code" maxlength="8" placeholder="例：100-0014">'+
       '<button class="btn g" id="postal-search">検索</button></div>'+
     '<div class="postal-results" id="postal-results" aria-live="polite"></div>'+
 
 
-    '<button class="btn g" id="push-test" style="margin-top:20px">通知を試す</button>'+
-    '<button class="btn g" id="out" style="margin-top:8px">ログアウト</button>'+
-    '<button class="btn g" id="x" style="margin-top:8px">とじる</button></div>';
+    '<div class="me-section">アカウント</div>'+
+    '<button class="me-row" id="push-test">通知を試す<small>›</small></button>'+
+    '<button class="me-row" id="out" style="color:var(--warn)">ログアウト</button></div></div>';
 
   var s=showSheet(html);
   s.querySelector('#x').onclick=closeSheet;
@@ -513,14 +508,12 @@ function openMe(){
     postalInput.onkeydown=function(e){ if(e.key==='Enter'){e.preventDefault();postalButton.click();} };
   }
 
-  var th=s.querySelector('#seg-theme');
+  var th=s.querySelector('#seg-color');
   if(th) Array.prototype.forEach.call(th.querySelectorAll('.chip'),function(b){
     b.onclick=function(){
-      Array.prototype.forEach.call(th.querySelectorAll('.chip'),function(x){x.classList.remove('on');});
-      b.classList.add('on');
-      theme=b.dataset.v;
-      try{ localStorage.setItem('mk_theme',theme); }catch(e){}
-      applyTint();
+      Array.prototype.forEach.call(th.querySelectorAll('.chip'),function(x){x.classList.remove('on');x.setAttribute('aria-checked','false');});
+      b.classList.add('on');b.setAttribute('aria-checked','true');
+      if(window.setColorMode)window.setColorMode(b.dataset.v);
     };
   });
 

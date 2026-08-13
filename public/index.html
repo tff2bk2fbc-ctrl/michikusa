@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css" integrity="sha384-K282sW/zFjTkrjR/+yr1H+gCukuy4OEYrkXRybV88g7pk+kZZYpNV6SAV59NcgFg" crossorigin="anonymous">
-<link rel="stylesheet" href="/app.css?v=87">
+<link rel="stylesheet" href="/app.css?v=88">
 </head>
 <div id="err"></div>
 <div id="splash">
@@ -36,55 +36,45 @@
 
 <div class="fabpull" id="fabpull"><b></b></div>
 
-<nav class="fabs" id="fabs">
-  <div class="rim"></div>
+<nav class="fabs" id="fabs" aria-label="主要な操作">
   <div class="sheen"></div>
-  <div class="glare-wrap"><div class="glare" id="glare"></div></div>
 
   <div class="nav-items">
     <div class="pill" id="pill"></div>
 
-    <button class="nav-btn" id="btn-loc" data-i="0">
+    <button class="nav-btn" id="btn-loc" data-i="0" aria-label="現在地">
       <div class="bc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
-        <span>現在地</span>
+        <span class="sr-only">現在地</span>
       </div>
     </button>
 
-    <button class="nav-btn" id="btn-bulk" data-i="1">
+    <button class="nav-btn" id="btn-bulk" data-i="1" aria-label="思い出アルバム">
       <div class="bc">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h14v14H7z"/><path d="M17 17.5v3H3v-14h3"/><path d="M7 14l4-3.5 3 2.5 2.5-2 4.5 4"/></svg>
-        <span>まとめて</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5h6l1.6 2H20v11H4z"/><path d="M7 15l3-2.6 2.5 2 2.1-1.7L18 15.5"/><circle cx="9" cy="10.5" r="1"/></svg>
+        <span class="sr-only">思い出</span>
       </div>
     </button>
 
-    <button class="cam" id="btn-cam">
+    <button class="cam" id="btn-cam" aria-label="カメラ">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
     </button>
 
-    <button class="nav-btn" id="btn-lib" data-i="2">
+    <button class="nav-btn" id="btn-lib" data-i="2" aria-label="写真">
       <div class="bc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.3"/></svg>
-        <span>写真</span>
+        <span class="sr-only">写真</span>
       </div>
     </button>
 
-    <button class="nav-btn" id="btn-me" data-i="3">
+    <button class="nav-btn" id="btn-me" data-i="3" aria-label="プロフィール">
       <div class="bc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
-        <span>じぶん</span>
+        <span class="sr-only">プロフィール</span>
       </div>
     </button>
   </div>
 
-  <div class="divider"></div>
-
-  <button class="theme-btn" id="btn-night">
-    <div class="theme-icon">
-      <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-    </div>
-  </button>
 </nav>
 
 <div class="tip" id="tip">地図をタップして、思い出を追加</div>
@@ -102,19 +92,19 @@
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 
-<script src="/boot.js?v=87"></script>
+<script src="/boot.js?v=88"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js" integrity="sha384-KKgyz2mG25bKJ1O2PyqTJPlAF8Kw2BpDmsLTNBXslICOBvhTAyF5F0XhLWF2ZovY" crossorigin="anonymous"></script>
 <script src="/lazy.js?v=84"></script>
 
 <!-- 中身。役割ごとに分けてある。
      読む順番には意味があるので、入れ替えないこと -->
-<script src="/core.js"></script>    <!-- 設定・道具・端末内の保存 -->
+<script src="/core.js?v=88"></script>    <!-- 設定・道具・端末内の保存 -->
 <script src="/map.js?v=87"></script>     <!-- 地図・配色・ピン -->
 <script src="/place.js"></script>   <!-- 場所のシート・写真を開く -->
 <script src="/data.js"></script>    <!-- 外部からの取り込み・検索 -->
-<script src="/native.js"></script>  <!-- カメラ・現在地・通知 -->
-<script src="/post.js"></script>    <!-- 記録する・まとめて取り込む -->
-<script src="/sync.js?v=85"></script>    <!-- サーバー保存・タグ・ログイン -->
-<script src="/ui.js?v=83"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
+<script src="/native.js?v=88"></script>  <!-- カメラ・現在地・通知 -->
+<script src="/post.js?v=88"></script>    <!-- 記録する・思い出アルバム -->
+<script src="/sync.js?v=88"></script>    <!-- サーバー保存・タグ・ログイン -->
+<script src="/ui.js?v=88"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
 </body>
 </html>

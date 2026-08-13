@@ -43,7 +43,7 @@ function readAsData(file){
   });
 }
 
-document.getElementById('btn-bulk').onclick=async function(){
+async function chooseAlbumPhotos(){
   var got=await pickPhotos();
   if(got===null)return;              // ブラウザなら入力欄が開く
   if(!got.length){ setTip('選ばれませんでした'); return; }
@@ -58,6 +58,17 @@ document.getElementById('btn-bulk').onclick=async function(){
   }
   if(!files.length){ setTip('写真を読めませんでした'); return; }
   handleBulk(files);
+}
+
+document.getElementById('btn-bulk').onclick=function(){
+  var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
+    '<div style="font-size:19px;font-weight:700">思い出アルバム</div>'+
+    '<div style="font-size:13px;color:var(--dim);line-height:1.7;margin-top:6px">'+
+    '旅の写真を選ぶと、撮影した場所と時間からアルバムを作ります。</div>'+
+    '<button class="btn" id="album-new" style="margin-top:18px">新しいアルバムを作る</button>'+
+    '<button class="btn g" id="album-close" style="margin-top:8px">とじる</button></div>');
+  s.querySelector('#album-close').onclick=closeSheet;
+  s.querySelector('#album-new').onclick=function(){closeSheet();chooseAlbumPhotos();};
 };
 
 document.getElementById('in-bulk').onchange=function(e){

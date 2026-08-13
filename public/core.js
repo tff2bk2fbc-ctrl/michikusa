@@ -22,7 +22,10 @@ function ask(c){return ASK[c]||['ひとこと',''];}
 const HP_CAT={G001:'酒',G002:'酒',G011:'酒',G012:'酒',G014:'喫茶'};
 
 let spots=[], pois=[], placing=null, dropM=null, meM=null, askSeq=0;
-let night=(function(){var h=new Date().getHours();return h<6||h>=18;})();
+let night=(function(){
+  try{var saved=localStorage.getItem('mk_color_mode');if(saved)return saved==='dark';}catch(e){}
+  var h=new Date().getHours();return h<6||h>=18;
+})();
 let is3D=true;
 document.body.classList.toggle('dark',night);
 

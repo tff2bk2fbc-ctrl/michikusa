@@ -141,7 +141,6 @@
 (function(){
   var bar=document.getElementById('fabs');
   var pill=document.getElementById('pill');
-  var glare=document.getElementById('glare');
   if(!bar||!pill)return;
 
   var btns=Array.prototype.slice.call(bar.querySelectorAll('.nav-btn'));
@@ -155,10 +154,8 @@
     pill.classList.add('on');
   }
   function sweep(){
-    bar.classList.remove('lit');
-    void bar.offsetWidth;          // ここで一度描かせないと、また流れない
-    bar.classList.add('lit');
-    setTimeout(function(){ bar.classList.remove('lit'); },1600);
+    bar.classList.add('pressed');
+    setTimeout(function(){ bar.classList.remove('pressed'); },180);
   }
 
   btns.forEach(function(b){
@@ -177,7 +174,6 @@
   });
 
   document.getElementById('btn-cam').addEventListener('pointerdown',sweep);
-  document.getElementById('btn-night').addEventListener('pointerdown',sweep);
   var bs=document.getElementById('btn-style');
   if(bs) bs.addEventListener('pointerdown',sweep);
   window.addEventListener('resize',function(){ pill.classList.remove('on'); });
