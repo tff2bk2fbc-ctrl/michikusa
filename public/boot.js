@@ -4,7 +4,7 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v85';
+var BUILD='v86';
 /* 一度読んだものを端末に残す。次からは待たずに出せる */
 if('serviceWorker' in navigator && location.protocol==='https:'){
   navigator.serviceWorker.register('/sw.js').then(function(reg){
@@ -23,10 +23,25 @@ if('serviceWorker' in navigator && location.protocol==='https:'){
   }).catch(function(){});
 }
 var T0=performance.now(), TT=[];
+var splashIcon=document.getElementById('sp-icon');
+var splashIconReady=!!(splashIcon&&splashIcon.complete&&splashIcon.naturalWidth);
+var splashHidePending=false;
+if(splashIcon&&!splashIconReady){
+  splashIcon.addEventListener('load',function(){
+    splashIconReady=true;
+    if(splashHidePending)hideSplash();
+  },{once:true});
+  splashIcon.addEventListener('error',function(){
+    splashIconReady=true;
+    if(splashHidePending)hideSplash();
+  },{once:true});
+}
 function mark(n){ TT.push([n, Math.round(performance.now()-T0)]); }
 mark('開始');
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(){
+  /* 地図が先に出ても、ブランドマークが描画されるまでは起動画面を残す。 */
+  if(!splashIconReady&&performance.now()-T0<1200){ splashHidePending=true; return; }
   if(!window.__sg){ window.__sg=1; mark('地図が見えた'); }
   var s=document.getElementById('splash');
   if(!s||s.classList.contains('gone'))return;
