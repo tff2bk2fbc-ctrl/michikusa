@@ -9,16 +9,16 @@ button{cursor:pointer}
 button:focus-visible,input:focus-visible{outline:3px solid #2E6DB4;outline-offset:2px}
 
 /* 昼 */
-body{--glass:rgba(248,248,246,.38);--glassline:rgba(255,255,255,.42);
-  --gtop:.38;--gbot:.05;--gside:.16;--rim:.70;--sheen:.19;
+body{--glass:rgba(248,248,246,.54);--glassline:rgba(255,255,255,.72);
+  --gtop:.62;--gbot:.09;--gside:.22;--rim:.76;--sheen:.34;
   --glareC:rgba(255,255,255,.34);--pillC:rgba(0,0,0,.07);--camring:rgba(255,255,255,.42);
   --bg:#EFEDE8;--sf:#FFFFFF;--ink:#111111;--dim:#787878;--line:#E6E4E0;
   --ring:#FFFFFF;--chip:#F0F0F0;--btn:#111111;--btnink:#FFFFFF;--warn:#D93025;
   --sh:0 2px 10px rgba(0,0,0,.14);--sh2:0 -4px 26px rgba(0,0,0,.12);
   background:var(--bg);color:var(--ink);transition:background .4s,color .4s}
 /* 夜 */
-body.dark{--glass:rgba(28,28,30,.34);--glassline:rgba(255,255,255,.18);
-  --gtop:.24;--gbot:.06;--gside:.12;--rim:.50;--sheen:.10;
+body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
+  --gtop:.32;--gbot:.10;--gside:.16;--rim:.54;--sheen:.15;
   --glareC:rgba(255,255,255,.30);--pillC:rgba(255,255,255,.10);--camring:rgba(255,255,255,.10);
   --bg:#121214;--sf:#1E1E22;--ink:#F2F2F4;--dim:#9E9EA4;--line:#32323A;
   --ring:#121214;--chip:#2C2C33;--btn:#F2F2F4;--btnink:#121214;--warn:#FF6B60;
@@ -202,23 +202,28 @@ body.dark{--glass:rgba(28,28,30,.34);--glassline:rgba(255,255,255,.18);
 .fabs{position:fixed;left:12px;right:12px;z-index:36;
   bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
   display:flex;align-items:center;
-  min-height:70px;padding:7px 9px;border-radius:28px;border:1px solid var(--glassline);
-  background:var(--glass);
-  backdrop-filter:blur(22px) saturate(1.6) contrast(1.04);
-  -webkit-backdrop-filter:blur(22px) saturate(1.6) contrast(1.04);
+  min-height:72px;padding:8px 9px;border-radius:25px;border:1px solid var(--glassline);
+  background:
+    linear-gradient(145deg,rgba(255,255,255,.30),transparent 42%),
+    var(--glass);
+  backdrop-filter:blur(28px) saturate(1.75) contrast(1.08);
+  -webkit-backdrop-filter:blur(28px) saturate(1.75) contrast(1.08);
   box-shadow:
-    0 12px 32px rgba(20,22,24,.20),
+    0 16px 38px rgba(20,22,24,.24),
+    0 2px 7px rgba(20,22,24,.12),
     inset 0 1px 0 rgba(255,255,255,var(--gtop)),
-    inset 0 -1px 0 rgba(0,0,0,var(--gbot));
+    inset 0 -1px 0 rgba(0,0,0,var(--gbot)),
+    inset 1px 0 0 rgba(255,255,255,.18),
+    inset -1px 0 0 rgba(255,255,255,.12);
   overflow:hidden;
   transition:transform .34s cubic-bezier(.2,.9,.25,1),opacity .28s}
 .fabs.hide{transform:translateY(160%);opacity:0;pointer-events:none}
 
 /* 縁の光。上と下で強さを変えると、面が上を向いて見える */
 /* 表面の反射。上半分だけ明るくする */
-.sheen{position:absolute;left:1px;right:1px;top:1px;height:45%;
-  border-radius:27px 27px 18px 18px;pointer-events:none;
-  background:linear-gradient(180deg,rgba(255,255,255,var(--sheen)),transparent)}
+.sheen{position:absolute;left:2px;right:2px;top:2px;height:48%;
+  border-radius:23px 23px 15px 15px;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,var(--sheen)),rgba(255,255,255,.04) 58%,transparent)}
 
 /* 上を走る光 */
 .glare-wrap{position:absolute;inset:0;border-radius:34px;overflow:hidden;pointer-events:none}
@@ -233,17 +238,18 @@ body.dark{--glass:rgba(28,28,30,.34);--glassline:rgba(255,255,255,.18);
 
 /* 押した場所へ滑って動く枠 */
 .pill{position:absolute;top:0;height:100%;border-radius:26px;
-  background:var(--pillC);opacity:0;
+  background:rgba(255,255,255,.24);box-shadow:inset 0 0 0 1px rgba(255,255,255,.24);opacity:0;
   transition:transform .42s cubic-bezier(.34,1.3,.5,1),
              width .42s cubic-bezier(.34,1.3,.5,1),opacity .3s;
   pointer-events:none}
 .pill.on{opacity:1}
 
 .nav-btn{position:relative;min-width:44px;min-height:52px;padding:8px 2px;border-radius:20px;
-  color:var(--dim);transition:color .28s;background:none}
+  color:var(--dim);transition:color .28s,transform .16s;background:none}
 .nav-btn.on{color:var(--ink)}
+.nav-btn:active{transform:scale(.92)}
 .bc{display:flex;align-items:center;justify-content:center}
-.bc svg{width:23px;height:23px;flex:0 0 23px}
+.bc svg{width:25px;height:25px;flex:0 0 25px;filter:drop-shadow(0 1px 1px rgba(255,255,255,.32))}
 .bc span{font-size:9.5px;font-weight:600;letter-spacing:.01em;white-space:nowrap}
 
 /* 撮るボタン。板から少し浮かせる */
@@ -265,6 +271,7 @@ body.dark{--glass:rgba(28,28,30,.34);--glassline:rgba(255,255,255,.18);
 .me-close{width:44px;height:44px;display:grid;place-items:center;font-size:22px}
 .me-strip{display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:3px;height:78px;margin:18px 0 8px}
 .me-strip i{display:block;background:linear-gradient(145deg,#718079,#d9d1bb)}
+.me-strip img{width:100%;height:100%;display:block;object-fit:cover}
 .me-strip i:nth-child(2){background:linear-gradient(145deg,#b99b73,#e6dfcf)}
 .me-strip i:nth-child(3){background:linear-gradient(145deg,#637f90,#dbe2dc)}
 .me-row{width:100%;min-height:52px;border-top:1px solid var(--line);display:flex;align-items:center;

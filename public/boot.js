@@ -4,7 +4,7 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v88';
+var BUILD='v89';
 /* 一度読んだものを端末に残す。次からは待たずに出せる */
 if('serviceWorker' in navigator && location.protocol==='https:'){
   navigator.serviceWorker.register('/sw.js').then(function(reg){

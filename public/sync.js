@@ -413,11 +413,16 @@ function openMe(){
 
   var st=(meP&&meP.settings)||{};
   var unsynced=spots.filter(function(s){return !s.synced;}).length;
+  var profilePhotos=spots.filter(function(p){return p&&p.photo;}).slice(-3).reverse();
+  var profileStrip=[0,1,2].map(function(i){
+    var p=profilePhotos[i];
+    return p?('<img src="'+esc(p.photo)+'" alt="">'):'<i></i>';
+  }).join('');
   html+='<div class="me-profile">'+
     '<div class="me-head"><div><div class="me-title">'+esc(fbUser.displayName||'プロフィール')+'</div>'+
     '<div class="me-meta">'+spots.length+' の思い出'+(unsynced?('　未保存 '+unsynced+'件'):'　すべて保存済み')+'</div></div>'+
     '<button class="me-close" id="x" aria-label="プロフィールを閉じる">×</button></div>'+
-    '<div class="me-strip" aria-label="思い出の写真"><i></i><i></i><i></i></div>'+
+    '<div class="me-strip" aria-label="最近の思い出">'+profileStrip+'</div>'+
     '<button class="me-row" id="fr"><b>フレンド</b><small>QR・申請を見る　›</small></button>'+
 
     '<div class="me-section">あなたのID</div>'+
