@@ -15,16 +15,34 @@ function fingerprint(lat,lng,at,file){
   // 日時が取れない場合は、大きさと更新時刻で代用
   return 'f'+(file?file.size:0)+'_'+(file?(file.lastModified||0):0);
 }
-async function seenAdd(fp){ return dbPut('seen',{id:fp,at:Date.now()}); }
+function scopedSeenId(fp,scope){return (scope||activeSpotScope)+'|'+fp;}
+async function seenAdd(fp,scope){ return dbPut('seen',{id:scopedSeenId(fp,scope),at:Date.now()}); }
 async function seenHas(fp){
   return new Promise(function(r){
     if(!db)return r(false);
     try{
-      var q=db.transaction('seen','readonly').objectStore('seen').get(fp);
+      var q=db.transaction('seen','readonly').objectStore('seen').get(scopedSeenId(fp));
       q.onsuccess=function(){ r(!!q.result); };
       q.onerror=function(){ r(false); };
     }catch(e){ r(false); }
   });
+}
+
+function defaultPostVisibility(){
+  var v=meP&&meP.settings&&meP.settings.default_visibility;
+  return ['private','friends','public'].indexOf(v)>=0?v:'private';
+}
+function visibilityLabel(v){
+  return {private:'自分だけ',friends:'フレンド',public:'みんな'}[v]||'自分だけ';
+}
+function precisionLabel(v){
+  return {exact:'正確な位置',approx:'約500m',area:'約2kmのエリア',hidden:'位置なし'}[v]||'位置なし';
+}
+function visibilityDescription(v){
+  if(v==='private')return '自分だけに表示されます';
+  var settings=meP&&meP.settings||{};
+  var precision=v==='friends'?settings.friend_precision:settings.public_precision;
+  return visibilityLabel(v)+'に表示・位置は'+precisionLabel(precision);
 }
 
 /* ============================================================
@@ -184,22 +202,35 @@ async function handleBulk(files){
 
   foot.querySelector('#go').onclick=async function(){
     var btn=this; btn.disabled=true;
+    var workScope=activeSpotScope;
     var use=groups.filter(function(g,i){return !skip[i];});
-    var done=0;
+    var done=0, donePlaces=0;
     for(var i=0;i<use.length;i++){
       var g=use[i];
       btn.textContent=(i+1)+' / '+use.length+' を置いています…';
-      var url=await readAsData(g.items[0].file);
-      var rec={id:nid(),n:g.name,c:g.cat,lat:g.lat,lng:g.lng,place:g.place||'',
-        tag:'',d:g.d||new Date(g.at).toISOString().slice(0,10),photo:url||''};
-      spots.push(rec);
-      await dbPut('spots',rec);
-      for(var q=0;q<g.items.length;q++){ if(g.items[q].fp) await seenAdd(g.items[q].fp); }
-      if(fbUser) pushOne(rec);
-      done++;
+      var savedHere=0;
+      for(var q=0;q<g.items.length;q++){
+        var item=g.items[q];
+        var url=await readAsData(item.file);
+        if(!url||activeSpotScope!==workScope)continue;
+        var rec={id:nid(),n:g.name,c:g.cat,lat:item.lat,lng:item.lng,place:g.place||'',
+          tag:'',d:item.d||new Date(item.at).toISOString().slice(0,10),photo:url,
+          visibility:defaultPostVisibility(),owner_scope:workScope};
+        if(!(await dbPut('spots',rec))){
+          continue;
+        }
+        if(item.fp)await seenAdd(item.fp,workScope);
+        if(activeSpotScope!==workScope)continue;
+        spots.push(rec);
+        if(typeof ensureLocalThumb==='function')ensureLocalThumb(rec);
+        done++; savedHere++;
+      }
+      if(savedHere)donePlaces++;
     }
+    if(activeSpotScope!==workScope)return;
     closeSheet(); render(true);
-    setTip(done+' か所を地図に置きました');
+    setTip(done+'枚を '+donePlaces+'か所に置きました');
+    if(fbUser)syncUp();
     if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
   };
 }
@@ -207,6 +238,8 @@ async function handleBulk(files){
 function openAdd(p){
   var cat=p.cat||CATS[0];
   var tagged=[];        // 一緒にいた人
+  var chosenVisibility=defaultPostVisibility();
+  var sheetScope=activeSpotScope;
 
   /* 聞くことを絞る。場所も日付も写真から分かるので、聞かない */
   var html='<div class="grab"></div>'+
@@ -231,6 +264,12 @@ function openAdd(p){
         '<label class="pick" id="p1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg><span>撮る</span></label>'+
         '<label class="pick" id="p2"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/></svg><span>カメラロール</span></label>'+
       '</div>':'')+
+      '<div class="post-vis-label">公開範囲</div>'+
+      '<div class="chips post-vis" id="post-vis" role="radiogroup" aria-label="この思い出の公開範囲">'+
+        [['private','自分だけ'],['friends','フレンド'],['public','みんな']].map(function(o){
+          return '<button type="button" class="chip '+(chosenVisibility===o[0]?'on':'')+'" data-v="'+o[0]+'" role="radio" aria-checked="'+(chosenVisibility===o[0])+'">'+o[1]+'</button>';
+        }).join('')+'</div>'+
+      '<div class="post-vis-note" id="post-vis-note" aria-live="polite">'+visibilityDescription(chosenVisibility)+'</div>'+
       '<button class="btn" id="ok">ここに残す</button>'+
       '<button class="btn g" id="ng" style="margin-top:8px">やめる</button>'+
     '</div>';
@@ -239,6 +278,32 @@ function openAdd(p){
   var ft=s.querySelector('#f-t');
   var nm=s.querySelector('#f-n');
   var ok=s.querySelector('#ok');
+  var vis=s.querySelector('#post-vis'), visNote=s.querySelector('#post-vis-note');
+
+  function setPostVisibility(value){
+    chosenVisibility=value;
+    if(!vis)return;
+    Array.prototype.forEach.call(vis.querySelectorAll('.chip'),function(x){
+      var on=x.dataset.v===value;x.classList.toggle('on',on);x.setAttribute('aria-checked',String(on));x.tabIndex=on?0:-1;
+    });
+    visNote.textContent=visibilityDescription(chosenVisibility);
+  }
+  if(vis)Array.prototype.forEach.call(vis.querySelectorAll('.chip'),function(b){
+    b.onclick=function(){
+      if(b.dataset.v==='private'&&tagged.length){
+        setTip('タグ付けを外すと自分だけにできます');return;
+      }
+      setPostVisibility(b.dataset.v);
+    };
+  });
+  if(vis)vis.onkeydown=function(e){
+    if(['ArrowLeft','ArrowRight','Home','End'].indexOf(e.key)<0)return;
+    var buttons=Array.prototype.slice.call(vis.querySelectorAll('.chip'));
+    var i=buttons.indexOf(document.activeElement),next=e.key==='Home'?0:e.key==='End'?buttons.length-1:
+      (i+(e.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;
+    e.preventDefault();buttons[next].focus();buttons[next].click();
+  };
+  setPostVisibility(chosenVisibility);
 
   function sync(){ ok.disabled = nm ? !nm.value.trim() : false; }
   if(nm) nm.oninput=sync;
@@ -280,16 +345,30 @@ function openAdd(p){
     else { tc.style.display='none'; tb.classList.remove('has'); }
   }
   if(tb) tb.onclick=function(){
-    openTagPicker(tagged,function(sel){ tagged=sel; showCount(); });
+    openTagPicker(tagged,function(sel){
+      tagged=sel;showCount();
+      if(tagged.length&&chosenVisibility==='private'){
+        setPostVisibility('friends');
+        setTip('タグ付けしたためフレンド公開にしました');
+      }
+    });
   };
 
-  ok.onclick=function(){
+  ok.onclick=async function(){
+    if(activeSpotScope!==sheetScope){closeSheet();setTip('アカウントが変わったため保存を中止しました');return;}
+    ok.disabled=true;ok.textContent='保存しています…';
     var rec={id:nid(),n:(nm?nm.value.trim():p.known)||p.place||'この場所',
       c:cat,lat:p.lat,lng:p.lng,place:p.place||'',
       tag:ft.value.trim(),d:p.date||new Date().toISOString().slice(0,10),
-      photo:p.photo||'', tagged:tagged.map(function(u){return u.id;})};
-    spots.push(rec); dbPut('spots',rec);
-    if(p.fp) seenAdd(p.fp);
+      photo:p.photo||'', tagged:tagged.map(function(u){return u.id;}),
+      visibility:chosenVisibility,owner_scope:sheetScope};
+    if(!(await dbPut('spots',rec))){
+      ok.disabled=false;ok.textContent='ここに残す';setTip('端末へ保存できませんでした');return;
+    }
+    if(p.fp)await seenAdd(p.fp,sheetScope);
+    if(activeSpotScope!==sheetScope){closeSheet();return;}
+    spots.push(rec);
+    if(typeof ensureLocalThumb==='function')ensureLocalThumb(rec);
     closeSheet(); render(true); setTip('残しました');
     if(fbUser) pushOne(rec).then(function(o){
       if(o&&rec.server_id&&tagged.length){

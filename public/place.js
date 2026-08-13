@@ -6,17 +6,18 @@
    ============================================================ */
 let viewerEl=null;
 
-function openViewer(list, idx, who, place, cap, when, tags){
+function openViewer(list, idx, who, place, cap, when, tags, photoIds){
   closeViewer();
   idx=idx||0;
-  var v=el('<div class="viewer">'+
+  var previousFocus=document.activeElement;
+  var v=el('<div class="viewer" role="dialog" aria-modal="true" aria-label="写真を見る">'+
     '<div class="vw-bar">'+
       '<div class="av"'+(list[0]?' style="background-image:url('+
         JSON.stringify(list[0]).replace(/"/g,'&quot;')+')"':'')+'></div>'+
       '<div class="who"><b>'+esc(who||'じぶん')+'</b><span>'+esc(place||'')+'</span></div>'+
-      '<button class="x">✕</button></div>'+
+      '<button class="x" aria-label="写真を閉じる">✕</button></div>'+
     '<div class="vw-track" id="vwt">'+
-      list.map(function(u){return '<img src="'+u+'">';}).join('')+'</div>'+
+      list.map(function(u,i){return '<img src="'+u+'" alt="写真 '+(i+1)+'">';}).join('')+'</div>'+
     (list.length>1?'<div class="vw-dots" id="vwd">'+
       list.map(function(_,i){return '<i class="'+(i===idx?'on':'')+'"></i>';}).join('')+
       '</div>':'')+
@@ -26,6 +27,10 @@ function openViewer(list, idx, who, place, cap, when, tags){
     '<div class="vw-meta">'+esc(when||'')+(place?('　'+esc(place)):'')+'</div>'+
   '</div>');
   document.body.appendChild(v);
+  v.__previousFocus=previousFocus;v.__blobUrls=[];
+  v.__inert=[];Array.prototype.forEach.call(document.body.children,function(node){
+    if(node!==v&&!node.inert){node.inert=true;v.__inert.push(node);}
+  });
   viewerEl=v;
   void v.offsetWidth; v.classList.add('on');
 
@@ -36,8 +41,35 @@ function openViewer(list, idx, who, place, cap, when, tags){
     var i=Math.round(track.scrollLeft/track.clientWidth);
     Array.prototype.forEach.call(dots.children,function(d,j){
       d.classList.toggle('on',j===i);});
+    loadAround(i);
   };
   v.querySelector('.x').onclick=closeViewer;
+  v.querySelector('.x').focus();
+  v.onkeydown=function(e){
+    if(e.key==='Escape'){e.preventDefault();closeViewer();}
+    if(e.key==='Tab'){e.preventDefault();v.querySelector('.x').focus();}
+  };
+
+  var viewAuth=null,viewLoaded={};
+  function loadAround(center){
+    if(!viewAuth)return;
+    [center-1,center,center+1].forEach(function(i){
+      var id=photoIds&&photoIds[i];if(!id||viewLoaded[i])return;viewLoaded[i]=1;
+      apiAs(viewAuth,'/api/photo/'+encodeURIComponent(id)+'/view').then(function(r){
+        if(!r.ok)throw new Error('view '+r.status);return r.blob();
+      }).then(function(blob){
+        if(viewerEl!==v)return;
+        var u=URL.createObjectURL(blob),im=track.children[i];
+        if(!im){URL.revokeObjectURL(u);return;}
+        v.__blobUrls.push(u);im.src=u;
+      }).catch(function(){delete viewLoaded[i];});
+    });
+  }
+  if(photoIds&&photoIds.length&&fbUser){
+    captureAuth().then(function(auth){
+      if(viewerEl!==v)return;viewAuth=auth;loadAround(idx);
+    }).catch(function(){});
+  }
 
   /* 下へ払うと閉じる */
   var y0=0,dragging=false;
@@ -62,6 +94,9 @@ function openViewer(list, idx, who, place, cap, when, tags){
 function closeViewer(){
   if(!viewerEl)return;
   var v=viewerEl; viewerEl=null;
+  (v.__blobUrls||[]).forEach(function(u){URL.revokeObjectURL(u);});
+  (v.__inert||[]).forEach(function(node){node.inert=false;});
+  if(v.__previousFocus&&v.__previousFocus.isConnected)v.__previousFocus.focus();
   v.style.transform='translateY(100%)';
   setTimeout(function(){ v.remove(); },340);
 }
@@ -73,15 +108,17 @@ const scrim=document.getElementById('scrim');
 let sheetEl=null;
 function closeSheet(){
   if(sheetEl){var s=sheetEl;sheetEl=null;s.classList.remove('on');
+    var onClose=s.__onClose;s.__onClose=null;if(onClose)onClose();
     setTimeout(function(){s.remove();},420);}
   scrim.classList.remove('on');
 }
 scrim.onclick=closeSheet;
-function showSheet(html){
+function showSheet(html,onClose){
   closeSheet();
   var s=el('<div class="sheet">'+html+'</div>');
   document.body.appendChild(s);
-  sheetEl=s; void s.offsetWidth; s.classList.add('on');
+  sheetEl=s;s.__onClose=typeof onClose==='function'?onClose:null;
+  void s.offsetWidth;s.classList.add('on');
 
   /* 上の余白を下へ払うと閉じる */
   var y0=0,drag=false;
@@ -107,8 +144,11 @@ function showSheet(html){
 
 function openPlace(p,mine){
   var mySpots=spots.filter(function(s){return s.n===p.n;});
-  var photos=mySpots.filter(function(s){return s.photo;}).map(function(s){return s.photo;});
-  if(p.photo&&photos.indexOf(p.photo)<0)photos.unshift(p.photo);
+  var photoPlaceholder='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="8" height="8"%3E%3Crect width="8" height="8" fill="%23e9e7e2"/%3E%3C/svg%3E';
+  var photoSpots=mySpots.filter(function(s){return s.photo||s.server_photo_id;});
+  var photos=photoSpots.map(function(s){return s.photo||photoPlaceholder;});
+  var photoIds=photoSpots.map(function(s){return s.server_photo_id||null;});
+  if(p.photo&&photos.indexOf(p.photo)<0){photos.unshift(p.photo);photoIds.unshift(null);}
   var av=photos[0]||'';
   var meta=[p.gname,p.budget,p.place].filter(Boolean).join(' ・ ')||p.c||'';
 
@@ -124,8 +164,8 @@ function openPlace(p,mine){
     // 大小を混ぜて並べる。均一だと単調になる
     html+='<div class="grid2">'+photos.slice(0,9).map(function(u,i){
       var tall=(i%5===0);
-      return '<i class="'+(tall?'tall':'')+'" data-ph="'+i+'" style="background-image:url('+
-        JSON.stringify(u).replace(/"/g,'&quot;')+')"></i>';
+      return '<button type="button" aria-label="写真 '+(i+1)+' を開く" class="'+(tall?'tall':'')+'" data-ph="'+i+'" style="background-image:url('+
+        JSON.stringify(u).replace(/"/g,'&quot;')+')"></button>';
     }).join('')+'</div>';
   }
   var frnd=Object.keys(others).map(function(k){return others[k];})
@@ -139,12 +179,14 @@ function openPlace(p,mine){
   }
   if(mySpots.length){
     html+='<div class="posts">'+mySpots.map(function(s){
-      return '<div class="post"><div class="av2"'+(s.photo?' style="background-image:url('+
-        JSON.stringify(s.photo).replace(/"/g,'&quot;')+')"':'')+'></div>'+
-        '<div class="b"><b>じぶん</b><span>'+esc(s.d||'')+'</span>'+
-        (s.tag?'<p>'+esc(s.tag)+'</p>':'')+'</div></div>';
+      var preview=s.photo_thumb||s.photo;
+      var visText=typeof visibilityLabel==='function'?visibilityLabel(s.visibility||'private'):'自分だけ';
+      return '<div class="post"><div class="av2"'+(preview?' style="background-image:url('+
+        JSON.stringify(preview).replace(/"/g,'&quot;')+')"':'')+'></div>'+
+        '<div class="b"><b>じぶん</b><span>'+esc([s.d||'',visText].filter(Boolean).join(' ・ '))+'</span>'+
+        (s.tag?'<p>'+esc(s.tag)+'</p>':'')+'</div>'+
+        '<button class="post-del" data-del="'+esc(s.id)+'">削除</button></div>';
     }).join('')+'</div>';
-    html+='<div class="pad" style="margin-top:12px"><button class="btn d" id="a-del">この記録を消す</button></div>';
   }else{
     html+='<div class="empty">まだ思い出がありません。<br>写真を1枚、置いてみてください。</div>';
   }
@@ -153,8 +195,8 @@ function openPlace(p,mine){
   Array.prototype.forEach.call(s.querySelectorAll('[data-ph]'),function(e2){
     e2.onclick=function(){
       var i=Number(e2.dataset.ph);
-      var m=mySpots.filter(function(x){return x.photo;})[i]||mySpots[0]||{};
-      openViewer(photos, i, 'じぶん', p.place||p.n, m.tag||'', m.d||'', []);
+      var m=mySpots.filter(function(x){return x.photo||x.server_photo_id;})[i]||mySpots[0]||{};
+      openViewer(photos, i, 'じぶん', p.place||p.n, m.tag||'', m.d||'', [],photoIds);
     };
   });
   s.querySelector('#a-add').onclick=function(){
@@ -168,13 +210,41 @@ function openPlace(p,mine){
     location.href=(ios?'maps://?daddr=':'https://www.google.com/maps/dir/?api=1&destination=')
       +p.lat+','+p.lng;
   };
-  var d=s.querySelector('#a-del');
-  if(d)d.onclick=function(){
-    if(this.dataset.s!=='1'){this.dataset.s='1';this.textContent='本当に消す？（もう一度）';return;}
-    mySpots.forEach(function(x){dbDel('spots',x.id);});
-    spots=spots.filter(function(x){return x.n!==p.n;});
-    closeSheet(); render(true);
-  };
+  var placeScope=activeSpotScope;
+  Array.prototype.forEach.call(s.querySelectorAll('[data-del]'),function(button){
+    button.onclick=function(){
+      var target=mySpots.filter(function(x){return x.id===button.dataset.del;})[0];
+      if(!target)return;
+      var confirm=showSheet('<div class="grab"></div><div class="pad" style="padding-top:20px">'+
+        '<div style="font-size:19px;font-weight:700;margin-bottom:8px">この思い出を削除しますか？</div>'+
+        '<div style="font-size:13px;color:var(--dim);line-height:1.8;margin-bottom:18px">'+
+        esc(target.d||target.n)+'<br>Spotaの端末データとクラウドから削除します。写真ライブラリの元写真は残ります。</div>'+
+        '<button class="btn d" id="delete-confirm">削除する</button>'+
+        '<button class="btn g" id="delete-cancel" style="margin-top:8px">キャンセル</button></div>');
+      confirm.querySelector('#delete-cancel').onclick=closeSheet;
+      confirm.querySelector('#delete-confirm').onclick=async function(){
+        var del=this;if(activeSpotScope!==placeScope){closeSheet();return;}
+        if(target.server_id&&!fbUser){setTip('クラウドから削除するにはログインしてください');return;}
+        del.disabled=true;del.textContent='削除しています…';
+        var tombId=null;
+        try{
+          var auth=target.server_id?await captureAuth():null;
+          if(target.server_id&&(!auth||auth.scope!==placeScope))throw new Error('auth changed');
+          tombId=target.server_id?placeScope+'|'+target.server_id:null;
+          if(tombId&&!(await dbPut('deleted',{id:tombId,server_id:target.server_id,owner_scope:placeScope,state:'pending',at:Date.now()})))throw new Error('tombstone');
+          if(target.server_id){
+            var r=await apiAs(auth,'/api/posts/'+encodeURIComponent(target.server_id),{method:'DELETE'});
+            if(!r.ok&&r.status!==404)throw new Error('delete '+r.status);
+          }
+          if(!(await dbDel('spots',target.id)))throw new Error('local delete');
+          if(activeSpotScope===placeScope)spots=spots.filter(function(x){return x.id!==target.id;});
+          closeSheet();render(true);setTip('削除しました。ほかの端末にも同期されます');
+        }catch(e){
+          del.disabled=false;del.textContent='削除する';setTip('削除できませんでした。通信を確認してください');
+        }
+      };
+    };
+  });
 }
 
 /* ============================================================

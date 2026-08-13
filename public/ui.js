@@ -269,7 +269,7 @@ if(location.search.indexOf('diag=1')>=0) setTimeout(showDiag,1500);
 (async function(){
  try{
   var ok=await openDB();
-  if(ok) spots=(await dbAll('spots')).filter(valid);
+  if(ok) await activateSpotScope(null);
   mark('記録を読んだ');
   if(map.getSource&&map.getSource('mine'))render(true);
   preload();                      // 部品はいちばん最後でいい

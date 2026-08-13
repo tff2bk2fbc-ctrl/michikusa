@@ -308,11 +308,11 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
 .vw-bar .who{flex:1;min-width:0}
 .vw-bar .who b{display:block;font-size:13.5px;font-weight:600}
 .vw-bar .who span{font-size:11px;color:#8E8E96}
-.vw-bar .x{font-size:20px;color:#8E8E96;padding:4px 8px}
+.vw-bar .x{font-size:20px;color:#8E8E96;width:44px;height:44px}
 .vw-track{display:flex;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none}
 .vw-track::-webkit-scrollbar{display:none}
 .vw-track img{flex:0 0 100%;width:100%;scroll-snap-align:center;display:block;
-  object-fit:cover;max-height:74vh}
+  object-fit:contain;height:74vh}
 .vw-dots{display:flex;gap:5px;justify-content:center;padding:11px 0 4px}
 .vw-dots i{width:5px;height:5px;border-radius:50%;background:#3A3A42}
 .vw-dots i.on{background:#F2F2F4}
@@ -325,15 +325,20 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
 
 /* ---------- 一覧（A：大小を混ぜる） ---------- */
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:2px;margin-top:16px}
-.grid2 i{display:block;width:100%;aspect-ratio:1;background-size:cover;
+.grid2 button{display:block;width:100%;aspect-ratio:1;background-size:cover;padding:0;border-radius:0;
   background-position:center;background-color:var(--chip)}
-.grid2 i.tall{grid-row:span 2;aspect-ratio:1/2}
+.grid2 button.tall{grid-row:span 2;aspect-ratio:1/2}
 
 /* ---------- 投稿（C：最短） ---------- */
 .pv{width:100%;aspect-ratio:1;object-fit:cover;display:block;margin:0 -18px 18px;
   width:calc(100% + 36px)}
 .pv-wrap{position:relative;margin:0 -18px 18px}
 .pv-wrap img{width:100%;aspect-ratio:1;object-fit:cover;display:block}
+.post-vis-label{font-size:11.5px;color:var(--dim);margin:4px 0 3px}
+.post-vis{margin-bottom:2px}
+.post-vis .chip{min-height:44px}
+.post-vis-note{font-size:11.5px;color:var(--dim);margin:0 0 14px}
+.post-del{min-width:52px;min-height:44px;padding:0 10px;background:none;color:var(--warn);font-size:12px}
 .pv-btn{position:absolute;bottom:12px;left:12px;width:44px;height:44px;border-radius:50%;
   background:rgba(0,0,0,.45);backdrop-filter:blur(14px);display:flex;
   align-items:center;justify-content:center;color:#fff}

@@ -7,12 +7,12 @@
    ============================================================ */
 
 /* 写真をサーバーへ。原本と表示用を別々に持つ */
-async function uploadPhoto(postId, photoId, dataUrl){
+async function uploadPhoto(auth,postId,photoId,dataUrl){
   try{
     var blob=await (await fetch(dataUrl)).blob();
     var pid=photoId;
     async function put(kind,body,type){
-      var r=await api('/api/photo?post_id='+encodeURIComponent(postId)+
+      var r=await apiAs(auth,'/api/photo?post_id='+encodeURIComponent(postId)+
         '&photo_id='+encodeURIComponent(pid)+'&kind='+kind,
         {method:'PUT',headers:{'Content-Type':type},body:body});
       if(!r.ok)throw new Error('photo upload '+r.status);
@@ -49,13 +49,30 @@ function resize(dataUrl,max,q){
   });
 }
 
+/* 小さな一覧では原本を展開せず、端末内プレビューだけを使う。 */
+async function ensureLocalThumb(rec){
+  if(!rec||!rec.photo||rec.photo_thumb||rec.photo_is_thumb||rec.thumb_building)return;
+  rec.thumb_building=1;
+  try{
+    var th=await resize(rec.photo,512,.82);
+    if(th){rec.photo_thumb=th;delete rec.thumb_building;await dbPut('spots',rec);}
+  }catch(e){}
+  delete rec.thumb_building;
+}
+function prepareSpotThumbs(){
+  spots.filter(function(p){return p&&p.photo&&!p.photo_thumb&&!p.photo_is_thumb;})
+    .slice(-3).forEach(ensureLocalThumb);
+}
+
 /* 1件をサーバーへ送る */
 async function pushOne(rec){
   try{
+    var auth=await captureAuth();
+    if(!auth||rec.owner_scope!==auth.scope)return false;
     // 他人に見せるものは、先に写真を確かめる
     if(rec.photo && rec.visibility!=='private'){
       try{
-        var vr=await api('/api/vision',{method:'POST',
+        var vr=await apiAs(auth,'/api/vision',{method:'POST',
           headers:{'Content-Type':'application/json'},
           body:JSON.stringify({image:String(rec.photo)})});
         if(!vr.ok)throw new Error('moderation unavailable');
@@ -63,11 +80,11 @@ async function pushOne(rec){
         if(!vj || vj.ok!==true)throw new Error('moderation rejected');
       }catch(e){
         rec.visibility='private';
-        setTip('写真を確認できないため、自分だけの記録にしました');
+        if(authIsCurrent(auth))setTip('写真を確認できないため、自分だけの記録にしました');
       }
     }
     if(!rec.server_id){
-      var r=await api('/api/posts',{method:'POST',
+      var r=await apiAs(auth,'/api/posts',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({
           title:rec.n, category:rec.c, tag:rec.tag||'', place_name:rec.place||'',
@@ -84,7 +101,7 @@ async function pushOne(rec){
     if(rec.photo){
       rec.server_photo_id=rec.server_photo_id||nid();
       await dbPut('spots',rec);
-      if(!(await uploadPhoto(rec.server_id,rec.server_photo_id,rec.photo)))return false;
+      if(!(await uploadPhoto(auth,rec.server_id,rec.server_photo_id,rec.photo)))return false;
     }
     rec.synced=1;
     await dbPut('spots',rec);
@@ -96,7 +113,8 @@ async function pushOne(rec){
 let syncing=false;
 async function syncUp(){
   if(!fbUser||syncing)return;
-  var todo=spots.filter(function(s){return !s.synced;});
+  var startedScope=activeSpotScope;
+  var todo=spots.filter(function(s){return !s.synced&&s.owner_scope===activeSpotScope;});
   if(!todo.length)return;
   syncing=true;
   setTip('思い出をサーバーへ預けています…（'+todo.length+'件）');
@@ -105,29 +123,143 @@ async function syncUp(){
   syncing=false;
   setTip(ok?(ok+'件を預けました'):'預けられませんでした');
   render(true);
+  if(fbUser&&activeSpotScope!==startedScope)setTimeout(syncUp,0);
 }
 
 /* サーバーから取り込む。他人のぶんも含む */
 let fetching=false;
+var restoreQueue=[], restoring=0;
+function blobDataUrl(blob){return new Promise(function(resolve,reject){
+  var rd=new FileReader();rd.onload=function(){resolve(rd.result);};rd.onerror=reject;rd.readAsDataURL(blob);
+});}
+function queuePhotoRestore(rec,photoId,auth){
+  if(!photoId||rec.photo||rec.photo_restoring||(rec.photo_retry_at||0)>Date.now())return;
+  rec.photo_restoring=1;restoreQueue.push({rec:rec,id:photoId,auth:auth});runPhotoRestore();
+}
+function runPhotoRestore(){
+  while(restoring<2&&restoreQueue.length){
+    var job=restoreQueue.shift();restoring++;
+    (async function(j){try{
+      var r=await apiAs(j.auth,'/api/photo/'+encodeURIComponent(j.id)+'/thumb');
+      if(!r.ok)throw new Error('photo '+r.status);
+      var data=await blobDataUrl(await r.blob());
+      if(j.rec.owner_scope!==activeSpotScope)return;
+      j.rec.photo=data;j.rec.photo_is_thumb=1;j.rec.server_photo_id=j.id;delete j.rec.photo_restoring;
+      await dbPut('spots',j.rec);render(true);
+    }catch(e){
+      delete j.rec.photo_restoring;j.rec.photo_retry_at=Date.now()+10*60*1000;dbPut('spots',j.rec);
+    }finally{restoring--;runPhotoRestore();}})(job);
+  }
+}
+async function syncDeletions(auth){
+  if(!auth)return {};
+  var metaKey='delete_cursor|'+auth.scope;
+  var meta=await dbGet('meta',metaKey),cursor=meta&&meta.v||'0:',removed={};
+  for(var page=0;page<5;page++){
+    var r=await apiAs(auth,'/api/posts/deletions?cursor='+encodeURIComponent(cursor));
+    if(!r.ok)break;
+    var j=await r.json();
+    for(var i=0;i<(j.deleted||[]).length;i++){
+      var row=j.deleted[i],tombId=auth.scope+'|'+row.id;
+      await dbPut('deleted',{id:tombId,server_id:row.id,owner_scope:auth.scope,state:'confirmed',at:row.deleted_at});
+      var local=spots.filter(function(x){return x.server_id===row.id&&x.owner_scope===auth.scope;});
+      for(var q=0;q<local.length;q++)await dbDel('spots',local[q].id);
+      removed[row.id]=1;
+    }
+    cursor=j.cursor||cursor;await dbPut('meta',{k:metaKey,v:cursor});
+    if(!j.has_more)break;
+  }
+  if(Object.keys(removed).length&&authIsCurrent(auth)){
+    spots=spots.filter(function(x){return !removed[x.server_id];});render(true);
+  }
+  return removed;
+}
+async function retryPendingDeletes(auth){
+  var all=await dbAll('deleted');
+  var pending=all.filter(function(t){
+    return t.owner_scope===auth.scope&&t.state==='pending'&&(t.retry_at||0)<=Date.now();
+  });
+  for(var i=0;i<pending.length;i++){
+    var t=pending[i];
+    try{
+      var r=await apiAs(auth,'/api/posts/'+encodeURIComponent(t.server_id),{method:'DELETE'});
+      if(!r.ok&&r.status!==404)throw new Error('delete '+r.status);
+      var records=(await dbAll('spots')).filter(function(p){return p.owner_scope===auth.scope&&p.server_id===t.server_id;});
+      for(var q=0;q<records.length;q++)await dbDel('spots',records[q].id);
+      t.state='confirmed';await dbPut('deleted',t);
+    }catch(e){
+      t.retry_at=Date.now()+10*60*1000;t.tries=(t.tries||0)+1;await dbPut('deleted',t);
+    }
+  }
+}
+async function syncOwnArchive(auth){
+  if(!authIsCurrent(auth))return;
+  var key='archive_cursor|'+auth.scope,initial='9007199254740991:zzzzzzzz';
+  var meta=await dbGet('meta',key),cursor=meta&&meta.v||initial,hasMore=false,failed=false,added=0,photoLoads=0;
+  for(var page=0;page<5&&authIsCurrent(auth);page++){
+    var r=await apiAs(auth,'/api/posts/mine?cursor='+encodeURIComponent(cursor));
+    if(!r.ok){failed=true;break;}
+    var j=await r.json();hasMore=!!j.has_more;
+    var tombstones={};(await dbAll('deleted')).forEach(function(t){
+      if(t.owner_scope===auth.scope)tombstones[t.server_id]=1;
+    });
+    for(var i=0;i<(j.posts||[]).length;i++){
+      var p=j.posts[i];if(tombstones[p.id])continue;
+      var existing=spots.filter(function(x){return x.server_id===p.id&&x.owner_scope===auth.scope;})[0];
+      if(existing){
+        if(!existing.photo&&p.photo_id&&photoLoads<3){queuePhotoRestore(existing,p.photo_id,auth);photoLoads++;}
+        continue;
+      }
+      var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
+        tag:p.tag||'',place:p.place_name||'',lat:p.lat,lng:p.lng,
+        d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
+        photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null,owner_scope:auth.scope};
+      if(await dbPut('spots',rec)){
+        if(authIsCurrent(auth))spots.push(rec);
+        if(p.photo_id&&photoLoads<3){queuePhotoRestore(rec,p.photo_id,auth);photoLoads++;}
+        added++;
+      }
+    }
+    cursor=j.cursor||cursor;await dbPut('meta',{k:key,v:cursor});
+    if(!hasMore)break;
+  }
+  if(added&&authIsCurrent(auth))render(true);
+  if(failed)return;
+  if(!hasMore){await dbPut('meta',{k:key,v:initial});return;}
+  if(authIsCurrent(auth))setTimeout(function(){syncOwnArchive(auth);},1500);
+}
 async function syncDown(){
   if(!fbUser||fetching)return;
   fetching=true;
+  var auth=null,startedScope=activeSpotScope,startedUid=fbUser.uid;
   try{
+    auth=await captureAuth();if(!auth)return;
+    startedScope=auth.scope;startedUid=auth.uid;
+    await syncDeletions(auth);
     var b=map.getBounds();
-    var r=await api('/api/posts?s='+b.getSouth()+'&w='+b.getWest()+
-      '&n='+b.getNorth()+'&e='+b.getEast()+'&limit=300');
+    var r=await apiAs(auth,'/api/posts?s='+b.getSouth()+'&w='+b.getWest()+
+      '&n='+b.getNorth()+'&e='+b.getEast()+'&limit=100');
     if(!r.ok)return;
     var j=await r.json();
-    var mineIds={}; spots.forEach(function(s){ if(s.server_id)mineIds[s.server_id]=1; });
+    if(!fbUser||fbUser.uid!==startedUid||activeSpotScope!==startedScope)return;
+    var tombstones={};(await dbAll('deleted')).forEach(function(t){
+      if(t.owner_scope===auth.scope)tombstones[t.server_id]=1;
+    });
+    var mineIds={}; spots.forEach(function(s){ if(s.server_id)mineIds[s.server_id]=s; });
     var added=0;
     (j.posts||[]).forEach(function(p){
       if(p.mine){
-        if(mineIds[p.id])return;                 // すでに手元にある
+        if(tombstones[p.id])return;
+        if(mineIds[p.id]){
+          if(!mineIds[p.id].photo&&p.photo_id)queuePhotoRestore(mineIds[p.id],p.photo_id,auth);
+          return;
+        }
         var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
           tag:p.tag||'',place:p.place_name||'',lat:p.lat,lng:p.lng,
           d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
-          photo:'',visibility:p.visibility};
-        spots.push(rec); dbPut('spots',rec); added++;
+          photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null};
+        rec.owner_scope=activeSpotScope;
+        spots.push(rec); dbPut('spots',rec);if(p.photo_id)queuePhotoRestore(rec,p.photo_id,auth);added++;
       }else{
         // 他人の思い出。地図には出すが端末には残さない
         var k=p.id;
@@ -139,7 +271,11 @@ async function syncDown(){
       }
     });
     if(added)render(true);
-  }catch(e){}finally{ fetching=false; }
+    await syncDeletions(auth);
+  }catch(e){}finally{
+    fetching=false;
+    if(fbUser&&(fbUser.uid!==startedUid||activeSpotScope!==startedScope))setTimeout(syncDown,0);
+  }
 }
 let others={};
 
@@ -154,16 +290,18 @@ let others={};
 async function checkTags(){
   if(!fbUser)return;
   try{
-    var r=await api('/api/tags');
+    var auth=await captureAuth();if(!auth)return;
+    var r=await apiAs(auth,'/api/tags');
     if(!r.ok)return;
     var j=await r.json();
+    if(!authIsCurrent(auth))return;
     var t=(j.tags||[])[0];
     if(!t)return;
-    showInbox(t);
+    showInbox(t,auth);
   }catch(e){}
 }
 
-function showInbox(t){
+function showInbox(t,auth){
   var box=document.getElementById('inbox');
   if(!box){
     box=el('<div class="inbox" id="inbox"></div>');
@@ -178,7 +316,7 @@ function showInbox(t){
   box.classList.add('on');
 
   if(t.photo_id){
-    api('/api/photo/'+encodeURIComponent(t.photo_id)+'/thumb')
+    apiAs(auth,'/api/photo/'+encodeURIComponent(t.photo_id)+'/thumb')
       .then(function(r){if(!r.ok)throw new Error('photo '+r.status);return r.blob();})
       .then(function(blob){
         var im=box.querySelector('#ib-img');if(!im)return;
@@ -187,9 +325,10 @@ function showInbox(t){
   }
 
   async function reply(take){
+    if(!authIsCurrent(auth)){box.remove();return;}
     box.classList.remove('on');
     try{
-      var r=await api('/api/tags/accept',{method:'POST',
+      var r=await apiAs(auth,'/api/tags/accept',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({post_id:t.post_id, take:take})});
       var j=await r.json();
@@ -213,6 +352,58 @@ const FB={apiKey:"AIzaSyAJFFjRk6zvAA_L9-1O7Y7Q43Yw86QQtxM",
   storageBucket:"michikusa-e34df.firebasestorage.app",
   messagingSenderId:"1058235183759",appId:"1:1058235183759:web:8d0741be89ad707c07b6fa"};
 let fbUser=null,meP=null;
+let authChangeSeq=0;
+
+/* 旧版の未同期データは、自動で新しいアカウントへ送らず本人に確認する。 */
+async function migrateOwnedLegacy(auth){
+  var all=await dbAll('spots');
+  var legacy=all.filter(function(p){return !p.owner_scope&&p.synced&&p.server_id;});
+  var migrated=0;
+  for(var at=0;at<legacy.length;at+=99){
+    var batch=legacy.slice(at,at+99),ids=batch.map(function(p){return p.server_id;});
+    try{
+      var r=await apiAs(auth,'/api/posts/ownership',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids})});
+      if(!r.ok)continue;
+      var j=await r.json(),owned={};(j.ids||[]).forEach(function(id){owned[id]=1;});
+      for(var i=0;i<batch.length;i++)if(owned[batch[i].server_id]){
+        batch[i].owner_scope=auth.scope;if(await dbPut('spots',batch[i]))migrated++;
+      }
+    }catch(e){}
+  }
+  if(migrated&&authIsCurrent(auth))await activateSpotScope(auth.user);
+}
+
+async function offerLegacySpots(user,auth){
+  var all=await dbAll('spots');
+  var candidates=all.filter(function(p){
+    return valid(p)&&!p.synced&&(!p.owner_scope||p.owner_scope===GUEST_SCOPE);
+  });
+  if(!candidates.length)return false;
+  return new Promise(function(resolve){
+    var settled=false;
+    function finish(value){if(settled)return;settled=true;resolve(value);}
+    var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:20px">'+
+      '<div style="font-size:19px;font-weight:700;margin-bottom:8px">この端末の思い出</div>'+
+      '<div style="font-size:13px;color:var(--dim);line-height:1.8;margin-bottom:18px">'+
+      candidates.length+'件の未保存の思い出があります。現在のアカウントへ取り込みますか？</div>'+
+      '<button class="btn" id="legacy-yes">このアカウントへ取り込む</button>'+
+      '<button class="btn g" id="legacy-no" style="margin-top:8px">あとで</button></div>',
+      function(){finish(false);});
+    s.querySelector('#legacy-no').onclick=function(){finish(false);closeSheet();};
+    s.querySelector('#legacy-yes').onclick=async function(){
+      var button=this;button.disabled=true;button.textContent='取り込んでいます…';
+      if(!authIsCurrent(auth)){finish(false);closeSheet();return;}
+      var moved=0;
+      for(var i=0;i<candidates.length;i++){
+        candidates[i].owner_scope=spotScope(user);candidates[i].synced=0;
+        if(await dbPut('spots',candidates[i]))moved++;
+      }
+      finish(true);closeSheet();await activateSpotScope(user);
+      setTip(moved===candidates.length?moved+'件を取り込みました':moved+'件を取り込み、'+(candidates.length-moved)+'件は失敗しました');
+    };
+  });
+}
 
 /* 部品が用意できてから、ログインの仕組みを立ち上げる */
 window.initAuth=function(){
@@ -223,12 +414,26 @@ window.initAuth=function(){
     firebase.initializeApp(FB);
     try{ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){}
 
-    firebase.auth().onAuthStateChanged(function(u){
-      fbUser=u; var b=document.getElementById('btn-me');
+    firebase.auth().onAuthStateChanged(async function(u){
+      var authSeq=++authChangeSeq;
+      fbUser=u;meP=null;var b=document.getElementById('btn-me');
       if(!b)return;
+      await activateSpotScope(u);
+      if(authSeq!==authChangeSeq)return;
       if(u){
         b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
-        loadMe().then(function(){ syncUp(); syncDown(); askHandle(); setupPush(); checkTags(); });
+        var auth=await captureAuth(u);
+        if(!auth||authSeq!==authChangeSeq)return;
+        await retryPendingDeletes(auth);
+        if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
+        await activateSpotScope(u);
+        var profile=await loadMe(auth);
+        if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
+        meP=profile;
+        await migrateOwnedLegacy(auth);
+        await offerLegacySpots(u,auth);
+        if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
+        syncUp();syncDown().then(function(){syncOwnArchive(auth);});askHandle();setupPush();checkTags();
       }else{
         b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>';
         meP=null;
@@ -248,7 +453,23 @@ async function api(path,opt){
   if(fbUser)h['Authorization']='Bearer '+(await fbUser.getIdToken());
   return fetch(SERVER+path,Object.assign({},opt,{headers:h}));
 }
-async function loadMe(){try{var r=await api('/api/me');if(r.ok)meP=await r.json();}catch(e){}}
+async function captureAuth(user){
+  var u=user||fbUser;if(!u)return null;
+  var token=await u.getIdToken();
+  return {user:u,uid:u.uid,token:token,scope:spotScope(u),seq:authChangeSeq};
+}
+function authIsCurrent(auth){
+  return !!(auth&&fbUser&&fbUser.uid===auth.uid&&activeSpotScope===auth.scope&&auth.seq===authChangeSeq);
+}
+function apiAs(auth,path,opt){
+  if(!auth||!auth.token)return Promise.reject(new Error('auth context required'));
+  opt=opt||{};var h=Object.assign({},opt.headers||{});h.Authorization='Bearer '+auth.token;
+  return fetch(SERVER+path,Object.assign({},opt,{headers:h}));
+}
+async function loadMe(auth){
+  try{var r=await apiAs(auth,'/api/me');if(r.ok)return await r.json();}catch(e){}
+  return null;
+}
 document.getElementById('btn-me').onclick=async function(){
   if(typeof firebase==='undefined'){
     setTip('準備しています…');
@@ -314,9 +535,11 @@ async function askHandle(){
     var v=inp.value.trim();
     ok.disabled=true; ok.textContent='確かめています…';
     try{
-      var r=await api('/api/me',{method:'PATCH',
+      var auth=await captureAuth();if(!auth)throw new Error('auth required');
+      var r=await apiAs(auth,'/api/me',{method:'PATCH',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:v})});
       var j=await r.json().catch(function(){return {};});
+      if(!authIsCurrent(auth)){askingHandle=false;return;}
       if(r.status===409){
         msg.textContent=(j.code==='taken')
           ? 'そのIDは既に使われています。別のものを入れてください'
@@ -392,6 +615,7 @@ function doLogin(){
 function doLogout(){
   var FA=plugin('FirebaseAuthentication');
   if(isApp&&FA){ try{ FA.signOut(); }catch(e){} }
+  fbUser=null;meP=null;activateSpotScope(null);
   try{ firebase.auth().signOut(); }catch(e){}
   setTip('ログアウトしました');
 }
@@ -413,10 +637,12 @@ function openMe(){
 
   var st=(meP&&meP.settings)||{};
   var unsynced=spots.filter(function(s){return !s.synced;}).length;
-  var profilePhotos=spots.filter(function(p){return p&&p.photo;}).slice(-3).reverse();
+  var profilePhotos=spots.filter(function(p){
+    return p&&(p.photo_thumb||(p.photo&&p.photo_is_thumb));
+  }).slice(-3).reverse();
   var profileStrip=[0,1,2].map(function(i){
     var p=profilePhotos[i];
-    return p?('<img src="'+esc(p.photo)+'" alt="">'):'<i></i>';
+    return p?('<img src="'+esc(p.photo_thumb||p.photo)+'" alt="">'):'<i></i>';
   }).join('');
   html+='<div class="me-profile">'+
     '<div class="me-head"><div><div class="me-title">'+esc(fbUser.displayName||'プロフィール')+'</div>'+
@@ -440,9 +666,24 @@ function openMe(){
       '<button class="chip '+(night?'on':'')+'" data-v="dark" role="radio" aria-checked="'+night+'">ダーク</button></div>'+
 
     '<div class="me-section">新しい思い出をだれに見せるか</div>'+
-    '<div class="chips" id="seg-vis">'+
+    '<div class="chips" id="seg-vis" role="radiogroup" aria-label="新しい思い出の公開範囲">'+
       [['private','自分だけ'],['friends','フレンド'],['public','みんな']].map(function(o){
-        return '<button class="chip '+(st.default_visibility===o[0]?'on':'')+'" data-v="'+o[0]+'">'+o[1]+'</button>';
+        var on=(st.default_visibility||'private')===o[0];
+        return '<button class="chip '+(on?'on':'')+'" data-v="'+o[0]+'" role="radio" aria-checked="'+on+'">'+o[1]+'</button>';
+      }).join('')+'</div>'+
+
+    '<div class="me-section">フレンドに見せる位置</div>'+
+    '<div class="chips" id="seg-fprec" role="radiogroup" aria-label="フレンドへ共有する位置精度">'+
+      [['exact','正確'],['approx','約500m'],['area','約2km'],['hidden','位置なし']].map(function(o){
+        var on=(st.friend_precision||'approx')===o[0];
+        return '<button class="chip '+(on?'on':'')+'" data-v="'+o[0]+'" role="radio" aria-checked="'+on+'">'+o[1]+'</button>';
+      }).join('')+'</div>'+
+
+    '<div class="me-section">みんなに見せる位置</div>'+
+    '<div class="chips" id="seg-pprec" role="radiogroup" aria-label="一般公開する位置精度">'+
+      [['exact','正確'],['approx','約500m'],['area','約2km'],['hidden','位置なし']].map(function(o){
+        var on=(st.public_precision||'area')===o[0];
+        return '<button class="chip '+(on?'on':'')+'" data-v="'+o[0]+'" role="radio" aria-checked="'+on+'">'+o[1]+'</button>';
       }).join('')+'</div>'+
 
     '<div class="me-section">郵便番号から住所を調べる</div>'+
@@ -522,19 +763,41 @@ function openMe(){
     };
   });
 
-  [['seg-vis','default_visibility']].forEach(function(pair){
+  [['seg-vis','default_visibility'],['seg-fprec','friend_precision'],['seg-pprec','public_precision']].forEach(function(pair){
     var box=s.querySelector('#'+pair[0]); if(!box)return;
     Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(b){
+      b.tabIndex=b.classList.contains('on')?0:-1;
       b.onclick=async function(){
-        Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(x){x.classList.remove('on');});
-        b.classList.add('on');
+        var prior=(meP&&meP.settings&&meP.settings[pair[1]])||'private';
+        Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(x){x.disabled=true;});
         var body={}; body[pair[1]]=b.dataset.v;
-        await api('/api/me',{method:'PATCH',
-          headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-        if(meP&&meP.settings)meP.settings[pair[1]]=b.dataset.v;
-        setTip('設定を保存しました');
+        try{
+          var auth=await captureAuth();if(!auth)throw new Error('auth required');
+          var r=await apiAs(auth,'/api/me',{method:'PATCH',
+            headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+          if(!r.ok)throw new Error('save '+r.status);
+          if(!authIsCurrent(auth))return;
+          if(meP&&meP.settings)meP.settings[pair[1]]=b.dataset.v;
+          Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(x){
+            var on=x===b;x.classList.toggle('on',on);x.setAttribute('aria-checked',String(on));x.tabIndex=on?0:-1;
+          });
+          setTip('設定を保存しました');
+        }catch(e){
+          Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(x){
+            var on=x.dataset.v===prior;x.classList.toggle('on',on);x.setAttribute('aria-checked',String(on));x.tabIndex=on?0:-1;
+          });
+          setTip('保存できませんでした。設定は変更していません');
+        }
+        Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(x){x.disabled=false;});
       };
     });
+    box.onkeydown=function(e){
+      if(['ArrowLeft','ArrowRight','Home','End'].indexOf(e.key)<0)return;
+      var buttons=Array.prototype.slice.call(box.querySelectorAll('.chip'));
+      var i=buttons.indexOf(document.activeElement),next=e.key==='Home'?0:e.key==='End'?buttons.length-1:
+        (i+(e.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;
+      e.preventDefault();buttons[next].focus();buttons[next].click();
+    };
   });
 }
 
@@ -585,13 +848,13 @@ function openMyQR(){
     '<div class="qr-actions"><button class="btn" id="share">リンクを送る</button>'+
     '<button class="btn" id="copy">コピー</button></div>'+
     '<button class="btn g" id="x" style="position:relative;margin-top:10px">とじる</button></div>');
-  var photos=spots.filter(function(p){return p.photo;}).slice(-12).reverse();
+  var photos=spots.filter(function(p){return p.photo_thumb||p.photo;}).slice(-12).reverse();
   var collageTiles=Array.prototype.slice.call(s.querySelectorAll('.qr-collage i'));
   (async function(){
     // 原寸を並べず、小さな背景用画像を1枚ずつ作ってメモリの山を避ける。
     for(var i=0;i<photos.length&&i<collageTiles.length;i++){
       if(!collageTiles[i].isConnected)return;
-      var thumb=await resize(photos[i].photo,260,.68);
+      var thumb=await resize(photos[i].photo_thumb||photos[i].photo,260,.68);
       if(!thumb)continue;
       var im=document.createElement('img'); im.src=thumb; im.alt='';
       collageTiles[i].replaceChildren(im);
@@ -617,8 +880,10 @@ async function openFriendMap(hd){
   if(!fbUser){setTip('先にログインしてください');return;}
   setTip('@'+hd+' の地図を読み込んでいます…');
   try{
-    var r=await api('/api/posts?user='+encodeURIComponent(hd)+'&limit=300');
+    var auth=await captureAuth();if(!auth)throw new Error('ログインが必要です');
+    var r=await apiAs(auth,'/api/posts?user='+encodeURIComponent(hd)+'&limit=100');
     var j=await r.json();
+    if(!authIsCurrent(auth))return;
     if(!r.ok)throw new Error(j.error||'地図を開けませんでした');
     var rows=(j.posts||[]).filter(function(p){return !p.mine;});
     if(!rows.length){setTip('表示できる思い出はまだありません');return;}
@@ -689,7 +954,7 @@ async function openFriends(){
     '<input class="fld" id="f-add" placeholder="相手のID" style="margin:0">'+
     '<button class="btn" id="b-add" style="width:auto;padding:0 18px;margin:0">申請</button></div>'+
     '<div style="font-size:11.5px;color:var(--dim);margin-bottom:18px;line-height:1.7">'+
-    'お互いが承認すると、正確な場所つきで思い出が見えるようになります。</div>';
+    'お互いが承認すると、相手が設定した位置精度で思い出が見えるようになります。</div>';
 
   if((j.incoming||[]).length){
     html+='<div class="lab">届いている申請</div>';

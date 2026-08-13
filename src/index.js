@@ -59,7 +59,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-32"
+          build: "api-33"
         }));
       }
       if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
@@ -92,6 +92,12 @@ export default {
 
       if (p === "/api/posts" && request.method === "GET")  return respond(await listPosts(url, env, me));
       if (p === "/api/posts" && request.method === "POST") return respond(await createPost(request, env, me));
+      if (p === "/api/posts/ownership" && request.method === "POST")
+        return respond(await ownedPostIds(request, env, me));
+      if (p === "/api/posts/deletions" && request.method === "GET")
+        return respond(await deletedPostIds(url, env, me));
+      if (p === "/api/posts/mine" && request.method === "GET")
+        return respond(await ownPostArchive(url, env, me));
       if (p.startsWith("/api/posts/") && request.method === "DELETE")
         return respond(await deletePost(p.split("/")[3], env, me));
       if (p.startsWith("/api/posts/") && request.method === "PATCH")
@@ -115,7 +121,7 @@ export default {
   },
 
   async scheduled(_event, env, ctx) {
-    ctx.waitUntil(cleanupTransientConfig(env));
+    ctx.waitUntil(Promise.all([cleanupTransientConfig(env), cleanupDeletedPhotos(env)]));
   }
 };
 
@@ -424,9 +430,80 @@ async function patchPost(id, request, env, me) {
 }
 
 async function deletePost(id, env, me) {
-  await env.DB.prepare("UPDATE posts SET deleted_at=? WHERE id=? AND user_id=?")
+  const result = await env.DB.prepare("UPDATE posts SET deleted_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL")
     .bind(Date.now(), id, me.id).run();
+  if (!result.meta || result.meta.changes !== 1) return json({ error: "見つかりません" }, 404);
   return json({ ok: true });
+}
+
+async function ownedPostIds(request, env, me) {
+  const parsed = await limitedJson(request, 12_000);
+  if (parsed.error) return parsed.error;
+  const ids = Array.isArray(parsed.value.ids)
+    ? Array.from(new Set(parsed.value.ids.map(String).filter(id => /^[A-Za-z0-9_-]{8,80}$/.test(id)))).slice(0, 99)
+    : [];
+  if (!ids.length) return json({ ids: [] });
+  if (!(await userLimit(env, me.id, "ownership-hour", hourKey(), 20))) {
+    return json({ error: "確認回数が多すぎます" }, 429);
+  }
+  const marks = ids.map(() => "?").join(",");
+  const rows = await env.DB.prepare(
+    `SELECT id FROM posts WHERE user_id=? AND id IN (${marks})`
+  ).bind(me.id, ...ids).all();
+  return json({ ids: (rows.results || []).map(row => row.id) });
+}
+
+async function deletedPostIds(url, env, me) {
+  const raw = String(url.searchParams.get("cursor") || "0:");
+  const match = /^(\d{1,16}):(.*)$/.exec(raw);
+  if (!match) return json({ error: "カーソルが不正です" }, 400);
+  const time = Number(match[1]), id = match[2];
+  if (!Number.isSafeInteger(time) || !/^[A-Za-z0-9_-]{0,80}$/.test(id)) {
+    return json({ error: "カーソルが不正です" }, 400);
+  }
+  const rows = await env.DB.prepare(`
+    SELECT id,deleted_at FROM posts
+     WHERE user_id=?1 AND deleted_at IS NOT NULL
+       AND (deleted_at>?2 OR (deleted_at=?2 AND id>?3))
+     ORDER BY deleted_at,id LIMIT 100
+  `).bind(me.id, time, id).all();
+  const out = rows.results || [];
+  const last = out[out.length - 1];
+  return json({
+    deleted: out,
+    cursor: last ? `${last.deleted_at}:${last.id}` : raw,
+    has_more: out.length === 100
+  });
+}
+
+async function ownPostArchive(url, env, me) {
+  const raw = String(url.searchParams.get("cursor") || "9007199254740991:zzzzzzzz");
+  const match = /^(\d{1,16}):(.*)$/.exec(raw);
+  if (!match) return json({ error: "カーソルが不正です" }, 400);
+  const time = Number(match[1]), id = match[2];
+  if (!Number.isSafeInteger(time) || !/^[A-Za-z0-9_-]{0,80}$/.test(id)) {
+    return json({ error: "カーソルが不正です" }, 400);
+  }
+  if (!(await userLimit(env, me.id, "archive-read-hour", hourKey(), 60))) {
+    return json({ error: "復元回数が多すぎます" }, 429);
+  }
+  const rows = await env.DB.prepare(`
+    SELECT p.id,p.title,p.category,p.tag,p.place_name,p.taken_at,p.created_at,
+           p.visibility,p.lat,p.lng,
+           (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id
+      FROM posts p
+     WHERE p.user_id=?1 AND p.deleted_at IS NULL
+       AND (p.created_at<?2 OR (p.created_at=?2 AND p.id<?3))
+     ORDER BY p.created_at DESC,p.id DESC LIMIT 100
+  `).bind(me.id, time, id).all();
+  const out = rows.results || [];
+  const last = out[out.length - 1];
+  return json({
+    posts: out,
+    cursor: last ? `${last.created_at}:${last.id}` : raw,
+    has_more: out.length === 100
+  });
 }
 
 /**
@@ -437,14 +514,23 @@ async function listPosts(url, env, me) {
   const targetHandle = String(url.searchParams.get("user") || "").trim();
   if (targetHandle && !/^[a-zA-Z0-9_.-]{3,30}$/.test(targetHandle))
     return json({ error: "ユーザーIDが不正です" }, 400);
-  const s = targetHandle ? -90 : Number(url.searchParams.get("s"));
-  const w = targetHandle ? -180 : Number(url.searchParams.get("w"));
-  const n = targetHandle ? 90 : Number(url.searchParams.get("n"));
-  const e = targetHandle ? 180 : Number(url.searchParams.get("e"));
+  if (targetHandle) return listProfilePosts(targetHandle, url, env, me);
+  const s = Number(url.searchParams.get("s"));
+  const w = Number(url.searchParams.get("w"));
+  const n = Number(url.searchParams.get("n"));
+  const e = Number(url.searchParams.get("e"));
   if (![s, w, n, e].every(isFinite)) return json({ error: "範囲の指定が不正です" }, 400);
+  if (s < -90 || n > 90 || w < -180 || e > 180 || s >= n || w >= e || n - s > 20 || e - w > 20) {
+    return json({ error: "地図の範囲が広すぎるか不正です" }, 400);
+  }
+  if (!(await userLimit(env, me.id, "posts-read-hour", hourKey(), 600))) {
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  }
 
   const now = Date.now();
-  const limit = Math.min(300, Number(url.searchParams.get("limit") || 300));
+  const requestedLimit = Number(url.searchParams.get("limit") || 100);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(100, Math.trunc(requestedLimit))) : 100;
 
   const rows = await env.DB.prepare(`
     WITH friend AS (
@@ -455,6 +541,10 @@ async function listPosts(url, env, me) {
     SELECT
       p.id, p.user_id, p.title, p.category, p.tag, p.place_name,
       p.taken_at, p.created_at, p.visibility,
+      p.lat, p.lng, p.approx_lat, p.approx_lng, p.area_lat, p.area_lng,
+      p.fixed_lat, p.fixed_lng,
+      (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+        ORDER BY ph.sort_order, ph.created_at LIMIT 1) AS photo_id,
       u.display_name, u.handle,
       (p.user_id = ?1) AS mine,
       CASE
@@ -480,10 +570,9 @@ async function listPosts(url, env, me) {
          WHERE (b.blocker_id=?1 AND b.blocked_id=p.user_id)
             OR (b.blocker_id=p.user_id AND b.blocked_id=?1)
       )
-      AND (?8='' OR u.handle=?8)
     ORDER BY p.taken_at DESC, p.created_at DESC
     LIMIT ?7
-  `).bind(me.id, s - 0.05, n + 0.05, w - 0.05, e + 0.05, now, limit, targetHandle).all();
+  `).bind(me.id, s - 0.05, n + 0.05, w - 0.05, e + 0.05, now, limit).all();
 
   // 精度に応じた座標を、別クエリで安全に付け直す
   const out = [];
@@ -494,6 +583,7 @@ async function listPosts(url, env, me) {
       id: r.id, title: r.title, category: r.category, tag: r.tag,
       place_name: r.place_name, taken_at: r.taken_at,
       visibility: r.visibility, mine: !!r.mine,
+      photo_id: r.photo_id || null,
       author: { id: r.user_id, name: r.display_name, handle: r.handle },
       lat: c[0], lng: c[1], precision: c[2]
     });
@@ -501,16 +591,52 @@ async function listPosts(url, env, me) {
   return json({ count: out.length, posts: out });
 }
 
+async function listProfilePosts(handle, url, env, me) {
+  if (!(await userLimit(env, me.id, "profile-read-hour", hourKey(), 120))) {
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  }
+  const requested = Number(url.searchParams.get("limit") || 100);
+  const limit = Number.isFinite(requested) ? Math.max(1, Math.min(100, Math.trunc(requested))) : 100;
+  const now = Date.now();
+  const rows = await env.DB.prepare(`
+    WITH friend AS (
+      SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END AS uid
+        FROM friendships WHERE status='accepted' AND (requester_id=?1 OR addressee_id=?1)
+    )
+    SELECT p.id,p.user_id,p.title,p.category,p.tag,p.place_name,p.taken_at,p.created_at,
+           p.visibility,p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
+           p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
+           CASE WHEN p.user_id=?1 THEN 'exact'
+                WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
+                WHEN p.user_id IN (SELECT uid FROM friend) THEN u.friend_precision
+                ELSE u.public_precision END AS prec
+      FROM posts p JOIN users u ON u.id=p.user_id
+     WHERE u.handle=?2 AND p.deleted_at IS NULL
+       AND (p.user_id=?1 OR (p.publish_at<=?3 AND
+            (p.visibility='public' OR (p.visibility='friends' AND p.user_id IN (SELECT uid FROM friend)))))
+       AND NOT EXISTS (
+         SELECT 1 FROM blocks b
+          WHERE (b.blocker_id=?1 AND b.blocked_id=p.user_id)
+             OR (b.blocker_id=p.user_id AND b.blocked_id=?1)
+       )
+     ORDER BY p.taken_at DESC,p.created_at DESC LIMIT ?4
+  `).bind(me.id, handle, now, limit).all();
+  const out=[];
+  for(const r of rows.results||[]){
+    const c=await coordsFor(env,r);if(!c)continue;
+    out.push({id:r.id,title:r.title,category:r.category,tag:r.tag,place_name:r.place_name,
+      taken_at:r.taken_at,visibility:r.visibility,mine:!!r.mine,
+      author:{id:r.user_id,name:r.display_name,handle:r.handle},lat:c[0],lng:c[1],precision:c[2]});
+  }
+  return json({count:out.length,posts:out});
+}
+
 async function coordsFor(env, row) {
-  const p = await env.DB.prepare(
-    "SELECT lat,lng,approx_lat,approx_lng,area_lat,area_lng,fixed_lat,fixed_lng FROM posts WHERE id=?"
-  ).bind(row.id).first();
-  if (!p) return null;
   switch (row.prec) {
-    case "exact":  return [p.lat, p.lng, "exact"];
-    case "fixed":  return [p.fixed_lat, p.fixed_lng, "fixed"];
-    case "approx": return [p.approx_lat, p.approx_lng, "approx"];
-    case "area":   return [p.area_lat, p.area_lng, "area"];
+    case "exact":  return [row.lat, row.lng, "exact"];
+    case "fixed":  return [row.fixed_lat, row.fixed_lng, "fixed"];
+    case "approx": return [row.approx_lat, row.approx_lng, "approx"];
+    case "area":   return [row.area_lat, row.area_lng, "area"];
     default:       return null;   // hidden は地図に出さない
   }
 }
@@ -549,7 +675,13 @@ async function putPhoto(url, request, env, me) {
   }
   const maxBytes = kind === "orig" ? 25_000_000 : kind === "view" ? 8_000_000 : 1_500_000;
   const declared = Number(request.headers.get("Content-Length") || 0);
+  if (!Number.isSafeInteger(declared) || declared <= 0) {
+    return json({ error: "画像サイズを確認できません" }, 411);
+  }
   if (declared > maxBytes) return json({ error: "画像が大きすぎます" }, 413);
+  if (!(await userLimit(env, me.id, "photo-requests-hour", hourKey(), 80))) {
+    return json({ error: "画像の利用上限に達しました" }, 429);
+  }
   const bytes = await request.arrayBuffer();
   if (!bytes.byteLength || bytes.byteLength > maxBytes) {
     return json({ error: "画像サイズが不正です" }, 413);
@@ -563,14 +695,13 @@ async function putPhoto(url, request, env, me) {
       .bind(postId).first();
     if ((Number(count && count.n) || 0) >= 12) return json({ error: "写真は12枚までです" }, 409);
   }
-  if (!(await userLimit(env, me.id, "photo-requests-hour", hourKey(), 80)) ||
-      !(await userLimit(env, me.id, "photo-bytes-day", dayKey(), 300_000_000, bytes.byteLength)) ||
+  if (!(await userLimit(env, me.id, "photo-bytes-day", dayKey(), 300_000_000, bytes.byteLength)) ||
       !(await userLimit(env, me.id, "photo-bytes-total", "all", 5_000_000_000, bytes.byteLength))) {
     return json({ error: "画像の利用上限に達しました" }, 429);
   }
 
   let moderation = "not-required";
-  if (own.visibility !== "private") {
+  if (own.visibility !== "private" && (kind === "view" || kind === "thumb")) {
     moderation = await moderateUploadedPhoto(env, me, bytes);
     if (moderation !== "ok") {
       // 判定不能も公開しない。画像自体は本人の非公開記録として保存できる。
@@ -601,7 +732,7 @@ async function putPhoto(url, request, env, me) {
       throw e;
     }
   }
-  if (own.visibility !== "private" && moderation !== "ok") {
+  if (own.visibility !== "private" && (kind === "view" || kind === "thumb") && moderation !== "ok") {
     // 並行PATCHとの競合後も、判定不能な画像を公開状態に残さない。
     await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
       .bind(postId, me.id).run();
@@ -615,6 +746,10 @@ async function getPhoto(path, env, me) {
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(photoId || "") ||
       !["orig", "view", "thumb"].includes(kind)) {
     return json({ error: "見つかりません" }, 404);
+  }
+  if (!(await userLimit(env, me.id, "photo-reads-hour", hourKey(), 600)) ||
+      !(await userLimit(env, me.id, "photo-reads-day", dayKey(), 3000))) {
+    return json({ error: "写真の読み込み回数が多すぎます" }, 429);
   }
   const ph = await env.DB.prepare("SELECT * FROM photos WHERE id=?").bind(photoId).first();
   if (!ph) return json({ error: "見つかりません" }, 404);
@@ -632,10 +767,7 @@ async function getPhoto(path, env, me) {
     if (post.publish_at > Date.now() || post.visibility === "private") {
       return json({ error: "権限がありません" }, 403);
     }
-    const tagged = await env.DB.prepare(
-      "SELECT 1 FROM post_tags WHERE post_id=? AND user_id=? AND status IN ('pending','accepted')"
-    ).bind(post.id, me.id).first();
-    if (!tagged && post.visibility === "friends" &&
+    if (post.visibility === "friends" &&
         !(await areFriends(env, me.id, post.user_id))) {
       return json({ error: "権限がありません" }, 403);
     }
@@ -936,6 +1068,30 @@ async function cleanupTransientConfig(env) {
       .bind("%_" + month)
   ];
   for (const statement of statements) await statement.run();
+}
+
+/** 削除後30日を過ぎた写真を、現役投稿から参照されていない場合だけR2から回収する。 */
+async function cleanupDeletedPhotos(env) {
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const rows = await env.DB.prepare(`
+    SELECT ph.id,ph.key_orig,ph.key_view,ph.key_thumb
+      FROM photos ph JOIN posts p ON p.id=ph.post_id
+     WHERE p.deleted_at IS NOT NULL AND p.deleted_at<?
+     LIMIT 8
+  `).bind(cutoff).all();
+  for (const ph of (rows.results || [])) {
+    const keys = [ph.key_orig, ph.key_view, ph.key_thumb].filter(Boolean);
+    for (const key of keys) {
+      const used = await env.DB.prepare(`
+        SELECT 1 FROM photos x JOIN posts p ON p.id=x.post_id
+         WHERE p.deleted_at IS NULL
+           AND (x.key_orig=?1 OR x.key_view=?1 OR x.key_thumb=?1)
+         LIMIT 1
+      `).bind(key).first();
+      if (!used) await env.PHOTOS.delete(key);
+    }
+    await env.DB.prepare("DELETE FROM photos WHERE id=?").bind(ph.id).run();
+  }
 }
 
 async function shortHash(value) {
@@ -1846,14 +2002,13 @@ async function ensurePostPhotosModerated(env, me, postId) {
 
 async function moderatePhotoRows(env, me, rows) {
   for (const ph of rows) {
-    for (const col of ["key_orig", "key_view", "key_thumb"]) {
-      if (!ph[col]) continue;
-      const obj = await env.PHOTOS.get(ph[col]);
-      if (!obj) return false;
-      const bytes = await obj.arrayBuffer();
-      if (!bytes.byteLength || bytes.byteLength > 10_000_000) return false;
-      if ((await moderateUploadedPhoto(env, me, bytes)) !== "ok") return false;
-    }
+    const key = ph.key_view || ph.key_thumb;
+    if (!key) continue;
+    const obj = await env.PHOTOS.get(key);
+    if (!obj) return false;
+    const bytes = await obj.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > 10_000_000) return false;
+    if ((await moderateUploadedPhoto(env, me, bytes)) !== "ok") return false;
   }
   return true;
 }
@@ -2077,9 +2232,14 @@ async function addTags(request, env, me) {
     return json({ error: "タグ付け回数が多すぎます" }, 429);
   }
 
-  const own = await env.DB.prepare("SELECT * FROM posts WHERE id=? AND user_id=?")
+  const own = await env.DB.prepare(
+    "SELECT * FROM posts WHERE id=? AND user_id=? AND deleted_at IS NULL"
+  )
     .bind(postId, me.id).first();
   if (!own) return json({ error: "権限がありません" }, 403);
+  if (own.visibility === "private") {
+    return json({ error: "自分だけの思い出にはタグ付けできません" }, 409);
+  }
 
   const now = Date.now();
   const who = me.display_name || me.handle || "フレンド";
@@ -2117,20 +2277,33 @@ async function myTags(env, me) {
                 AND ((f.requester_id=t.user_id AND f.addressee_id=p.user_id)
                   OR (f.requester_id=p.user_id AND f.addressee_id=t.user_id))
            ) THEN u.friend_precision ELSE u.public_precision END AS precision,
-           u.display_name, u.handle, u.id AS from_id
+           u.display_name, u.handle, u.id AS from_id,
+           (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             ORDER BY ph.sort_order, ph.created_at LIMIT 1) AS photo_id
       FROM post_tags t
       JOIN posts p ON p.id = t.post_id AND p.deleted_at IS NULL
       JOIN users u ON u.id = t.tagged_by
-     WHERE t.user_id = ? AND t.status = 'pending'
+     WHERE t.user_id = ?1 AND t.status = 'pending'
+       AND t.tagged_by = p.user_id
+       AND p.publish_at <= ?2
+       AND p.visibility IN ('public','friends')
+       AND (p.visibility='public' OR EXISTS (
+         SELECT 1 FROM friendships f
+          WHERE f.status='accepted'
+            AND ((f.requester_id=?1 AND f.addressee_id=p.user_id)
+              OR (f.requester_id=p.user_id AND f.addressee_id=?1))
+       ))
+       AND NOT EXISTS (
+         SELECT 1 FROM blocks b
+          WHERE (b.blocker_id=?1 AND b.blocked_id=p.user_id)
+             OR (b.blocker_id=p.user_id AND b.blocked_id=?1)
+       )
      ORDER BY t.created_at DESC
      LIMIT 30
-  `).bind(me.id).all();
+  `).bind(me.id, Date.now()).all();
 
   const out = [];
   for (const r of (rows.results || [])) {
-    const ph = await env.DB.prepare(
-      "SELECT id FROM photos WHERE post_id=? ORDER BY sort_order LIMIT 1"
-    ).bind(r.post_id).first();
     let coords = null;
     if (r.fixed_lat != null && r.fixed_lng != null) {
       coords = [r.fixed_lat, r.fixed_lng, "fixed"];
@@ -2146,7 +2319,7 @@ async function myTags(env, me) {
       tag: r.tag, place_name: r.place_name,
       lat: coords ? coords[0] : null, lng: coords ? coords[1] : null,
       precision: coords ? coords[2] : "hidden", taken_at: r.taken_at,
-      photo_id: ph ? ph.id : null,
+      photo_id: r.photo_id || null,
       from: { id: r.from_id, name: r.display_name || r.handle || "" }
     });
   }
@@ -2184,12 +2357,19 @@ async function takeTag(request, env, me) {
     .bind(postId).first();
   if (!src) return json({ error: "元の思い出がありません" }, 404);
 
+  const now = Date.now();
+  const friendsNow = await areFriends(env, me.id, src.user_id);
+  if (t.tagged_by !== src.user_id || src.publish_at > now || src.visibility === "private" ||
+      (src.visibility === "friends" && !friendsNow) || await isBlocked(env, me.id, src.user_id)) {
+    return json({ error: "この思い出は現在受け取れません" }, 403);
+  }
+
   // 受信者へ渡す座標も、投稿者が設定した現在の精度を必ず通す。
   let shared = null;
   if (src.fixed_lat != null && src.fixed_lng != null && validCoords(src.fixed_lat, src.fixed_lng)) {
     shared = [src.fixed_lat, src.fixed_lng];
   } else {
-    const precision = (await areFriends(env, me.id, src.user_id))
+    const precision = friendsNow
       ? src.friend_precision : src.public_precision;
     if (precision === "exact") shared = [src.lat, src.lng];
     else if (precision === "approx") shared = [src.approx_lat, src.approx_lng];
@@ -2202,44 +2382,104 @@ async function takeTag(request, env, me) {
   const [sharedApproxLat, sharedApproxLng] = snap(sharedLat, sharedLng, 500);
   const [sharedAreaLat, sharedAreaLng] = snap(sharedLat, sharedLng, 2000);
 
-  const now = Date.now();
   const newId = uuid();
-  const phs = await env.DB.prepare("SELECT * FROM photos WHERE post_id=?")
-    .bind(postId).all();
-  let newVisibility = ["private", "friends", "public"].includes(me.default_visibility)
-    ? me.default_visibility : "private";
-  if (newVisibility !== "private" &&
-      !(await moderatePhotoRows(env, me, phs.results || []))) newVisibility = "private";
-
-  await env.DB.prepare(`
-    INSERT INTO posts (
-      id,user_id,place_id,title,category,tag,place_name,body,
-      lat,lng,approx_lat,approx_lng,area_lat,area_lng,
-      taken_at,created_at,visibility,publish_at
-    ) VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?)
-  `).bind(
-    newId, me.id, src.place_id, src.title, src.category, src.tag,
-    src.place_name, src.body,
-    sharedLat, sharedLng, sharedApproxLat, sharedApproxLng, sharedAreaLat, sharedAreaLng,
-    src.taken_at, now, newVisibility,
-    now + (me.publish_delay_sec || 0) * 1000
-  ).run();
-
-  // 写真は同じものを指す。ここで複製すると容量が倍になる
-  for (const ph of (phs.results || [])) {
-    await env.DB.prepare(`
-      INSERT INTO photos (id,post_id,user_id,key_orig,key_view,key_thumb,
-                          width,height,sort_order,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)
-    `).bind(uuid(), newId, me.id, ph.key_orig, ph.key_view, ph.key_thumb,
-            ph.width, ph.height, ph.sort_order, now).run();
+  const claimId = "claim_" + Date.now() + "_" + newId;
+  const staleClaim = Date.now() - 10 * 60 * 1000;
+  const claim = await env.DB.prepare(
+    `UPDATE post_tags SET new_post_id=?1
+      WHERE post_id=?2 AND user_id=?3 AND status='pending'
+        AND (new_post_id IS NULL OR
+             (new_post_id LIKE 'claim_%' AND CAST(substr(new_post_id,7,13) AS INTEGER)<?4))`
+  ).bind(claimId, postId, me.id, staleClaim).run();
+  if (!claim.meta || claim.meta.changes !== 1) {
+    return json({ error: "この思い出は処理中か、すでに返答済みです" }, 409);
   }
 
-  await env.DB.prepare(
-    "UPDATE post_tags SET status='accepted', new_post_id=? WHERE post_id=? AND user_id=?"
-  ).bind(newId, postId, me.id).run();
+  try {
+    const phs = await env.DB.prepare("SELECT * FROM photos WHERE post_id=?")
+      .bind(postId).all();
+    let newVisibility = ["private", "friends", "public"].includes(me.default_visibility)
+      ? me.default_visibility : "private";
+    if (newVisibility !== "private" &&
+        !(await moderatePhotoRows(env, me, phs.results || []))) newVisibility = "private";
 
-  return json({ ok: true, taken: true, id: newId });
+    const statements = [
+      env.DB.prepare(`
+        UPDATE post_tags SET status='accepted',new_post_id=?1
+         WHERE post_id=?2 AND user_id=?3 AND tagged_by=?4 AND status='pending' AND new_post_id=?6
+           AND EXISTS (
+             SELECT 1 FROM posts p
+              WHERE p.id=?2 AND p.user_id=?4 AND p.deleted_at IS NULL
+                AND p.publish_at<=?5 AND p.visibility IN ('public','friends')
+                AND (p.visibility='public' OR EXISTS (
+                  SELECT 1 FROM friendships f WHERE f.status='accepted'
+                    AND ((f.requester_id=?3 AND f.addressee_id=?4)
+                      OR (f.requester_id=?4 AND f.addressee_id=?3))
+                ))
+                AND NOT EXISTS (
+                  SELECT 1 FROM blocks b
+                   WHERE (b.blocker_id=?3 AND b.blocked_id=?4)
+                      OR (b.blocker_id=?4 AND b.blocked_id=?3)
+                )
+           )
+      `).bind(newId, postId, me.id, src.user_id, Date.now(), claimId),
+      env.DB.prepare(`
+        INSERT INTO posts (
+          id,user_id,place_id,title,category,tag,place_name,body,
+          lat,lng,approx_lat,approx_lng,area_lat,area_lng,
+          taken_at,created_at,visibility,publish_at
+        ) SELECT ?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?,?
+          FROM posts source
+         WHERE source.id=? AND source.user_id=? AND source.deleted_at IS NULL
+           AND source.publish_at<=? AND source.visibility IN ('public','friends')
+           AND (source.visibility='public' OR EXISTS (
+             SELECT 1 FROM friendships f WHERE f.status='accepted'
+               AND ((f.requester_id=? AND f.addressee_id=source.user_id)
+                 OR (f.requester_id=source.user_id AND f.addressee_id=?))
+           ))
+           AND NOT EXISTS (
+             SELECT 1 FROM blocks b
+              WHERE (b.blocker_id=? AND b.blocked_id=source.user_id)
+                 OR (b.blocker_id=source.user_id AND b.blocked_id=?)
+           )
+           AND EXISTS (
+             SELECT 1 FROM post_tags t
+              WHERE t.post_id=source.id AND t.user_id=? AND t.status='accepted' AND t.new_post_id=?
+           )
+      `).bind(
+        newId, me.id, src.place_id, src.title, src.category, src.tag,
+        src.place_name, src.body,
+        sharedLat, sharedLng, sharedApproxLat, sharedApproxLng, sharedAreaLat, sharedAreaLng,
+        src.taken_at, now, newVisibility, now + (me.publish_delay_sec || 0) * 1000,
+        postId, src.user_id, Date.now(), me.id, me.id, me.id, me.id, me.id, newId
+      )
+    ];
+    // 写真は同じR2 objectを参照し、容量は複製しない。
+    for (const ph of (phs.results || [])) {
+      statements.push(env.DB.prepare(`
+        INSERT INTO photos (id,post_id,user_id,key_orig,key_view,key_thumb,
+                            width,height,sort_order,created_at)
+        SELECT ?,?,?,?,?,?,?,?,?,?
+         WHERE EXISTS (SELECT 1 FROM posts WHERE id=? AND user_id=?)
+      `).bind(uuid(), newId, me.id, ph.key_orig, ph.key_view, ph.key_thumb,
+              ph.width, ph.height, ph.sort_order, now, newId, me.id));
+    }
+    await env.DB.batch(statements);
+    const made = await env.DB.prepare("SELECT 1 FROM posts WHERE id=? AND user_id=?")
+      .bind(newId, me.id).first();
+    if (!made) {
+      await env.DB.prepare(
+        "UPDATE post_tags SET status='pending',new_post_id=NULL WHERE post_id=? AND user_id=? AND new_post_id IN (?,?)"
+      ).bind(postId, me.id, claimId, newId).run();
+      return json({ error: "この思い出は現在受け取れません" }, 403);
+    }
+    return json({ ok: true, taken: true, id: newId });
+  } catch (e) {
+    await env.DB.prepare(
+      "UPDATE post_tags SET status='pending',new_post_id=NULL WHERE post_id=? AND user_id=? AND new_post_id IN (?,?)"
+    ).bind(postId, me.id, claimId, newId).run();
+    throw e;
+  }
 }
 
 
