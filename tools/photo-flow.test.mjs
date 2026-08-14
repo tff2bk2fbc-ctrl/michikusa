@@ -171,6 +171,30 @@ test("一括取込でネイティブEXIFを保持する", () => {
   assert.match(postSource, /gpsFromNativeExif\(nativeExif\)/);
 });
 
+test("一括取込もCapacitor 8の現行複数選択APIを使う", async () => {
+  let options;
+  const context = loadNative(null, {
+    chooseFromGallery: async (received) => {
+      options = received;
+      return { results: [{ webPath: "https://localhost/_capacitor_file_/one.jpg", metadata: { exif: "{}" } }] };
+    },
+  });
+  const photos = await context.pickPhotos();
+  assert.equal(options.allowMultipleSelection, true);
+  assert.equal(options.limit, 200);
+  assert.equal(options.includeMetadata, true);
+  assert.equal(photos.length, 1);
+  assert.equal(photos[0].webPath, "https://localhost/_capacitor_file_/one.jpg");
+});
+
+test("一括追加は0枚を成功表示せず、候補ファイルの再読込をキャッシュする", () => {
+  assert.match(postSource, /candidate\.file=f/);
+  assert.match(postSource, /photoForLocalStorage\(url\)/);
+  assert.match(postSource, /photoForLocalStorage\(p\.photo\|\|''\)/);
+  assert.match(postSource, /if\(!done\)/);
+  assert.doesNotMatch(postSource, /setTip\(done\+'枚を '\+donePlaces\+'か所に置きました'\);/);
+});
+
 test("写真候補はランダム化し、原寸Blobをデッキ内へ溜めない", () => {
   assert.match(postSource, /secureShuffle\(candidates\)/);
   assert.match(postSource, /右へ使う・左へ使わない/);

@@ -113,23 +113,44 @@ window.chooseSinglePhoto=chooseSinglePhoto;
 /** まとめて選ぶ */
 async function pickPhotos(){
   var Camera=plugin('Camera');
-  if(!isApp||!Camera||!Camera.pickImages){
+  if(!isApp||!Camera){
     document.getElementById('in-bulk').click();
     return null;
   }
   try{
-    // PHPickerで本人が許可した候補だけを扱う。大量原本を一度に保持しない。
-    var r=await Camera.pickImages({quality:96,width:4096,height:4096,limit:200});
-    return (r&&r.photos)||[];
-  }catch(e){ return null; }
+    // 単独追加と同じCapacitor 8.1以降の現行APIを使う。旧pickImagesの一時URLは
+    // 選別画面を操作している間に読めなくなり、保存時に0枚となる端末がある。
+    if(Camera.chooseFromGallery){
+      try{
+        var modern=await Camera.chooseFromGallery({mediaType:0,allowMultipleSelection:true,
+          limit:200,quality:96,targetWidth:4096,targetHeight:4096,
+          correctOrientation:true,editable:'no',includeMetadata:true});
+        return (modern&&modern.results)||[];
+      }catch(modernError){
+        if(/cancel/i.test(String(modernError&&modernError.message||modernError)))return [];
+        if(!Camera.pickImages)throw modernError;
+      }
+    }
+    // Capacitorを更新できていない端末だけ、互換APIへ一度だけ退避する。
+    if(Camera.pickImages){
+      var legacy=await Camera.pickImages({quality:96,width:4096,height:4096,limit:200});
+      return (legacy&&legacy.photos)||[];
+    }
+    document.getElementById('in-bulk').click();
+    return null;
+  }catch(e){
+    if(!/cancel/i.test(String(e&&e.message||e)))setTip('写真を開けませんでした。もう一度お試しください');
+    return [];
+  }
 }
 
 function nativePhotoUrl(photo){
   if(!photo)return '';
   if(photo.webPath)return photo.webPath;
-  if(photo.path&&window.Capacitor&&typeof window.Capacitor.convertFileSrc==='function')
-    return window.Capacitor.convertFileSrc(photo.path);
-  return photo.path||'';
+  var path=photo.uri||photo.path||'';
+  if(path&&window.Capacitor&&typeof window.Capacitor.convertFileSrc==='function')
+    return window.Capacitor.convertFileSrc(path);
+  return path;
 }
 
 /** 現在地。アプリなら許可を先に尋ねる */

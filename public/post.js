@@ -62,6 +62,17 @@ function readAsData(file){
   });
 }
 
+async function photoForLocalStorage(dataUrl){
+  if(!dataUrl)return '';
+  // ブラウザの写真選択は48MP原本を返すことがある。原本data URLをそのまま
+  // IndexedDBへ書くと容量超過で全件失敗するため、表示品質を保つ4096px JPEGに揃える。
+  if(typeof resize==='function'){
+    var bounded=await resize(dataUrl,4096,.94);
+    if(bounded)return bounded;
+  }
+  return dataUrl;
+}
+
 function secureShuffle(list){
   list=list.slice();
   for(var i=list.length-1;i>0;i--){
@@ -72,9 +83,16 @@ function secureShuffle(list){
 async function chosenCandidateFile(candidate,index){
   if(candidate instanceof Blob)return candidate;
   if(candidate.file)return candidate.file;
-  var r=await fetch(candidate.asset);if(!r.ok)throw new Error('写真取得 '+r.status);
+  if(!candidate.asset)throw new Error('写真参照なし');
+  var assetUrl=new URL(candidate.asset,location.href);
+  // ネイティブプラグインがアプリ内へ渡した写真だけを読む。外部URLは許可しない。
+  if(assetUrl.origin!==location.origin)throw new Error('写真参照元が不正です');
+  var r=await fetch(assetUrl.href);if(!r.ok)throw new Error('写真取得 '+r.status);
   var b=await r.blob(),f=new File([b],'memory-'+index+'.jpg',{type:b.type||'image/jpeg'});
-  if(candidate.exif)Object.defineProperty(f,'__spotaExif',{value:candidate.exif});return f;
+  if(candidate.exif)Object.defineProperty(f,'__spotaExif',{value:candidate.exif});
+  // EXIF解析・プレビュー・保存で同じ一時URLを何度も読まない。
+  candidate.file=f;
+  return f;
 }
 function candidateExif(candidate){return candidate&&candidate.exif||(candidate&&candidate.file&&candidate.file.__spotaExif)||candidate&&candidate.__spotaExif||null;}
 function openMemoryDeck(candidates){
@@ -114,7 +132,10 @@ async function chooseMemoryDeckPhotos(){
   var got=await pickPhotos();
   if(got===null)return;              // ブラウザなら入力欄が開く
   if(!got.length){ setTip('選ばれませんでした'); return; }
-  var candidates=got.map(function(photo){return {asset:typeof nativePhotoUrl==='function'?nativePhotoUrl(photo):(photo.webPath||photo.path||''),exif:photo.exif};}).filter(function(c){return !!c.asset;});
+  var candidates=got.map(function(photo){return {
+    asset:typeof nativePhotoUrl==='function'?nativePhotoUrl(photo):(photo.webPath||photo.uri||photo.path||''),
+    exif:typeof mediaPhotoExif==='function'?mediaPhotoExif(photo):(photo.exif||{})
+  };}).filter(function(c){return !!c.asset;});
   if(!candidates.length){setTip('写真を読めませんでした');return;}openMemoryDeck(candidates);
 }
 function chooseAlbumPhotos(){return chooseMemoryDeckPhotos();}
@@ -289,20 +310,27 @@ async function handleBulk(files){
     var btn=this; btn.disabled=true;
     var workScope=activeSpotScope;
     var use=groups.filter(function(g,i){return !skip[i];});
-    var done=0, donePlaces=0;
+    if(!use.length){
+      btn.disabled=false;btn.textContent='地図に置く場所を選んでください';
+      setTip('「入れる」を1か所以上選んでください');return;
+    }
+    var done=0, donePlaces=0, readFailed=0, saveFailed=0;
     for(var i=0;i<use.length;i++){
       var g=use[i];
       btn.textContent=(i+1)+' / '+use.length+' を置いています…';
       var savedHere=0;
       for(var q=0;q<g.items.length;q++){
         var item=g.items[q];
-        var itemFile=null;try{itemFile=await chosenCandidateFile(item.source,q);}catch(e){}
+        var itemFile=null;try{itemFile=await chosenCandidateFile(item.source,q);}catch(e){readFailed++;}
         var url=itemFile?await readAsData(itemFile):null;
-        if(!url||activeSpotScope!==workScope)continue;
+        if(!url){if(itemFile)readFailed++;continue;}
+        if(activeSpotScope!==workScope)return;
+        url=await photoForLocalStorage(url);
         var rec={id:nid(),n:g.name,c:g.cat,lat:item.lat,lng:item.lng,place:g.place||'',
           tag:'',d:item.d||new Date(item.at).toISOString().slice(0,10),photo:url,
           visibility:defaultPostVisibility(),owner_scope:workScope};
         if(!(await dbPut('spots',rec))){
+          saveFailed++;
           continue;
         }
         if(item.fp)await seenAdd(item.fp,workScope);
@@ -314,8 +342,20 @@ async function handleBulk(files){
       if(savedHere)donePlaces++;
     }
     if(activeSpotScope!==workScope)return;
+    if(!done){
+      btn.disabled=false;btn.textContent='もう一度試す';
+      if(readFailed){
+        msg.innerHTML='写真データを保存用に読み直せませんでした。<br><span style="font-size:12px">写真を選び直して、もう一度お試しください。</span>';
+        setTip('写真データを読み直せませんでした');
+      }else{
+        msg.innerHTML='端末へ写真を保存できませんでした。<br><span style="font-size:12px">空き容量を確認して、もう一度お試しください。</span>';
+        setTip('端末へ写真を保存できませんでした');
+      }
+      return;
+    }
     closeSheet(); render(true);
-    setTip(done+'枚を '+donePlaces+'か所に置きました');
+    var failed=readFailed+saveFailed;
+    setTip(done+'枚を '+donePlaces+'か所に置きました'+(failed?'（'+failed+'枚は追加できませんでした）':''));
     if(fbUser)syncUp();
     if(manual.length)startManualPhotoImports(manual);
     else if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
@@ -429,10 +469,11 @@ function openAdd(p){
   ok.onclick=async function(){
     if(activeSpotScope!==sheetScope){closeSheet();setTip('アカウントが変わったため保存を中止しました');return;}
     ok.disabled=true;ok.textContent='保存しています…';
+    var localPhoto=await photoForLocalStorage(p.photo||'');
     var rec={id:nid(),n:(nm?nm.value.trim():p.known)||p.place||'この場所',
       c:cat,lat:p.lat,lng:p.lng,place:p.place||'',
       tag:ft.value.trim(),d:p.date||new Date().toISOString().slice(0,10),
-      photo:p.photo||'', tagged:tagged.map(function(u){return u.id;}),
+      photo:localPhoto, tagged:tagged.map(function(u){return u.id;}),
       visibility:chosenVisibility,owner_scope:sheetScope};
     if(!(await dbPut('spots',rec))){
       ok.disabled=false;ok.textContent='ここに残す';setTip('端末へ保存できませんでした');return;
