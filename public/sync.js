@@ -90,7 +90,8 @@ async function pushOne(rec){
           title:rec.n, category:rec.c, tag:rec.tag||'', place_name:rec.place||'',
           lat:rec.lat, lng:rec.lng,
           taken_at:rec.d?Date.parse(rec.d):null,
-          visibility:rec.visibility||null
+          visibility:rec.visibility||null,
+          client_operation_id:rec.id
         })});
       if(!r.ok)return false;
       var j=await r.json();
@@ -619,7 +620,15 @@ function doLogin(){
 }
 
 /** ログアウト。アプリのときは両方から出る */
-function doLogout(){
+async function doLogout(){
+  var pushToken=window.__spotaPushToken;
+  if(!pushToken)try{pushToken=localStorage.getItem('spota_push_token');}catch(e){}
+  if(pushToken&&fbUser){
+    try{await api('/api/push/token',{method:'DELETE',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:pushToken})});}catch(e){}
+  }
+  window.__spotaPushToken=null;
+  try{localStorage.removeItem('spota_push_token');}catch(e){}
   var FA=plugin('FirebaseAuthentication');
   if(isApp&&FA){ try{ FA.signOut(); }catch(e){} }
   fbUser=null;meP=null;activateSpotScope(null);

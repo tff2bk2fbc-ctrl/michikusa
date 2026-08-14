@@ -107,7 +107,7 @@ function closeViewer(){
 const scrim=document.getElementById('scrim');
 let sheetEl=null;
 function closeSheet(){
-  if(sheetEl){var s=sheetEl;sheetEl=null;s.classList.remove('on');
+  if(sheetEl){var s=sheetEl;sheetEl=null;s.style.transition='transform .32s cubic-bezier(.2,.72,.2,1)';s.style.transform='translate3d(0,100%,0)';s.classList.remove('on');
     var onClose=s.__onClose;s.__onClose=null;if(onClose)onClose();
     setTimeout(function(){s.remove();},420);}
   scrim.classList.remove('on');
@@ -120,24 +120,19 @@ function showSheet(html,onClose){
   sheetEl=s;s.__onClose=typeof onClose==='function'?onClose:null;
   void s.offsetWidth;s.classList.add('on');
 
-  /* 上の余白を下へ払うと閉じる */
-  var y0=0,drag=false;
-  s.addEventListener('touchstart',function(e){
-    if(s.scrollTop>4)return;
-    y0=e.touches[0].clientY; drag=true;
-  },{passive:true});
-  s.addEventListener('touchmove',function(e){
-    if(!drag)return;
-    var dy=e.touches[0].clientY-y0;
-    if(dy>0){ s.style.transform='translateY('+dy+'px)'; s.style.transition='none'; }
-  },{passive:true});
-  s.addEventListener('touchend',function(e){
-    if(!drag)return; drag=false;
-    var dy=e.changedTouches[0].clientY-y0;
-    s.style.transition='';
-    if(dy>100) closeSheet();
-    else s.style.transform='';
-  },{passive:true});
+  /* grabberを下へ払うと、指に追従し速度または距離で閉じる。 */
+  var y0=0,x0=0,drag=false,lock=false,pid=0,lastY=0,lastT=0,vy=0;
+  s.addEventListener('pointerdown',function(e){
+    if(!e.isPrimary||e.button!==0||s.scrollTop>4||!e.target.closest('.grab'))return;
+    y0=lastY=e.clientY;x0=e.clientX;lastT=e.timeStamp;pid=e.pointerId;drag=true;lock=false;vy=0;
+  });
+  s.addEventListener('pointermove',function(e){
+    if(!drag||e.pointerId!==pid)return;var dx=e.clientX-x0,dy=Math.max(0,e.clientY-y0);
+    if(!lock){if(Math.max(Math.abs(dx),dy)<8)return;if(dy<=Math.abs(dx)*1.2){drag=false;return;}lock=true;try{s.setPointerCapture(pid);}catch(err){}}
+    e.preventDefault();var dt=Math.max(1,e.timeStamp-lastT),instant=(e.clientY-lastY)/dt*1000;vy=vy*.68+instant*.32;lastY=e.clientY;lastT=e.timeStamp;s.style.transition='none';s.style.transform='translate3d(0,'+dy+'px,0)';
+  },{passive:false});
+  function release(e){if(!drag||e.pointerId!==pid)return;drag=false;var dy=Math.max(0,e.clientY-y0);s.style.transition='transform .32s cubic-bezier(.18,.88,.24,1)';if(lock&&(dy>s.offsetHeight*.3||vy>900))closeSheet();else s.style.transform='';}
+  s.addEventListener('pointerup',release);s.addEventListener('pointercancel',function(){if(drag){drag=false;s.style.transition='';s.style.transform='';}});
   scrim.classList.add('on');
   return s;
 }
@@ -317,7 +312,7 @@ document.getElementById('cf-no').onclick=function(){
   if(!placing)return;cf.classList.add('pick');
   cfName.textContent='地図をタップして選び直してください';
   cfAsk.textContent='ピンを長押しして動かすこともできます';};
-document.getElementById('cf-cancel').onclick=endPlacing;
+document.getElementById('cf-cancel').onclick=function(){endPlacing();if(typeof finishManualPhotoImport==='function')finishManualPhotoImport();};
 
 function baseCat(p){
   var c=((p.class||'')+'/'+(p.subclass||'')).toLowerCase();
@@ -419,6 +414,8 @@ async function revGeo(lat,lng){
       if(!name&&j.name)name=j.name;}
   }catch(e){}
   if(!name&&near)name=near.n+' のあたり';
-  if(!name)name=lat.toFixed(5)+', '+lng.toFixed(5);
+  // 公開範囲を狭めても、地名欄に真の座標が入れば位置が漏れる。
+  // 逆引き失敗時は座標文字列を保存せず、中立なラベルにする。
+  if(!name)name='撮影場所';
   var out={name:name,near:near};gcache.set(key,out);return out;
 }

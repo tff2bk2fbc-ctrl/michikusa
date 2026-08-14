@@ -50,7 +50,8 @@ async function pickPhotos(){
     return null;
   }
   try{
-    var r=await Camera.pickImages({quality:100,limit:0});
+    // PHPickerで本人が許可した候補だけを扱う。大量原本を一度に保持しない。
+    var r=await Camera.pickImages({quality:100,limit:200});
     return (r&&r.photos)||[];
   }catch(e){ return null; }
 }
@@ -105,21 +106,26 @@ async function setupPush(){
     }
     if(st.receive!=='granted')return;
 
-    await P.register();
-
-    P.addListener('registration',function(t){
+    if(window.__spotaPushRegistration&&window.__spotaPushRegistration.remove){
+      try{await window.__spotaPushRegistration.remove();}catch(e){}
+    }
+    // registerより先にlistenerを置く。即時に返るtokenを取りこぼさない。
+    window.__spotaPushRegistration=await P.addListener('registration',function(t){
+      window.__spotaPushToken=t.value;
+      try{localStorage.setItem('spota_push_token',t.value);}catch(e){}
       // この端末の宛先をサーバーへ預ける
       api('/api/push/token',{method:'POST',
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({token:t.value,platform:'ios'})}).catch(function(){});
     });
-    P.addListener('pushNotificationActionPerformed',function(ev){
+    if(!window.__spotaPushAction)window.__spotaPushAction=await P.addListener('pushNotificationActionPerformed',function(ev){
       // 通知から開いたとき、その場所へ飛ぶ
       var d=(ev&&ev.notification&&ev.notification.data)||{};
       if(d.lat&&d.lng){
         map.easeTo({center:[Number(d.lng),Number(d.lat)],zoom:16.5,duration:800});
       }
     });
+    await P.register();
   }catch(e){}
 }
 
@@ -238,7 +244,7 @@ function askPhotoLocation(dataUrl,date,gps){
     '<button class="btn" id="photo-gps-yes">はい、写真の位置を使う</button>'+
     '<button class="btn g" id="photo-gps-no">いいえ、地図から選ぶ</button>'+
     '<button class="photo-location-cancel" id="photo-gps-cancel">キャンセル</button>'+
-    '</div>',function(){if(!decided)setTip('写真の追加をキャンセルしました');});
+    '</div>',function(){if(!decided){setTip('写真の追加をキャンセルしました');if(typeof finishManualPhotoImport==='function')finishManualPhotoImport();}});
   s.querySelector('#photo-gps-yes').onclick=function(){
     decided=true;
     closeSheet();
@@ -249,7 +255,7 @@ function askPhotoLocation(dataUrl,date,gps){
     closeSheet();
     startManualPhotoPlacement(dataUrl,date);
   };
-  s.querySelector('#photo-gps-cancel').onclick=function(){decided=true;closeSheet();setTip('写真の追加をキャンセルしました');};
+  s.querySelector('#photo-gps-cancel').onclick=function(){decided=true;closeSheet();setTip('写真の追加をキャンセルしました');if(typeof finishManualPhotoImport==='function')finishManualPhotoImport();};
 }
 
 /* 写真を受け取ったあとの流れ。EXIF GPSを確認してから位置を決める */

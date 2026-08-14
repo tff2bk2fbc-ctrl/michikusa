@@ -7,7 +7,7 @@
     "binding": "ASSETS"
   },
   "triggers": {
-    "crons": ["17 18 * * *"]
+    "crons": ["*/15 * * * *", "17 18 * * *"]
   },
   "vars": {
     "FIREBASE_PROJECT_ID": "michikusa-e34df"
@@ -22,6 +22,21 @@
       "name": "POSTAL_GLOBAL_RATE_LIMITER",
       "namespace_id": "10002",
       "simple": { "limit": 1000, "period": 60 }
+    },
+    {
+      "name": "SOCIAL_READ_RATE_LIMITER",
+      "namespace_id": "10003",
+      "simple": { "limit": 180, "period": 60 }
+    },
+    {
+      "name": "SOCIAL_WRITE_RATE_LIMITER",
+      "namespace_id": "10004",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "SHARE_RATE_LIMITER",
+      "namespace_id": "10005",
+      "simple": { "limit": 90, "period": 60 }
     }
   ],
   "d1_databases": [

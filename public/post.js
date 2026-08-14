@@ -13,6 +13,7 @@ function fingerprint(lat,lng,at,file){
     return 'g'+Math.round(at/1000)+'_'+lat.toFixed(5)+'_'+lng.toFixed(5);
   }
   // 日時が取れない場合は、大きさと更新時刻で代用
+  if(file&&file.__spotaId)return 'a'+String(file.__spotaId).slice(-160);
   return 'f'+(file?file.size:0)+'_'+(file?(file.lastModified||0):0);
 }
 function scopedSeenId(fp,scope){return (scope||activeSpotScope)+'|'+fp;}
@@ -61,29 +62,62 @@ function readAsData(file){
   });
 }
 
-async function chooseAlbumPhotos(){
+function secureShuffle(list){
+  list=list.slice();
+  for(var i=list.length-1;i>0;i--){
+    var box=new Uint32Array(1);crypto.getRandomValues(box);var j=box[0]%(i+1),tmp=list[i];list[i]=list[j];list[j]=tmp;
+  }
+  return list;
+}
+async function chosenCandidateFile(candidate,index){
+  if(candidate instanceof Blob)return candidate;
+  if(candidate.file)return candidate.file;
+  var r=await fetch(candidate.asset);if(!r.ok)throw new Error('写真取得 '+r.status);
+  var b=await r.blob(),f=new File([b],'memory-'+index+'.jpg',{type:b.type||'image/jpeg'});
+  if(candidate.exif)Object.defineProperty(f,'__spotaExif',{value:candidate.exif});return f;
+}
+function candidateExif(candidate){return candidate&&candidate.exif||(candidate&&candidate.file&&candidate.file.__spotaExif)||candidate&&candidate.__spotaExif||null;}
+function openMemoryDeck(candidates){
+  candidates=secureShuffle(candidates).slice(0,200);if(!candidates.length){setTip('選ばれませんでした');return;}
+  var screen=makeReleaseScreen('写真を選ぶ'),body=screen.querySelector('.release-body');screen.classList.add('memory-deck-screen');
+  body.innerHTML='<section class="memory-deck"><header><p><b id="deck-step">1</b> / '+candidates.length+'</p><span>右へ使う・左へ使わない</span></header><div class="memory-stage"><div class="memory-card" id="memory-card"><img id="memory-card-img" alt="選択する写真"><span class="memory-choice no">使わない</span><span class="memory-choice yes">使う</span></div></div><div class="memory-deck-actions"><button type="button" id="memory-no">使わない</button><button type="button" id="memory-yes">使う</button></div><div class="sr-only" id="memory-live" aria-live="polite"></div></section>';
+  var card=body.querySelector('#memory-card'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true;
+  screen.__onClose=function(){alive=false;if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}};
+  function preview(){
+    if(!alive||releaseScreen!==screen||!screen.isConnected)return;
+    if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}
+    if(at>=candidates.length){finish();return;}
+    var c=candidates[at];step.textContent=String(at+1);card.style.transition='none';card.style.transform='';card.classList.remove('choose-yes','choose-no');
+    if(c.file){currentUrl=URL.createObjectURL(c.file);img.src=currentUrl;}else img.src=c.asset;
+  }
+  function decide(use,direction){
+    if(!alive||busy||at>=candidates.length)return;busy=true;card.classList.add(use?'choose-yes':'choose-no');card.style.transition='transform .24s cubic-bezier(.2,.72,.2,1),opacity .2s';card.style.transform='translate3d('+(direction*(innerWidth+120))+'px,0,0) rotate('+(direction*7)+'deg)';live.textContent=use?'この写真を使います':'この写真は使いません';
+    var candidate=candidates[at++];
+    // デッキ中は原寸Blobを保持せず参照だけを残す。採用後の解析時に1枚ずつ読む。
+    if(use)kept.push(candidate);
+    setTimeout(function(){if(!alive||releaseScreen!==screen)return;busy=false;preview();},220);
+  }
+  function finish(){
+    if(!alive||releaseScreen!==screen||!screen.isConnected)return;
+    if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}alive=false;screen.__onClose=null;closeReleaseScreen();
+    if(!kept.length){setTip('使う写真は選ばれませんでした');return;}
+    setTip(kept.length+'枚を確認します');handleBulk(kept);
+  }
+  var dragging=false,locked=false,pointer=0,sx=0,lastX=0,lastT=0,vx=0;
+  card.onpointerdown=function(e){if(busy||!e.isPrimary||e.button!==0)return;dragging=true;locked=false;pointer=e.pointerId;sx=lastX=e.clientX;lastT=e.timeStamp;vx=0;card.style.transition='none';};
+  card.onpointermove=function(e){if(!dragging||e.pointerId!==pointer)return;var dx=e.clientX-sx;if(!locked&&Math.abs(dx)>8){locked=true;try{card.setPointerCapture(pointer);}catch(err){}}if(!locked)return;e.preventDefault();var dt=Math.max(1,e.timeStamp-lastT),instant=(e.clientX-lastX)/dt*1000;vx=vx*.65+instant*.35;lastX=e.clientX;lastT=e.timeStamp;card.style.transform='translate3d('+dx+'px,0,0) rotate('+(dx/innerWidth*6)+'deg)';card.classList.toggle('choose-yes',dx>18);card.classList.toggle('choose-no',dx<-18);};
+  function release(e){if(!dragging||e.pointerId!==pointer)return;dragging=false;var dx=e.clientX-sx,idle=e.timeStamp-lastT;if(idle>80)vx=0;var byDistance=Math.abs(dx)>card.offsetWidth*.25,bySpeed=Math.abs(vx)>700,go=byDistance||bySpeed,direction=byDistance?(dx>0?1:-1):(vx>0?1:-1);if(go)decide(direction>0,direction);else{card.style.transition='transform .3s cubic-bezier(.18,.78,.24,1)';card.style.transform='';card.classList.remove('choose-yes','choose-no');}}
+  card.onpointerup=release;card.onpointercancel=function(){if(dragging){dragging=false;card.style.transition='transform .25s';card.style.transform='';card.classList.remove('choose-yes','choose-no');}};
+  body.querySelector('#memory-no').onclick=function(){decide(false,-1);};body.querySelector('#memory-yes').onclick=function(){decide(true,1);};preview();
+}
+async function chooseMemoryDeckPhotos(){
   var got=await pickPhotos();
   if(got===null)return;              // ブラウザなら入力欄が開く
   if(!got.length){ setTip('選ばれませんでした'); return; }
-  // Capacitorから来たものは、読み込んでからいつもの流れへ
-  var files=[],failed=0;
-  for(var i=0;i<got.length;i++){
-    try{
-      var asset=typeof nativePhotoUrl==='function'?nativePhotoUrl(got[i]):
-        (got[i].webPath||got[i].path||'');
-      if(!asset)throw new Error('写真URLなし');
-      var r=await fetch(asset);
-      if(!r.ok)throw new Error('写真取得 '+r.status);
-      var b=await r.blob();
-      var f=new File([b],'p'+i+'.jpg',{type:b.type||'image/jpeg'});
-      if(got[i].exif)Object.defineProperty(f,'__spotaExif',{value:got[i].exif});
-      files.push(f);
-    }catch(e){failed++;}
-  }
-  if(!files.length){ setTip('写真を読めませんでした'); return; }
-  if(failed)setTip(failed+'枚を読み込めませんでした');
-  handleBulk(files);
+  var candidates=got.map(function(photo){return {asset:typeof nativePhotoUrl==='function'?nativePhotoUrl(photo):(photo.webPath||photo.path||''),exif:photo.exif};}).filter(function(c){return !!c.asset;});
+  if(!candidates.length){setTip('写真を読めませんでした');return;}openMemoryDeck(candidates);
 }
+function chooseAlbumPhotos(){return chooseMemoryDeckPhotos();}
 
 document.getElementById('btn-bulk').onclick=function(){
   var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
@@ -99,8 +133,27 @@ document.getElementById('btn-bulk').onclick=function(){
 document.getElementById('in-bulk').onchange=function(e){
   var files=Array.prototype.slice.call(e.target.files||[]);
   e.target.value='';
-  handleBulk(files);
+  openMemoryDeck(files.map(function(file){return {file:file};}));
 };
+
+var manualPhotoImports=[],manualPhotoImportActive=false;
+function startManualPhotoImports(files){
+  manualPhotoImports=manualPhotoImports.concat(files||[]);manualPhotoImportNext();
+}
+async function manualPhotoImportNext(){
+  if(manualPhotoImportActive)return;
+  if(!manualPhotoImports.length){setTip('選んだ写真の確認が終わりました');return;}
+  manualPhotoImportActive=true;var source=manualPhotoImports.shift(),file=null;
+  try{file=await chosenCandidateFile(source,manualPhotoImports.length);}catch(e){}
+  var url=file?await readAsData(file):null;
+  if(!url){manualPhotoImportActive=false;manualPhotoImportNext();return;}
+  setTip('位置情報のない写真です。場所を選んでください（残り '+(manualPhotoImports.length+1)+'枚）');
+  afterPhoto(url,file,file.__spotaExif);
+}
+function finishManualPhotoImport(){
+  if(!manualPhotoImportActive)return;manualPhotoImportActive=false;setTimeout(manualPhotoImportNext,180);
+}
+window.finishManualPhotoImport=finishManualPhotoImport;
 
 async function handleBulk(files){
   if(!files.length)return;
@@ -109,7 +162,7 @@ async function handleBulk(files){
     need('exifr'),
     new Promise(function(resolve){setTimeout(function(){resolve(false);},4000);})
   ]);
-  var hasNativeExif=files.some(function(f){return !!f.__spotaExif;});
+  var hasNativeExif=files.some(function(f){return !!candidateExif(f);});
   if(typeof exifr==='undefined'&&!hasNativeExif){
     setTip('写真の位置情報を読めません。通信を確認してください');return;
   }
@@ -122,33 +175,42 @@ async function handleBulk(files){
     '<div id="bfoot"></div></div>');
   var msg=s.querySelector('#bmsg'), foot=s.querySelector('#bfoot');
 
-  var found=[], noGeo=0, already=0;
+  var found=[], manual=[], noGeo=0, already=0;
   for(var i=0;i<files.length;i++){
     msg.textContent=(i+1)+' / '+files.length+' 枚を調べています…';
-    var f=files[i];
+    var source=files[i],f=source instanceof Blob?source:(source&&source.file)||null,nativeExif=candidateExif(source);
     try{
       var nativeGps=typeof gpsFromNativeExif==='function'?
-        gpsFromNativeExif(f.__spotaExif):null;
+        gpsFromNativeExif(nativeExif):null;
       var g=nativeGps?{latitude:nativeGps.lat,longitude:nativeGps.lng}:null;
-      if(!g&&typeof exifr!=='undefined')
+      if(!g&&typeof exifr!=='undefined'){
+        if(!f)f=await chosenCandidateFile(source,i);
         g=await exifr.gps(f).catch(function(){return null;});
-      if(!g||g.latitude==null){ noGeo++; continue; }
+      }
+      if(!g||g.latitude==null){ noGeo++;manual.push(source);continue; }
       var nativeDate=typeof dateFromNativeExif==='function'?
-        dateFromNativeExif(f.__spotaExif):null;
+        dateFromNativeExif(nativeExif):null;
       var pp=null;
-      if(!nativeDate&&typeof exifr!=='undefined')
+      if(!nativeDate&&typeof exifr!=='undefined'){
+        if(!f)f=await chosenCandidateFile(source,i);
         pp=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(function(){return null;});
+      }
       var dt=nativeDate||(pp&&(pp.DateTimeOriginal||pp.CreateDate));
       var parsed=dt?new Date(dt).getTime():NaN;
-      var at=isFinite(parsed)?parsed:(f.lastModified||Date.now());
-      var fp=fingerprint(g.latitude,g.longitude,isFinite(parsed)?at:null,f);
+      var at=isFinite(parsed)?parsed:((f&&f.lastModified)||Date.now());
+      var fp=fingerprint(g.latitude,g.longitude,isFinite(parsed)?at:null,f||{__spotaId:source.asset});
       if(await seenHas(fp)){ already++; continue; }   // もう入れたもの
-      found.push({file:f,lat:g.latitude,lng:g.longitude,fp:fp,
+      found.push({source:source,lat:g.latitude,lng:g.longitude,fp:fp,
         d:isFinite(parsed)?new Date(parsed).toISOString().slice(0,10):'', at:at});
-    }catch(err){ noGeo++; }
+    }catch(err){ noGeo++;manual.push(source); }
   }
 
   if(!found.length){
+    if(manual.length){
+      msg.innerHTML='<b>'+manual.length+' 枚</b>には位置情報がありません。<br><span style="font-size:12px">使う場所を、地図で1枚ずつ選びます。</span>';
+      foot.innerHTML='<button class="btn" id="manual" style="margin-top:16px">地図で場所を選ぶ</button><button class="btn g" id="x" style="margin-top:8px">やめる</button>';
+      foot.querySelector('#x').onclick=closeSheet;foot.querySelector('#manual').onclick=function(){closeSheet();startManualPhotoImports(manual);};return;
+    }
     if(already&&!noGeo){
       msg.innerHTML='<b>'+already+' 枚</b>は、すでに地図に入っています。<br>'+
         '<span style="font-size:12px">新しく入れるものはありませんでした。</span>';
@@ -178,7 +240,7 @@ async function handleBulk(files){
   });
 
   msg.innerHTML='<b>'+found.length+' 枚</b>から <b>'+groups.length+' か所</b>が見つかりました。'+
-    (noGeo?('<br><span style="font-size:12px">位置情報のない '+noGeo+' 枚は除きました。</span>'):'')+
+    (noGeo?('<br><span style="font-size:12px">位置情報のない '+noGeo+' 枚は、後で場所を選びます。</span>'):'')+
     (already?('<br><span style="font-size:12px">すでに入っている '+already+' 枚は飛ばしました。</span>'):'');
 
   var list=s.querySelector('#blist');
@@ -198,13 +260,14 @@ async function handleBulk(files){
       '<button class="chip on" data-skip="'+i+'" style="flex:0 0 auto">入れる</button></div>';
   }).join('');
 
-  groups.forEach(function(g,i){
-    var r2=new FileReader();
-    r2.onload=function(){
+  groups.forEach(async function(g,i){
+    try{var previewFile=await chosenCandidateFile(g.items[0].source,i),r2=new FileReader();
+      r2.onload=function(){
       var e2=document.getElementById('bth'+i);
       if(e2)e2.style.backgroundImage='url('+JSON.stringify(r2.result)+')';
-    };
-    r2.readAsDataURL(g.items[0].file);
+      };
+      r2.readAsDataURL(previewFile);
+    }catch(e){}
   });
 
   var skip={};
@@ -218,7 +281,7 @@ async function handleBulk(files){
   });
 
   foot.innerHTML='<button class="btn" id="go" style="margin-top:16px">'+
-      'この '+groups.length+' か所を地図に置く</button>'+
+      'この '+groups.length+' か所を地図に置く'+(manual.length?'＋場所を選ぶ':'')+'</button>'+
     '<button class="btn g" id="x" style="margin-top:8px">やめる</button>';
   foot.querySelector('#x').onclick=closeSheet;
 
@@ -233,7 +296,8 @@ async function handleBulk(files){
       var savedHere=0;
       for(var q=0;q<g.items.length;q++){
         var item=g.items[q];
-        var url=await readAsData(item.file);
+        var itemFile=null;try{itemFile=await chosenCandidateFile(item.source,q);}catch(e){}
+        var url=itemFile?await readAsData(itemFile):null;
         if(!url||activeSpotScope!==workScope)continue;
         var rec={id:nid(),n:g.name,c:g.cat,lat:item.lat,lng:item.lng,place:g.place||'',
           tag:'',d:item.d||new Date(item.at).toISOString().slice(0,10),photo:url,
@@ -253,7 +317,8 @@ async function handleBulk(files){
     closeSheet(); render(true);
     setTip(done+'枚を '+donePlaces+'か所に置きました');
     if(fbUser)syncUp();
-    if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
+    if(manual.length)startManualPhotoImports(manual);
+    else if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
   };
 }
 
@@ -331,7 +396,7 @@ function openAdd(p){
   if(nm) nm.oninput=sync;
   sync();
 
-  s.querySelector('#ng').onclick=closeSheet;
+  s.querySelector('#ng').onclick=function(){closeSheet();finishManualPhotoImport();};
   var p1=s.querySelector('#p1'), p2=s.querySelector('#p2');
   if(p1) p1.onclick=function(){ closeSheet(); document.getElementById('in-cam').click(); };
   if(p2) p2.onclick=function(){ closeSheet(); document.getElementById('in-lib').click(); };
@@ -391,7 +456,7 @@ function openAdd(p){
     if(activeSpotScope!==sheetScope){closeSheet();return;}
     spots.push(rec);
     if(typeof ensureLocalThumb==='function')ensureLocalThumb(rec);
-    closeSheet(); render(true); setTip('残しました');
+    closeSheet(); render(true); setTip('残しました');finishManualPhotoImport();
     if(fbUser) pushOne(rec).then(function(o){
       if(o&&rec.server_id&&tagged.length){
         api('/api/tags',{method:'POST',headers:{'Content-Type':'application/json'},

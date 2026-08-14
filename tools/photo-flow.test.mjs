@@ -119,7 +119,16 @@ test("Capacitor画像URLをCSPが遮断しない", () => {
 
 test("一括取込でネイティブEXIFを保持する", () => {
   assert.match(postSource, /__spotaExif/);
-  assert.match(postSource, /gpsFromNativeExif\(f\.__spotaExif\)/);
+  assert.match(postSource, /candidateExif\(source\)/);
+  assert.match(postSource, /gpsFromNativeExif\(nativeExif\)/);
+});
+
+test("写真候補はランダム化し、原寸Blobをデッキ内へ溜めない", () => {
+  assert.match(postSource, /secureShuffle\(candidates\)/);
+  assert.match(postSource, /右へ使う・左へ使わない/);
+  assert.match(postSource, /if\(use\)kept\.push\(candidate\)/);
+  assert.doesNotMatch(postSource, /kept\.push\(await chosenCandidateFile/);
+  assert.match(postSource, /releaseScreen!==screen/);
 });
 
 test("地図初期化はnative.jsの変数を読込前に直接参照しない", () => {

@@ -29,14 +29,31 @@ test('map audience keeps private memories off the public map', async () => {
   assert.match(map, /visibleOtherSpots\(\)/);
 });
 
-test('release UI uses real routes and does not advertise unsaved social actions', async () => {
+test('release UI uses authenticated social routes and persisted actions', async () => {
   const html = await read('public/index.html');
   const release = await read('public/release.js');
   assert.match(html, /id="map-scope"/);
   assert.match(html, /release\.js\?v=/);
-  assert.match(release, /api\('\/api\/feed/);
-  assert.match(release, /api\('\/api\/posts\?user=/);
-  assert.doesNotMatch(release, />\s*(いいね|コメント|チャット)\s*</);
+  assert.match(release, /'\/api\/feed\?limit=/);
+  assert.match(release, /socialJson\('\/api\/posts\?user=/);
+  assert.match(release, /\/api\/notifications/);
+  assert.match(release, /\/api\/conversations/);
+  assert.match(release, /client_operation_id:nid\(\)/);
+  assert.match(release, /data-like/);
+  assert.match(release, /data-comments/);
+});
+
+test('profile sheet follows the PDF dismissal gesture and the home nav stays at five actions', async () => {
+  const html = await read('public/index.html');
+  const release = await read('public/release.js');
+  const css = await read('public/app.css');
+  for (const id of ['btn-social','btn-bulk','btn-cam','btn-lib','btn-me'])
+    assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(release, /function bindProfileDismiss/);
+  assert.match(release, /panel\.offsetHeight\*\.30\|\|vy>900/);
+  assert.match(release, /cancelAnimationFrame\(raf\)/);
+  assert.match(css, /\.profile-panel/);
+  assert.match(css, /touch-action:none/);
 });
 
 test('profile post response contains authorized thumbnail identifiers', async () => {

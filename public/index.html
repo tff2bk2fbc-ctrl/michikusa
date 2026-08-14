@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#EFEDE8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -12,7 +12,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css" integrity="sha384-K282sW/zFjTkrjR/+yr1H+gCukuy4OEYrkXRybV88g7pk+kZZYpNV6SAV59NcgFg" crossorigin="anonymous">
-<link rel="stylesheet" href="/app.css?v=97">
+<link rel="stylesheet" href="/app.css?v=98">
 </head>
 <div id="err"></div>
 <div id="splash">
@@ -39,6 +39,10 @@
   <button type="button" class="on" data-scope="mine" role="radio" aria-checked="true">自分</button>
 </div>
 
+<button class="map-locate" id="btn-loc" type="button" aria-label="現在地へ移動">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+</button>
+
 <div class="fabpull" id="fabpull"><b></b></div>
 
 <nav class="fabs" id="fabs" aria-label="主要な操作">
@@ -47,10 +51,10 @@
   <div class="nav-items">
     <div class="pill" id="pill"></div>
 
-    <button class="nav-btn" id="btn-loc" data-i="0" aria-label="現在地">
+    <button class="nav-btn" id="btn-social" data-i="0" aria-label="タイムライン・通知・メッセージ">
       <div class="bc">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="6.5"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
-        <span class="sr-only">現在地</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5h16v11H9l-5 3z"/><path d="M8 10h8M8 13h5"/></svg>
+        <span class="sr-only">新着</span><span class="nav-badge" id="social-badge" hidden></span>
       </div>
     </button>
 
@@ -97,20 +101,20 @@
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 
-<script src="/boot.js?v=97"></script>
+<script src="/boot.js?v=98"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js" integrity="sha384-KKgyz2mG25bKJ1O2PyqTJPlAF8Kw2BpDmsLTNBXslICOBvhTAyF5F0XhLWF2ZovY" crossorigin="anonymous"></script>
 <script src="/lazy.js?v=84"></script>
 
 <!-- 中身。役割ごとに分けてある。
      読む順番には意味があるので、入れ替えないこと -->
-<script src="/core.js?v=97"></script>    <!-- 設定・道具・端末内の保存 -->
-<script src="/map.js?v=97"></script>     <!-- 地図・配色・ピン -->
-<script src="/place.js?v=97"></script>   <!-- 場所のシート・写真を開く -->
+<script src="/core.js?v=98"></script>    <!-- 設定・道具・端末内の保存 -->
+<script src="/map.js?v=98"></script>     <!-- 地図・配色・ピン -->
+<script src="/place.js?v=98"></script>   <!-- 場所のシート・写真を開く -->
 <script src="/data.js"></script>    <!-- 外部からの取り込み・検索 -->
-<script src="/native.js?v=97"></script>  <!-- カメラ・現在地・通知 -->
-<script src="/post.js?v=97"></script>    <!-- 記録する・思い出アルバム -->
-<script src="/sync.js?v=97"></script>    <!-- サーバー保存・タグ・ログイン -->
-<script src="/release.js?v=97"></script> <!-- 公開地図・アルバム・タイムライン・プロフィール -->
-<script src="/ui.js?v=97"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
+<script src="/native.js?v=98"></script>  <!-- カメラ・現在地・通知 -->
+<script src="/post.js?v=98"></script>    <!-- 記録する・思い出アルバム -->
+<script src="/sync.js?v=98"></script>    <!-- サーバー保存・タグ・ログイン -->
+<script src="/release.js?v=98"></script> <!-- 公開地図・アルバム・タイムライン・プロフィール -->
+<script src="/ui.js?v=98"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
 </body>
 </html>

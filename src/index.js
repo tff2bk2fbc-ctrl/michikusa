@@ -59,7 +59,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-35"
+          build: "api-36"
         }));
       }
       if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
@@ -69,6 +69,11 @@ export default {
       if (p === "/api/reverse")   return respond(await reverseGeocode(url, request, env));
       if (p === "/api/wiki")      return respond(await wiki(url, request, env));
       if (p === "/api/img")       return secure(await proxyImage(url, request, env));
+      const sharedPhotoRoute = /^\/api\/share\/([A-Za-z0-9_-]{20,120})\/photo\/([A-Za-z0-9_-]{8,80})\/(thumb|view)$/.exec(p);
+      if (sharedPhotoRoute && request.method === "GET")
+        return respond(await getSharedPhoto(sharedPhotoRoute[1], sharedPhotoRoute[2], sharedPhotoRoute[3], request, env));
+      if (p.startsWith("/api/share/") && request.method === "GET")
+        return respond(await resolveShareLink(p.slice("/api/share/".length), request, env));
 
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
@@ -82,6 +87,7 @@ export default {
       if (p === "/api/vision" && request.method === "POST") return respond(await vision(request, env, me));
       if (p === "/api/suggest" && request.method === "POST") return respond(await suggest(request, env, me));
       if (p === "/api/push/token" && request.method === "POST") return respond(await saveToken(request, env, me));
+      if (p === "/api/push/token" && request.method === "DELETE") return respond(await deleteToken(request, env, me));
       if (p === "/api/push/test"  && request.method === "POST") return respond(await pushTest(env, me));
       if (p === "/api/tags" && request.method === "POST")  return respond(await addTags(request, env, me));
       if (p === "/api/tags" && request.method === "GET")   return respond(await myTags(env, me));
@@ -94,6 +100,20 @@ export default {
       if (p === "/api/posts" && request.method === "POST") return respond(await createPost(request, env, me));
       if (p === "/api/feed" && request.method === "GET")
         return respond(await listFeed(url, env, me));
+      if (p === "/api/hashtags/trending" && request.method === "GET")
+        return respond(await trendingHashtags(url, env, me));
+      const likeRoute = /^\/api\/posts\/([A-Za-z0-9_-]{8,80})\/like$/.exec(p);
+      if (likeRoute && request.method === "PUT")
+        return respond(await putLike(likeRoute[1], env, me));
+      if (likeRoute && request.method === "DELETE")
+        return respond(await deleteLike(likeRoute[1], env, me));
+      const commentsRoute = /^\/api\/posts\/([A-Za-z0-9_-]{8,80})\/comments(?:\/([A-Za-z0-9_-]{8,80}))?$/.exec(p);
+      if (commentsRoute && !commentsRoute[2] && request.method === "GET")
+        return respond(await listComments(commentsRoute[1], url, env, me));
+      if (commentsRoute && !commentsRoute[2] && request.method === "POST")
+        return respond(await createComment(commentsRoute[1], request, env, me));
+      if (commentsRoute && commentsRoute[2] && request.method === "DELETE")
+        return respond(await deleteComment(commentsRoute[1], commentsRoute[2], env, me));
       if (p === "/api/posts/ownership" && request.method === "POST")
         return respond(await ownedPostIds(request, env, me));
       if (p === "/api/posts/deletions" && request.method === "GET")
@@ -112,7 +132,57 @@ export default {
       if (p === "/api/friends" && request.method === "GET")  return respond(json(await listFriends(env, me)));
       if (p === "/api/friends/request") return respond(await friendRequest(request, env, me));
       if (p === "/api/friends/accept")  return respond(await friendAccept(request, env, me));
-      if (p === "/api/block")           return respond(await blockUser(request, env, me));
+      if (p === "/api/block" && request.method === "POST")
+        return respond(await blockUser(request, env, me));
+
+      if (p === "/api/follows" && request.method === "GET")
+        return respond(await listFollows(url, env, me));
+      const followRoute = /^\/api\/follows\/([A-Za-z0-9_.-]{3,30})$/.exec(p);
+      if (followRoute && request.method === "PUT")
+        return respond(await putFollow(decodeURIComponent(followRoute[1]), env, me));
+      if (followRoute && request.method === "DELETE")
+        return respond(await deleteFollow(decodeURIComponent(followRoute[1]), env, me));
+
+      if (p === "/api/notifications" && request.method === "GET")
+        return respond(await listNotifications(url, env, me));
+      if (p === "/api/notifications/read" && request.method === "PATCH")
+        return respond(await readNotifications(request, env, me));
+      if (p === "/api/unread" && request.method === "GET")
+        return respond(await unreadSummary(env, me));
+
+      if (p === "/api/conversations" && request.method === "GET")
+        return respond(await listConversations(env, me));
+      if (p === "/api/conversations" && request.method === "POST")
+        return respond(await createConversation(request, env, me));
+      const messagesRoute = /^\/api\/conversations\/([A-Za-z0-9_-]{8,80})\/messages$/.exec(p);
+      if (messagesRoute && request.method === "GET")
+        return respond(await listMessages(messagesRoute[1], url, env, me));
+      if (messagesRoute && request.method === "POST")
+        return respond(await createMessage(messagesRoute[1], request, env, me));
+      const readConversationRoute = /^\/api\/conversations\/([A-Za-z0-9_-]{8,80})\/read$/.exec(p);
+      if (readConversationRoute && request.method === "PATCH")
+        return respond(await readConversation(readConversationRoute[1], request, env, me));
+
+      if (p === "/api/albums" && request.method === "GET")
+        return respond(await listAlbums(url, env, me));
+      if (p === "/api/albums" && request.method === "POST")
+        return respond(await createAlbum(request, env, me));
+      const albumRoute = /^\/api\/albums\/([A-Za-z0-9_-]{8,80})$/.exec(p);
+      if (albumRoute && request.method === "GET")
+        return respond(await getAlbum(albumRoute[1], env, me));
+      if (albumRoute && request.method === "PATCH")
+        return respond(await patchAlbum(albumRoute[1], request, env, me));
+      if (albumRoute && request.method === "DELETE")
+        return respond(await deleteAlbum(albumRoute[1], env, me));
+      const albumItemsRoute = /^\/api\/albums\/([A-Za-z0-9_-]{8,80})\/items$/.exec(p);
+      if (albumItemsRoute && request.method === "POST")
+        return respond(await replaceAlbumItems(albumItemsRoute[1], request, env, me));
+
+      if (p === "/api/shares" && request.method === "POST")
+        return respond(await createShareLink(request, env, me));
+      const shareRoute = /^\/api\/shares\/([A-Za-z0-9_-]{20,120})$/.exec(p);
+      if (shareRoute && request.method === "DELETE")
+        return respond(await revokeShareLink(shareRoute[1], env, me));
 
       return respond(json({ error: "そのAPIはありません" }, 404));
     } catch (e) {
@@ -122,8 +192,14 @@ export default {
     }
   },
 
-  async scheduled(_event, env, ctx) {
-    ctx.waitUntil(Promise.all([cleanupTransientConfig(env), cleanupDeletedPhotos(env)]));
+  async scheduled(event, env, ctx) {
+    // 公開遅延が満了した投稿は15分ごとに通知へ反映する。
+    // 容量整理は従来どおり03:17 JST（18:17 UTC）だけ実行する。
+    const work = [announceReadyPosts(env)];
+    if (event.cron === "17 18 * * *") {
+      work.push(cleanupTransientConfig(env), cleanupDeletedPhotos(env));
+    }
+    ctx.waitUntil(Promise.all(work));
   }
 };
 
@@ -238,6 +314,13 @@ function snap(lat, lng, meters) {
   ];
 }
 
+/** 旧クライアントが逆引き失敗時に保存した正確な座標文字列を外へ出さない。 */
+function publicLocationLabel(value) {
+  const text = String(value || "");
+  return /^\s*-?\d{1,2}\.\d{4,}\s*,\s*-?\d{1,3}\.\d{4,}\s*$/.test(text)
+    ? "撮影場所" : text;
+}
+
 
 /* ============================================================
    自分の情報と設定
@@ -260,13 +343,18 @@ async function getMe(env, me) {
 }
 
 async function patchMe(request, env, me) {
-  const b = await request.json();
+  const parsed = await limitedJson(request, 12_000);
+  if (parsed.error) return parsed.error;
+  if (!(await userLimit(env, me.id, "profile-edits-hour", hourKey(), 30))) {
+    return json({ error: "プロフィールの更新回数が多すぎます" }, 429);
+  }
+  const b = parsed.value;
   const allow = {
     handle: "text", display_name: "text", bio: "text",
     default_visibility: ["private", "friends", "public"],
     friend_precision:   ["exact", "approx", "area", "hidden"],
     public_precision:   ["exact", "approx", "area", "hidden"],
-    publish_delay_sec: "int", profile_public: "int"
+    publish_delay_sec: [0, 3600, 10800, 86400], profile_public: "bool"
   };
   // IDは一度決めたら変えられない。
   // 配ったQRやリンクが死ぬのと、なりすましを防ぐため。
@@ -294,8 +382,18 @@ async function patchMe(request, env, me) {
     if (Array.isArray(rule) && !rule.includes(b[k])) {
       return json({ error: k + " の値が不正です" }, 400);
     }
+    if (k === "display_name") {
+      const value = limitedText(b[k], 60);
+      if (value === null) return json({ error: "表示名は60文字までです" }, 413);
+      b[k] = value;
+    }
+    if (k === "bio") {
+      const value = limitedText(b[k], 500);
+      if (value === null) return json({ error: "自己紹介は500文字までです" }, 413);
+      b[k] = value;
+    }
     sets.push(k + "=?");
-    vals.push(rule === "int" ? (b[k] ? 1 : 0) | 0 : b[k]);
+    vals.push(rule === "bool" ? (b[k] ? 1 : 0) : b[k]);
   }
   if (!sets.length) return json({ ok: true });
   vals.push(me.id);
@@ -328,8 +426,19 @@ async function createPost(request, env, me) {
   const body = limitedText(b.body, 4000);
   const placeIdText = limitedText(b.place_id, 200);
   const placeId = placeIdText || null;
+  const clientOperationId = b.client_operation_id == null ? null : String(b.client_operation_id);
+  if (clientOperationId && !/^[A-Za-z0-9_-]{8,80}$/.test(clientOperationId)) {
+    return json({ error: "操作IDが不正です" }, 400);
+  }
   if ([title, category, tag, placeName, body, placeIdText].includes(null)) {
     return json({ error: "投稿の文字数が上限を超えています" }, 413);
+  }
+
+  if (clientOperationId) {
+    const replay = await env.DB.prepare(
+      "SELECT id,visibility FROM posts WHERE user_id=? AND client_operation_id=?"
+    ).bind(me.id, clientOperationId).first();
+    if (replay) return json({ id: replay.id, visibility: replay.visibility, replayed: true });
   }
 
   let fixedLat = null, fixedLng = null, fixedLabel = null;
@@ -356,37 +465,30 @@ async function createPost(request, env, me) {
   const [rLat, rLng] = snap(lat, lng, 2000);   // エリア
 
   const id = uuid();
-  await env.DB.prepare(`
+  try { await env.DB.prepare(`
     INSERT INTO posts (
       id,user_id,place_id,title,category,tag,place_name,body,
       lat,lng,approx_lat,approx_lng,area_lat,area_lng,
       fixed_lat,fixed_lng,fixed_label,
-      taken_at,created_at,visibility,publish_at
-    ) VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?, ?,?,?,?)
+      taken_at,created_at,visibility,publish_at,client_operation_id
+    ) VALUES (?,?,?,?,?,?,?,?, ?,?,?,?,?,?, ?,?,?, ?,?,?,?,?)
   `).bind(
     id, me.id, placeId, title || "", category || "景",
     tag || "", placeName || "", body || "",
     lat, lng, aLat, aLng, rLat, rLng,
     fixedLat, fixedLng, fixedLabel,
-    b.taken_at || null, now, vis, now + (me.publish_delay_sec || 0) * 1000
-  ).run();
-
-  // フレンドに見せる投稿なら、相手に知らせる
-  if (vis !== "private") {
-    try {
-      const fr = await env.DB.prepare(`
-        SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END AS uid
-          FROM friendships
-         WHERE status='accepted' AND (requester_id=?1 OR addressee_id=?1)
-         LIMIT 20
-      `).bind(me.id).all();
-      const who = me.display_name || me.handle || "フレンド";
-      for (const f of (fr.results || [])) {
-        await sendPush(env, f.uid, who + " が思い出を残しました",
-          title || placeName || "", { post: id });
-      }
-    } catch (e) {}
+    b.taken_at || null, now, vis, now + (me.publish_delay_sec || 0) * 1000,
+    clientOperationId
+  ).run(); } catch (error) {
+    if (clientOperationId) {
+      const replay = await env.DB.prepare(
+        "SELECT id,visibility FROM posts WHERE user_id=? AND client_operation_id=?"
+      ).bind(me.id, clientOperationId).first();
+      if (replay) return json({ id: replay.id, visibility: replay.visibility, replayed: true });
+    }
+    throw error;
   }
+  await syncPostHashtags(env, id, now, title, tag, body);
 
   return json({ id, visibility: vis });
 }
@@ -428,6 +530,12 @@ async function patchPost(id, request, env, me) {
   if (!sets.length) return json({ ok: true });
   vals.push(id);
   await env.DB.prepare("UPDATE posts SET " + sets.join(",") + " WHERE id=?").bind(...vals).run();
+  if (["title", "tag", "body"].some(k => k in b)) {
+    const current = await env.DB.prepare("SELECT title,tag,body,created_at FROM posts WHERE id=? AND user_id=?")
+      .bind(id, me.id).first();
+    if (current) await syncPostHashtags(env, id, current.created_at, current.title, current.tag, current.body);
+  }
+  await announcePostIfReady(env, id);
   return json({ ok: true });
 }
 
@@ -436,6 +544,69 @@ async function deletePost(id, env, me) {
     .bind(Date.now(), id, me.id).run();
   if (!result.meta || result.meta.changes !== 1) return json({ error: "見つかりません" }, 404);
   return json({ ok: true });
+}
+
+async function announcePostIfReady(env, postId) {
+  const now = Date.now();
+  const post = await env.DB.prepare(`
+    SELECT p.id,p.user_id,p.title,p.place_name,p.visibility,p.publish_at,p.social_announced_at,
+           u.handle,u.display_name
+      FROM posts p JOIN users u ON u.id=p.user_id
+     WHERE p.id=? AND p.deleted_at IS NULL AND p.visibility<>'private'
+       AND p.publish_at<=? AND p.social_announced_at IS NULL
+       AND EXISTS (SELECT 1 FROM photos ph WHERE ph.post_id=p.id
+         AND ph.key_thumb IS NOT NULL AND ph.moderation_state='ok')
+  `).bind(postId, now).first();
+  if (!post) return false;
+  const notificationInsert = env.DB.prepare(`
+    INSERT OR IGNORE INTO notifications
+      (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+    WITH candidates(uid) AS (
+      SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END
+        FROM friendships WHERE status='accepted' AND (requester_id=?1 OR addressee_id=?1)
+      UNION
+      SELECT follower_id FROM follows WHERE followee_id=?1 AND ?2='public'
+    )
+    SELECT lower(hex(randomblob(16))),uid,?1,'post','post',?3,?4,?5
+      FROM candidates
+     WHERE uid<>?1 AND NOT EXISTS (SELECT 1 FROM blocks b
+       WHERE (b.blocker_id=?1 AND b.blocked_id=uid)
+          OR (b.blocker_id=uid AND b.blocked_id=?1))
+  `).bind(post.user_id, post.visibility, post.id, `post:${post.id}`, now);
+  const who = post.display_name || post.handle || "フレンド";
+  const body = publicLocationLabel(post.title || post.place_name || "新しい思い出").slice(0, 80);
+  const results = await env.DB.batch([
+    notificationInsert,
+    env.DB.prepare(`
+    UPDATE posts SET social_announced_at=? WHERE id=? AND social_announced_at IS NULL
+      AND deleted_at IS NULL AND visibility<>'private' AND publish_at<=?
+  `).bind(now, post.id, now)
+  ]),last = results[results.length - 1];
+  if (!last.meta || last.meta.changes !== 1) return false;
+  // 通知一覧は全員分をD1へ確実に残す。PushはWorkerの実行時間を守るため
+  // 100人ずつに限定し、残りもアプリ内通知では確認できる。
+  const recipients = await env.DB.prepare(`
+    SELECT user_id AS uid FROM notifications
+     WHERE actor_id=? AND dedupe_key=? ORDER BY created_at LIMIT 100
+  `).bind(post.user_id, `post:${post.id}`).all();
+  const ids = (recipients.results || []).map(row => row.uid);
+  for (let at=0; at<ids.length; at+=10) {
+    await Promise.allSettled(ids.slice(at, at+10).map(userId =>
+      sendPush(env, userId, who + " が思い出を残しました", body, { post: post.id })
+    ));
+  }
+  return true;
+}
+
+async function announceReadyPosts(env) {
+  const rows = await env.DB.prepare(`
+    SELECT id FROM posts WHERE deleted_at IS NULL AND visibility<>'private'
+      AND publish_at<=? AND social_announced_at IS NULL
+      AND EXISTS (SELECT 1 FROM photos ph WHERE ph.post_id=posts.id
+        AND ph.key_thumb IS NOT NULL AND ph.moderation_state='ok')
+     ORDER BY publish_at LIMIT 20
+  `).bind(Date.now()).all();
+  for (const row of (rows.results || [])) await announcePostIfReady(env, row.id);
 }
 
 async function ownedPostIds(request, env, me) {
@@ -525,7 +696,7 @@ async function listPosts(url, env, me) {
   if (s < -90 || n > 90 || w < -180 || e > 180 || s >= n || w >= e || n - s > 20 || e - w > 20) {
     return json({ error: "地図の範囲が広すぎるか不正です" }, 400);
   }
-  if (!(await userLimit(env, me.id, "posts-read-hour", hourKey(), 600))) {
+  if (!(await socialReadLimit(env, me, "map-posts"))) {
     return json({ error: "読み込み回数が多すぎます" }, 429);
   }
 
@@ -546,6 +717,7 @@ async function listPosts(url, env, me) {
       p.lat, p.lng, p.approx_lat, p.approx_lng, p.area_lat, p.area_lng,
       p.fixed_lat, p.fixed_lng,
       (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+        AND (p.user_id=?1 OR ph.moderation_state='ok')
         ORDER BY ph.sort_order, ph.created_at LIMIT 1) AS photo_id,
       u.display_name, u.handle,
       (p.user_id = ?1) AS mine,
@@ -582,8 +754,8 @@ async function listPosts(url, env, me) {
     const c = await coordsFor(env, r);
     if (!c) continue;
     out.push({
-      id: r.id, title: r.title, category: r.category, tag: r.tag,
-      place_name: r.place_name, taken_at: r.taken_at,
+      id: r.id, title: r.mine ? r.title : publicLocationLabel(r.title), category: r.category, tag: r.tag,
+      place_name: r.mine ? r.place_name : publicLocationLabel(r.place_name), taken_at: r.taken_at,
       visibility: r.visibility, mine: !!r.mine,
       photo_id: r.photo_id || null,
       author: { id: r.user_id, name: r.display_name, handle: r.handle },
@@ -594,7 +766,7 @@ async function listPosts(url, env, me) {
 }
 
 async function listProfilePosts(handle, url, env, me) {
-  if (!(await userLimit(env, me.id, "profile-read-hour", hourKey(), 120))) {
+  if (!(await socialReadLimit(env, me, "profile"))) {
     return json({ error: "読み込み回数が多すぎます" }, 429);
   }
   const requested = Number(url.searchParams.get("limit") || 100);
@@ -604,6 +776,9 @@ async function listProfilePosts(handle, url, env, me) {
     "SELECT id,handle,display_name,bio,profile_public FROM users WHERE handle=? AND deleted_at IS NULL"
   ).bind(handle).first();
   if (!profile) return json({ error: "ユーザーが見つかりません" }, 404);
+  if (profile.id !== me.id && await isBlocked(env, me.id, profile.id)) {
+    return json({ error: "ユーザーが見つかりません" }, 404);
+  }
   const rows = await env.DB.prepare(`
     WITH friend AS (
       SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END AS uid
@@ -613,7 +788,12 @@ async function listProfilePosts(handle, url, env, me) {
            p.visibility,p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
            p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
            (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             AND (p.user_id=?1 OR ph.moderation_state='ok')
              ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
+           (SELECT COUNT(*) FROM post_likes l WHERE l.post_id=p.id) AS like_count,
+           (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.deleted_at IS NULL) AS comment_count,
+           EXISTS(SELECT 1 FROM post_likes l WHERE l.post_id=p.id AND l.user_id=?1) AS liked,
+           EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?1 AND f.followee_id=p.user_id) AS following,
            CASE WHEN p.user_id=?1 THEN 'exact'
                 WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
                 WHEN p.user_id IN (SELECT uid FROM friend) THEN u.friend_precision
@@ -632,9 +812,12 @@ async function listProfilePosts(handle, url, env, me) {
   const out=[];
   for(const r of rows.results||[]){
     const c=await coordsFor(env,r);
-    out.push({id:r.id,title:r.title,category:r.category,tag:r.tag,place_name:r.place_name,
+    out.push({id:r.id,title:r.mine?r.title:publicLocationLabel(r.title),category:r.category,tag:r.tag,
+      place_name:r.mine?r.place_name:publicLocationLabel(r.place_name),
       taken_at:r.taken_at,visibility:r.visibility,mine:!!r.mine,
       photo_id:r.photo_id||null,
+      like_count:Number(r.like_count)||0,comment_count:Number(r.comment_count)||0,
+      liked:!!r.liked,following:!!r.following,
       author:{id:r.user_id,name:r.display_name,handle:r.handle},
       map_available:!!c,
       ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})});
@@ -656,14 +839,19 @@ async function listProfilePosts(handle, url, env, me) {
  * 真の座標はここでも返さず、ユーザー設定に応じた座標だけを付ける。
  */
 async function listFeed(url, env, me) {
-  if (!(await userLimit(env, me.id, "feed-read-hour", hourKey(), 180))) {
+  if (!(await socialReadLimit(env, me, "feed"))) {
     return json({ error: "読み込み回数が多すぎます" }, 429);
   }
   const requested = Number(url.searchParams.get("limit") || 24);
   const limit = Number.isFinite(requested)
     ? Math.max(1, Math.min(40, Math.trunc(requested))) : 24;
-  const query = limitedText(String(url.searchParams.get("q") || "").replace(/^#/, "").trim(), 40);
+  const rawQuery = String(url.searchParams.get("q") || "").trim();
+  const hashtagOnly = rawQuery.startsWith("#");
+  const query = limitedText(rawQuery.replace(/^#/, "").trim(), 40);
   if (query === null) return json({ error: "検索語が長すぎます" }, 400);
+  const searchTerm = hashtagOnly ? query.normalize("NFKC").toLocaleLowerCase("ja-JP")
+    : query.replace(/[\\%_]/g, "\\$&");
+  const followingOnly = url.searchParams.get("mode") === "following";
   const rawCursor = String(url.searchParams.get("cursor") || "9007199254740991:zzzzzzzz");
   const match = /^(\d{1,16}):([A-Za-z0-9_-]{0,80})$/.exec(rawCursor);
   if (!match) return json({ error: "カーソルが不正です" }, 400);
@@ -681,7 +869,12 @@ async function listFeed(url, env, me) {
            p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
            p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
            (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             AND (p.user_id=?1 OR ph.moderation_state='ok')
              ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
+           (SELECT COUNT(*) FROM post_likes l WHERE l.post_id=p.id) AS like_count,
+           (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.deleted_at IS NULL) AS comment_count,
+           EXISTS(SELECT 1 FROM post_likes l WHERE l.post_id=p.id AND l.user_id=?1) AS liked,
+           EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?1 AND f.followee_id=p.user_id) AS following,
            CASE WHEN p.user_id=?1 THEN 'exact'
                 WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
                 WHEN p.user_id IN (SELECT uid FROM friend) THEN u.friend_precision
@@ -691,24 +884,34 @@ async function listFeed(url, env, me) {
        AND (p.visibility='public' OR
             (p.visibility='friends' AND p.user_id IN (SELECT uid FROM friend)))
        AND (p.created_at<?3 OR (p.created_at=?3 AND p.id<?4))
-       AND (?5='' OR p.tag LIKE '%'||?5||'%' OR p.title LIKE '%'||?5||'%'
-            OR p.place_name LIKE '%'||?5||'%' OR p.body LIKE '%'||?5||'%')
-       AND EXISTS (SELECT 1 FROM photos ph WHERE ph.post_id=p.id AND ph.key_thumb IS NOT NULL)
+       AND (?5='' OR (?6=1 AND EXISTS(SELECT 1 FROM post_hashtags h
+              WHERE h.post_id=p.id AND h.tag_key=?5))
+            OR (?6=0 AND (p.tag LIKE '%'||?5||'%' ESCAPE '\\'
+              OR p.title LIKE '%'||?5||'%' ESCAPE '\\'
+              OR p.place_name LIKE '%'||?5||'%' ESCAPE '\\'
+              OR p.body LIKE '%'||?5||'%' ESCAPE '\\')))
+       AND (?7=0 OR EXISTS(SELECT 1 FROM follows f
+              WHERE f.follower_id=?1 AND f.followee_id=p.user_id))
+       AND EXISTS (SELECT 1 FROM photos ph WHERE ph.post_id=p.id AND ph.key_thumb IS NOT NULL
+         AND ph.moderation_state='ok')
        AND NOT EXISTS (
          SELECT 1 FROM blocks b
           WHERE (b.blocker_id=?1 AND b.blocked_id=p.user_id)
              OR (b.blocker_id=p.user_id AND b.blocked_id=?1)
        )
-     ORDER BY p.created_at DESC,p.id DESC LIMIT ?6
-  `).bind(me.id, now, cursorTime, cursorId, query || "", limit).all();
+     ORDER BY p.created_at DESC,p.id DESC LIMIT ?8
+  `).bind(me.id, now, cursorTime, cursorId, searchTerm || "", hashtagOnly ? 1 : 0,
+    followingOnly ? 1 : 0, limit).all();
 
   const out=[];
   for (const r of rows.results || []) {
     const c=await coordsFor(env,r);
     out.push({
-      id:r.id,title:r.title,category:r.category,tag:r.tag,body:r.body||"",
-      place_name:r.place_name,taken_at:r.taken_at,created_at:r.created_at,
+      id:r.id,title:r.mine?r.title:publicLocationLabel(r.title),category:r.category,tag:r.tag,body:r.body||"",
+      place_name:r.mine?r.place_name:publicLocationLabel(r.place_name),taken_at:r.taken_at,created_at:r.created_at,
       visibility:r.visibility,mine:!!r.mine,photo_id:r.photo_id||null,
+      like_count:Number(r.like_count)||0,comment_count:Number(r.comment_count)||0,
+      liked:!!r.liked,following:!!r.following,
       author:{id:r.user_id,name:r.display_name,handle:r.handle},
       map_available:!!c,
       ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})
@@ -808,26 +1011,55 @@ async function putPhoto(url, request, env, me) {
   });
 
   const col = kind === "orig" ? "key_orig" : kind === "view" ? "key_view" : "key_thumb";
+  const moderationState = (kind === "view" || kind === "thumb") ? moderation : null;
+  const moderationCol = kind === "view" ? "moderation_view_state" :
+    kind === "thumb" ? "moderation_thumb_state" : null;
   if (exists) {
-    await env.DB.prepare(
-      `UPDATE photos SET ${col}=? WHERE id=? AND user_id=? AND post_id=?`
-    ).bind(key, photoId, me.id, postId).run();
+    if (moderationCol) {
+      await env.DB.prepare(
+        `UPDATE photos SET ${col}=?,${moderationCol}=?
+          WHERE id=? AND user_id=? AND post_id=?`
+      ).bind(key, moderationState, photoId, me.id, postId).run();
+    } else {
+      await env.DB.prepare(
+        `UPDATE photos SET ${col}=? WHERE id=? AND user_id=? AND post_id=?`
+      ).bind(key, photoId, me.id, postId).run();
+    }
   } else {
     try {
-      await env.DB.prepare(
-        `INSERT INTO photos (id,post_id,user_id,${col},created_at) VALUES (?,?,?,?,?)`
-      ).bind(photoId, postId, me.id, key, Date.now()).run();
+      if (moderationCol) {
+        await env.DB.prepare(
+          `INSERT INTO photos (id,post_id,user_id,${col},${moderationCol},moderation_state,created_at)
+           VALUES (?,?,?,?,?,?,?)`
+        ).bind(photoId, postId, me.id, key, moderationState, moderationState, Date.now()).run();
+      } else {
+        await env.DB.prepare(
+          `INSERT INTO photos (id,post_id,user_id,${col},moderation_state,created_at) VALUES (?,?,?,?,?,?)`
+        ).bind(photoId, postId, me.id, key, null, Date.now()).run();
+      }
     } catch (e) {
       // DBへ参照を残せなかった新規オブジェクトは、その場で回収する。
       await env.PHOTOS.delete(key);
       throw e;
     }
   }
+  if (moderationCol) {
+    await env.DB.prepare(`
+      UPDATE photos SET moderation_state=CASE
+        WHEN moderation_view_state='bad' OR moderation_thumb_state='bad' THEN 'bad'
+        WHEN moderation_view_state='error' OR moderation_thumb_state='error' THEN 'error'
+        WHEN key_view IS NOT NULL AND key_thumb IS NOT NULL
+          AND moderation_view_state='ok' AND moderation_thumb_state='ok' THEN 'ok'
+        ELSE 'not-required' END
+       WHERE id=? AND user_id=? AND post_id=?
+    `).bind(photoId, me.id, postId).run();
+  }
   if (own.visibility !== "private" && (kind === "view" || kind === "thumb") && moderation !== "ok") {
     // 並行PATCHとの競合後も、判定不能な画像を公開状態に残さない。
     await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
       .bind(postId, me.id).run();
   }
+  if (moderation === "ok") await announcePostIfReady(env, postId);
   return json({ photo_id: photoId, kind, moderation });
 }
 
@@ -855,6 +1087,7 @@ async function getPhoto(path, env, me) {
   }
 
   if (post.user_id !== me.id) {
+    if (ph.moderation_state !== "ok") return json({ error: "権限がありません" }, 403);
     if (post.publish_at > Date.now() || post.visibility === "private") {
       return json({ error: "権限がありません" }, 403);
     }
@@ -903,13 +1136,13 @@ async function isBlocked(env, a, b) {
 
 async function listFriends(env, me) {
   const acc = await env.DB.prepare(`
-    SELECT u.id,u.handle,u.display_name FROM friendships f
+    SELECT DISTINCT u.id,u.handle,u.display_name FROM friendships f
       JOIN users u ON u.id = CASE WHEN f.requester_id=?1 THEN f.addressee_id ELSE f.requester_id END
      WHERE f.status='accepted' AND (f.requester_id=?1 OR f.addressee_id=?1)
   `).bind(me.id).all();
 
   const inc = await env.DB.prepare(`
-    SELECT u.id,u.handle,u.display_name FROM friendships f
+    SELECT DISTINCT u.id,u.handle,u.display_name FROM friendships f
       JOIN users u ON u.id=f.requester_id
      WHERE f.status='pending' AND f.addressee_id=?1
   `).bind(me.id).all();
@@ -918,7 +1151,10 @@ async function listFriends(env, me) {
 }
 
 async function friendRequest(request, env, me) {
-  const { handle } = await request.json();
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const handle = limitedText(parsed.value.handle, 30);
+  if (!handle) return json({ error: "IDを確認してください" }, 400);
   const target = await env.DB.prepare("SELECT id FROM users WHERE handle=? AND deleted_at IS NULL")
     .bind(handle).first();
   if (!target) return json({ error: "そのIDのユーザーはいません" }, 404);
@@ -926,10 +1162,14 @@ async function friendRequest(request, env, me) {
   if (await isBlocked(env, me.id, target.id)) return json({ error: "申請できません" }, 403);
 
   const now = Date.now();
+  const current = await env.DB.prepare(`
+    SELECT id,status,requester_id,addressee_id FROM friendships
+     WHERE (requester_id=?1 AND addressee_id=?2) OR (requester_id=?2 AND addressee_id=?1)
+     ORDER BY status='accepted' DESC,updated_at DESC LIMIT 1
+  `).bind(me.id, target.id).first();
+  if (current && current.status === "accepted") return json({ ok: true, status: "accepted" });
   // 相手からの申請が既にあれば、その場で成立させる
-  const rev = await env.DB.prepare(
-    "SELECT id FROM friendships WHERE requester_id=? AND addressee_id=? AND status='pending'"
-  ).bind(target.id, me.id).first();
+  const rev = current && current.requester_id === target.id && current.status === "pending" ? current : null;
   if (rev) {
     await env.DB.prepare("UPDATE friendships SET status='accepted',updated_at=? WHERE id=?")
       .bind(now, rev.id).run();
@@ -940,29 +1180,827 @@ async function friendRequest(request, env, me) {
     INSERT INTO friendships (requester_id,addressee_id,status,created_at,updated_at)
     VALUES (?,?,'pending',?,?)
     ON CONFLICT(requester_id,addressee_id) DO UPDATE SET status='pending',updated_at=?
+      WHERE friendships.status<>'accepted'
   `).bind(me.id, target.id, now, now, now).run();
   return json({ ok: true, status: "pending" });
 }
 
 async function friendAccept(request, env, me) {
-  const { user_id } = await request.json();
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const user_id = String(parsed.value.user_id || "");
   const r = await env.DB.prepare(`
     UPDATE friendships SET status='accepted',updated_at=?
      WHERE requester_id=? AND addressee_id=? AND status='pending'
+       AND NOT EXISTS (SELECT 1 FROM blocks b
+         WHERE (b.blocker_id=?2 AND b.blocked_id=?3)
+            OR (b.blocker_id=?3 AND b.blocked_id=?2))
   `).bind(Date.now(), user_id, me.id).run();
   return json({ ok: true, changed: r.meta ? r.meta.changes : 0 });
 }
 
 async function blockUser(request, env, me) {
-  const { user_id } = await request.json();
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO blocks (blocker_id,blocked_id,created_at) VALUES (?,?,?)"
-  ).bind(me.id, user_id, Date.now()).run();
-  await env.DB.prepare(`
-    UPDATE friendships SET status='rejected',updated_at=?
-     WHERE (requester_id=?1 AND addressee_id=?2) OR (requester_id=?2 AND addressee_id=?1)
-  `).bind(Date.now(), me.id, user_id).run();
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const user_id = String(parsed.value.user_id || "");
+  if (!user_id || user_id === me.id) return json({ error: "対象が不正です" }, 400);
+  if (!(await socialWriteLimit(env, me, "block")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const target = await env.DB.prepare(
+    "SELECT id FROM users WHERE id=? AND deleted_at IS NULL"
+  ).bind(user_id).first();
+  if (!target) return json({ error: "見つかりません" }, 404);
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO blocks (blocker_id,blocked_id,created_at) VALUES (?,?,?)")
+      .bind(me.id, user_id, now),
+    env.DB.prepare(`UPDATE friendships SET status='rejected',updated_at=?
+       WHERE (requester_id=?1 AND addressee_id=?2) OR (requester_id=?2 AND addressee_id=?1)`)
+      .bind(now, me.id, user_id),
+    env.DB.prepare("DELETE FROM follows WHERE (follower_id=?1 AND followee_id=?2) OR (follower_id=?2 AND followee_id=?1)")
+      .bind(me.id, user_id),
+    env.DB.prepare(`DELETE FROM notifications
+      WHERE (user_id=?1 AND actor_id=?2) OR (user_id=?2 AND actor_id=?1)`)
+      .bind(me.id, user_id),
+    env.DB.prepare(`UPDATE conversation_members SET hidden_at=?3
+      WHERE user_id IN (?1,?2) AND conversation_id IN (
+        SELECT a.conversation_id FROM conversation_members a
+          JOIN conversation_members b ON b.conversation_id=a.conversation_id
+         WHERE a.user_id=?1 AND b.user_id=?2
+      )`).bind(me.id, user_id, now)
+  ]);
   return json({ ok: true });
+}
+
+
+/* ============================================================
+   ソーシャル機能
+
+   posts / friendships / blocks の判定を必ず先に通す。
+   画面側の非表示や、IDを知っていることは権限として扱わない。
+   ============================================================ */
+
+async function viewablePost(env, me, postId) {
+  const post = await env.DB.prepare(`
+    SELECT p.id,p.user_id,p.title,p.tag,p.body,p.place_name,p.visibility,p.publish_at,
+           p.deleted_at,u.handle,u.display_name
+      FROM posts p JOIN users u ON u.id=p.user_id
+     WHERE p.id=? AND p.deleted_at IS NULL AND u.deleted_at IS NULL
+  `).bind(postId).first();
+  if (!post || await isBlocked(env, me.id, post.user_id)) return null;
+  if (post.user_id === me.id) return post;
+  if (post.publish_at > Date.now() || post.visibility === "private") return null;
+  if (post.visibility === "friends" && !(await areFriends(env, me.id, post.user_id))) return null;
+  return post;
+}
+
+function hashtagRows(...values) {
+  const seen = new Set(), out = [];
+  const text = values.map(v => String(v || "")).join(" ");
+  for (const match of text.matchAll(/#([^\s#]{1,30})/gu)) {
+    const label = match[1].replace(/[.,!?、。！？：:;；)）\]】]+$/u, "").normalize("NFKC");
+    if (!label) continue;
+    const key = label.toLocaleLowerCase("ja-JP");
+    if (!seen.has(key)) { seen.add(key); out.push({ key, label: "#" + label }); }
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
+async function syncPostHashtags(env, postId, createdAt, ...values) {
+  const rows = hashtagRows(...values);
+  const statements = [env.DB.prepare("DELETE FROM post_hashtags WHERE post_id=?").bind(postId)];
+  for (const row of rows) {
+    statements.push(env.DB.prepare(
+      "INSERT INTO post_hashtags (post_id,tag_key,tag_label,created_at) VALUES (?,?,?,?)"
+    ).bind(postId, row.key, row.label, createdAt || Date.now()));
+  }
+  await env.DB.batch(statements);
+}
+
+async function putNotification(env, userId, actorId, kind, entityType, entityId, dedupeKey) {
+  if (!userId || userId === actorId) return false;
+  if (actorId && await isBlocked(env, userId, actorId)) return false;
+  dedupeKey=dedupeKey||`${kind}:${entityType||"none"}:${entityId||"none"}:${actorId||"system"}`;
+  const result = await env.DB.prepare(`
+    INSERT OR IGNORE INTO notifications
+      (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+    VALUES (?,?,?,?,?,?,?,?)
+  `).bind(uuid(), userId, actorId || null, kind, entityType || null,
+    entityId || null, dedupeKey, Date.now()).run();
+  return !!(result.meta && result.meta.changes === 1);
+}
+
+async function putLike(postId, env, me) {
+  if (!(await socialWriteLimit(env, me, "likes")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const post = await viewablePost(env, me, postId);
+  if (!post) return json({ error: "見つかりません" }, 404);
+  const result = await env.DB.prepare(
+    "INSERT OR IGNORE INTO post_likes (post_id,user_id,created_at) VALUES (?,?,?)"
+  ).bind(postId, me.id, Date.now()).run();
+  if (result.meta && result.meta.changes === 1) {
+    const fresh = await putNotification(env, post.user_id, me.id, "like", "post", postId,
+      `like:${postId}:${me.id}`);
+    if (fresh) await sendPush(env, post.user_id,
+      me.display_name || me.handle || "誰か", "あなたの思い出にいいねしました", { post: postId });
+  }
+  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_likes WHERE post_id=?")
+    .bind(postId).first();
+  return json({ ok: true, liked: true, count: Number(count && count.n) || 0 });
+}
+
+async function deleteLike(postId, env, me) {
+  if (!(await socialWriteLimit(env, me, "likes")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const post = await viewablePost(env, me, postId);
+  if (!post) return json({ error: "見つかりません" }, 404);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM post_likes WHERE post_id=? AND user_id=?").bind(postId, me.id),
+    env.DB.prepare("DELETE FROM notifications WHERE user_id=(SELECT user_id FROM posts WHERE id=?) AND dedupe_key=?")
+      .bind(postId, `like:${postId}:${me.id}`)
+  ]);
+  const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_likes WHERE post_id=?")
+    .bind(postId).first();
+  return json({ ok: true, liked: false, count: Number(count && count.n) || 0 });
+}
+
+const SOCIAL_CURSOR_MAX = "9007199254740991:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+function socialCursor(url) {
+  let raw = String(url.searchParams.get("cursor") || url.searchParams.get("before") || SOCIAL_CURSOR_MAX);
+  // 旧クライアントの時刻だけのbeforeも、安全な複合カーソルへ読み替える。
+  if (/^\d{1,16}$/.test(raw)) raw += ":zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+  const match = /^(\d{1,16}):([A-Za-z0-9_-]{0,80})$/.exec(raw);
+  const time = match ? Number(match[1]) : NaN;
+  if (!match || !Number.isSafeInteger(time)) return null;
+  return { raw, time, id: match[2] };
+}
+
+async function listComments(postId, url, env, me) {
+  const post = await viewablePost(env, me, postId);
+  if (!post) return json({ error: "見つかりません" }, 404);
+  if (!(await socialReadLimit(env, me, "comments")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const cursor = socialCursor(url);
+  if (!cursor) return json({ error: "カーソルが不正です" }, 400);
+  const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") || 30) | 0));
+  const rows = await env.DB.prepare(`
+    SELECT c.id,c.body,c.created_at,c.updated_at,c.user_id,u.handle,u.display_name
+      FROM post_comments c JOIN users u ON u.id=c.user_id
+     WHERE c.post_id=?1 AND c.deleted_at IS NULL
+       AND (c.created_at<?2 OR (c.created_at=?2 AND c.id<?3))
+       AND NOT EXISTS (SELECT 1 FROM blocks b
+         WHERE (b.blocker_id=?4 AND b.blocked_id=c.user_id)
+            OR (b.blocker_id=c.user_id AND b.blocked_id=?4))
+     ORDER BY c.created_at DESC,c.id DESC LIMIT ?5
+  `).bind(postId, cursor.time, cursor.id, me.id, limit).all();
+  const descending = rows.results || [], oldest = descending[descending.length - 1];
+  const comments = descending.slice().reverse().map(r => ({
+    id: r.id, body: r.body, created_at: r.created_at, mine: r.user_id === me.id,
+    author: { id: r.user_id, handle: r.handle, name: r.display_name }
+  }));
+  return json({ comments, cursor: oldest ? `${oldest.created_at}:${oldest.id}` : cursor.raw,
+    has_more: descending.length === limit });
+}
+
+async function createComment(postId, request, env, me) {
+  const parsed = await limitedJson(request, 6_000);
+  if (parsed.error) return parsed.error;
+  const body = limitedText(parsed.value.body, 1000);
+  if (!body) return json({ error: "コメントを入力してください" }, 400);
+  const operationId = String(parsed.value.client_operation_id || "");
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(operationId))
+    return json({ error: "操作IDが不正です" }, 400);
+  const post = await viewablePost(env, me, postId);
+  if (!post) return json({ error: "見つかりません" }, 404);
+  const replay = await env.DB.prepare(`SELECT id,body,created_at FROM post_comments
+    WHERE post_id=? AND user_id=? AND client_operation_id=?`)
+    .bind(postId, me.id, operationId).first();
+  if (replay) return replay.body === body
+    ? json({ ...replay, mine: true, replayed: true,
+        author: { id: me.id, handle: me.handle, name: me.display_name } })
+    : json({ error: "同じ操作IDの内容が一致しません" }, 409);
+  if (!(await socialWriteLimit(env, me, "comments")) ||
+      !(await userLimit(env, me.id, "comments-day", dayKey(), 200)))
+    return json({ error: "コメント回数が多すぎます" }, 429);
+  const id = uuid(), now = Date.now();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO post_comments (id,post_id,user_id,body,client_operation_id,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?)
+    `).bind(id, postId, me.id, body, operationId, now, now).run();
+  } catch (error) {
+    const existing = await env.DB.prepare(`SELECT id,body,created_at FROM post_comments
+      WHERE post_id=? AND user_id=? AND client_operation_id=?`)
+      .bind(postId, me.id, operationId).first();
+    if (existing) return existing.body === body
+      ? json({ ...existing, mine: true, replayed: true,
+          author: { id: me.id, handle: me.handle, name: me.display_name } })
+      : json({ error: "同じ操作IDの内容が一致しません" }, 409);
+    throw error;
+  }
+  const fresh = await putNotification(env, post.user_id, me.id, "comment", "post", postId,
+    `comment:${id}`);
+  if (fresh) await sendPush(env, post.user_id, me.display_name || me.handle || "誰か",
+    "新しいコメントが届きました", { post: postId, comment: id });
+  return json({ id, body, created_at: now, mine: true,
+    author: { id: me.id, handle: me.handle, name: me.display_name } }, 201);
+}
+
+async function deleteComment(postId, commentId, env, me) {
+  const row = await env.DB.prepare(`
+    SELECT c.user_id,p.user_id AS post_owner FROM post_comments c
+      JOIN posts p ON p.id=c.post_id
+     WHERE c.id=? AND c.post_id=? AND c.deleted_at IS NULL
+  `).bind(commentId, postId).first();
+  if (!row) return json({ error: "見つかりません" }, 404);
+  if (row.user_id !== me.id && row.post_owner !== me.id)
+    return json({ error: "権限がありません" }, 403);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE post_comments SET deleted_at=?,body='' WHERE id=? AND post_id=?")
+      .bind(Date.now(), commentId, postId),
+    env.DB.prepare("DELETE FROM notifications WHERE dedupe_key=?").bind(`comment:${commentId}`)
+  ]);
+  return json({ ok: true });
+}
+
+async function trendingHashtags(url, env, me) {
+  if (!(await socialReadLimit(env, me, "hashtags")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const since = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const rows = await env.DB.prepare(`
+    SELECT h.tag_key,MAX(h.tag_label) AS label,COUNT(*) AS count
+      FROM post_hashtags h JOIN posts p ON p.id=h.post_id
+     WHERE h.created_at>=?1 AND p.deleted_at IS NULL AND p.publish_at<=?2
+       AND p.visibility='public'
+       AND NOT EXISTS (SELECT 1 FROM blocks b
+         WHERE (b.blocker_id=?3 AND b.blocked_id=p.user_id)
+            OR (b.blocker_id=p.user_id AND b.blocked_id=?3))
+     GROUP BY h.tag_key ORDER BY count DESC,MAX(h.created_at) DESC LIMIT 12
+  `).bind(since, Date.now(), me.id).all();
+  return json({ tags: (rows.results || []).map(r => ({ label: r.label, count: Number(r.count) })) });
+}
+
+async function listFollows(url, env, me) {
+  if (!(await socialReadLimit(env, me, "follows")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const handle = String(url.searchParams.get("user") || me.handle || "");
+  const user = await env.DB.prepare(
+    "SELECT id,handle FROM users WHERE handle=? AND deleted_at IS NULL"
+  ).bind(handle).first();
+  if (!user || await isBlocked(env, me.id, user.id)) return json({ error: "見つかりません" }, 404);
+  const counts = await env.DB.prepare(`
+    SELECT (SELECT COUNT(*) FROM follows WHERE followee_id=?1) AS followers,
+           (SELECT COUNT(*) FROM follows WHERE follower_id=?1) AS following,
+           EXISTS(SELECT 1 FROM follows WHERE follower_id=?2 AND followee_id=?1) AS followed
+  `).bind(user.id, me.id).first();
+  return json({ user: user.handle, followers: Number(counts.followers) || 0,
+    following: Number(counts.following) || 0, followed: !!counts.followed });
+}
+
+async function putFollow(handle, env, me) {
+  if (!(await socialWriteLimit(env, me, "follows")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const target = await env.DB.prepare(
+    "SELECT id,handle,display_name FROM users WHERE handle=? AND deleted_at IS NULL"
+  ).bind(handle).first();
+  if (!target) return json({ error: "見つかりません" }, 404);
+  if (target.id === me.id) return json({ error: "自分はフォローできません" }, 400);
+  if (await isBlocked(env, me.id, target.id)) return json({ error: "操作できません" }, 403);
+  const result = await env.DB.prepare(
+    "INSERT OR IGNORE INTO follows (follower_id,followee_id,created_at) VALUES (?,?,?)"
+  ).bind(me.id, target.id, Date.now()).run();
+  if (result.meta && result.meta.changes === 1) {
+    const fresh = await putNotification(env, target.id, me.id, "follow", "user", me.id,
+      `follow:${me.id}`);
+    if (fresh) await sendPush(env, target.id, me.display_name || me.handle || "誰か",
+      "あなたをフォローしました", { profile: me.handle || "" });
+  }
+  return json({ ok: true, followed: true });
+}
+
+async function deleteFollow(handle, env, me) {
+  if (!(await socialWriteLimit(env, me, "follows")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const target = await env.DB.prepare("SELECT id FROM users WHERE handle=? AND deleted_at IS NULL")
+    .bind(handle).first();
+  if (!target) return json({ error: "見つかりません" }, 404);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM follows WHERE follower_id=? AND followee_id=?").bind(me.id, target.id),
+    env.DB.prepare("DELETE FROM notifications WHERE user_id=? AND dedupe_key=?")
+      .bind(target.id, `follow:${me.id}`)
+  ]);
+  return json({ ok: true, followed: false });
+}
+
+async function listNotifications(url, env, me) {
+  if (!(await socialReadLimit(env, me, "notifications")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const cursor = socialCursor(url);
+  if (!cursor) return json({ error: "カーソルが不正です" }, 400);
+  const rows = await env.DB.prepare(`
+    SELECT n.id,n.kind,n.entity_type,n.entity_id,n.created_at,n.read_at,
+           u.id AS actor_id,u.handle,u.display_name
+      FROM notifications n LEFT JOIN users u ON u.id=n.actor_id
+     WHERE n.user_id=?1
+       AND (n.created_at<?2 OR (n.created_at=?2 AND n.id<?3))
+       AND (n.actor_id IS NULL OR NOT EXISTS (SELECT 1 FROM blocks b
+         WHERE (b.blocker_id=?1 AND b.blocked_id=n.actor_id)
+            OR (b.blocker_id=n.actor_id AND b.blocked_id=?1)))
+     ORDER BY n.created_at DESC,n.id DESC LIMIT 50
+  `).bind(me.id, cursor.time, cursor.id).all();
+  const items = (rows.results || []).map(r => ({ id: r.id, kind: r.kind,
+    entity_type: r.entity_type, entity_id: r.entity_id, created_at: r.created_at,
+    read: !!r.read_at, actor: r.actor_id ? { id: r.actor_id, handle: r.handle, name: r.display_name } : null }));
+  const oldest = (rows.results || [])[(rows.results || []).length - 1];
+  return json({ notifications: items,
+    cursor: oldest ? `${oldest.created_at}:${oldest.id}` : cursor.raw,
+    has_more: items.length === 50 });
+}
+
+async function readNotifications(request, env, me) {
+  if (!(await socialWriteLimit(env, me, "notification-read")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const parsed = await limitedJson(request, 12_000);
+  if (parsed.error) return parsed.error;
+  const now = Date.now();
+  if (parsed.value.all === true) {
+    await env.DB.prepare("UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL")
+      .bind(now, me.id).run();
+  } else {
+    const ids = Array.isArray(parsed.value.ids) ? Array.from(new Set(parsed.value.ids.map(String)
+      .filter(id => /^[A-Za-z0-9_-]{8,80}$/.test(id)))).slice(0, 100) : [];
+    if (!ids.length) return json({ error: "通知を指定してください" }, 400);
+    const marks = ids.map(() => "?").join(",");
+    await env.DB.prepare(`UPDATE notifications SET read_at=? WHERE user_id=? AND id IN (${marks})`)
+      .bind(now, me.id, ...ids).run();
+  }
+  return json({ ok: true });
+}
+
+async function unreadSummary(env, me) {
+  if (!(await socialReadLimit(env, me, "unread")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const row = await env.DB.prepare(`
+    SELECT (SELECT COUNT(*) FROM notifications n WHERE n.user_id=?1 AND n.read_at IS NULL
+              AND n.kind<>'message'
+              AND (n.actor_id IS NULL OR NOT EXISTS (SELECT 1 FROM blocks b
+                WHERE (b.blocker_id=?1 AND b.blocked_id=n.actor_id)
+                   OR (b.blocker_id=n.actor_id AND b.blocked_id=?1)))) AS notifications,
+           (SELECT COUNT(*) FROM messages m JOIN conversation_members cm
+              ON cm.conversation_id=m.conversation_id
+             WHERE cm.user_id=?1 AND m.sender_id<>?1 AND m.deleted_at IS NULL
+               AND cm.hidden_at IS NULL
+               AND (m.created_at>cm.last_read_at OR
+                    (m.created_at=cm.last_read_at AND m.id>cm.last_read_id))
+               AND NOT EXISTS (SELECT 1 FROM blocks b
+                 WHERE (b.blocker_id=?1 AND b.blocked_id=m.sender_id)
+                    OR (b.blocker_id=m.sender_id AND b.blocked_id=?1))) AS messages
+  `).bind(me.id).first();
+  return json({ notifications: Number(row.notifications) || 0, messages: Number(row.messages) || 0 });
+}
+
+function directPair(a, b) { return [a, b].sort().join(":"); }
+
+async function conversationMember(env, conversationId, userId) {
+  return await env.DB.prepare(`
+    SELECT cm.conversation_id,cm.last_read_at,cm.last_read_id FROM conversation_members cm
+     WHERE cm.conversation_id=? AND cm.user_id=? AND cm.hidden_at IS NULL
+  `).bind(conversationId, userId).first();
+}
+
+async function createConversation(request, env, me) {
+  if (!(await socialWriteLimit(env, me, "conversations")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const userId = String(parsed.value.user_id || "");
+  const handle = String(parsed.value.handle || "");
+  const target = userId
+    ? await env.DB.prepare("SELECT id,handle,display_name FROM users WHERE id=? AND deleted_at IS NULL").bind(userId).first()
+    : await env.DB.prepare("SELECT id,handle,display_name FROM users WHERE handle=? AND deleted_at IS NULL").bind(handle).first();
+  if (!target || target.id === me.id) return json({ error: "相手を確認できません" }, 400);
+  if (await isBlocked(env, me.id, target.id) || !(await areFriends(env, me.id, target.id)))
+    return json({ error: "チャットはフレンドとのみ開始できます" }, 403);
+  const pair = directPair(me.id, target.id), now = Date.now();
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO conversations (id,pair_key,created_at,updated_at) VALUES (?,?,?,?)
+  `).bind(uuid(), pair, now, now).run();
+  const conversation = await env.DB.prepare("SELECT id FROM conversations WHERE pair_key=?")
+    .bind(pair).first();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO conversation_members (conversation_id,user_id,joined_at,last_read_at,hidden_at)
+      VALUES (?,?,?,?,NULL) ON CONFLICT(conversation_id,user_id) DO UPDATE SET hidden_at=NULL`)
+      .bind(conversation.id, me.id, now, now),
+    env.DB.prepare(`INSERT INTO conversation_members (conversation_id,user_id,joined_at,last_read_at,hidden_at)
+      VALUES (?,?,?,?,NULL) ON CONFLICT(conversation_id,user_id) DO UPDATE SET hidden_at=NULL`)
+      .bind(conversation.id, target.id, now, 0)
+  ]);
+  return json({ id: conversation.id, person: target });
+}
+
+async function listConversations(env, me) {
+  if (!(await socialReadLimit(env, me, "conversations")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const rows = await env.DB.prepare(`
+    SELECT c.id,c.updated_at,u.id AS user_id,u.handle,u.display_name,
+           (SELECT body FROM messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL
+             ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_body,
+           (SELECT created_at FROM messages m WHERE m.conversation_id=c.id AND m.deleted_at IS NULL
+             ORDER BY m.created_at DESC,m.id DESC LIMIT 1) AS last_at,
+           (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id
+             AND m.sender_id<>?1 AND m.deleted_at IS NULL
+             AND (m.created_at>mine.last_read_at OR
+                  (m.created_at=mine.last_read_at AND m.id>mine.last_read_id))) AS unread
+      FROM conversation_members mine
+      JOIN conversations c ON c.id=mine.conversation_id
+      JOIN conversation_members other ON other.conversation_id=c.id AND other.user_id<>?1
+      JOIN users u ON u.id=other.user_id AND u.deleted_at IS NULL
+     WHERE mine.user_id=?1 AND mine.hidden_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM blocks b
+         WHERE (b.blocker_id=?1 AND b.blocked_id=u.id) OR (b.blocker_id=u.id AND b.blocked_id=?1))
+     ORDER BY c.updated_at DESC LIMIT 100
+  `).bind(me.id).all();
+  return json({ conversations: (rows.results || []).map(r => ({ id: r.id,
+    person: { id: r.user_id, handle: r.handle, name: r.display_name },
+    last_body: r.last_body || "", last_at: r.last_at || r.updated_at, unread: Number(r.unread) || 0 })) });
+}
+
+async function listMessages(conversationId, url, env, me) {
+  if (!(await conversationMember(env, conversationId, me.id)))
+    return json({ error: "見つかりません" }, 404);
+  if (!(await socialReadLimit(env, me, "messages")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const cursor = socialCursor(url);
+  if (!cursor) return json({ error: "カーソルが不正です" }, 400);
+  const rows = await env.DB.prepare(`
+    SELECT m.id,m.sender_id,m.body,m.created_at,u.handle,u.display_name
+      FROM messages m JOIN users u ON u.id=m.sender_id
+     WHERE m.conversation_id=?1 AND m.deleted_at IS NULL
+       AND (m.created_at<?2 OR (m.created_at=?2 AND m.id<?3))
+       AND NOT EXISTS (SELECT 1 FROM blocks b
+         WHERE (b.blocker_id=?4 AND b.blocked_id=m.sender_id)
+            OR (b.blocker_id=m.sender_id AND b.blocked_id=?4))
+     ORDER BY m.created_at DESC,m.id DESC LIMIT 60
+  `).bind(conversationId, cursor.time, cursor.id, me.id).all();
+  const descending = rows.results || [], oldest = descending[descending.length - 1];
+  const messages = descending.slice().reverse().map(r => ({ id: r.id, body: r.body,
+    created_at: r.created_at, mine: r.sender_id === me.id,
+    sender: { id: r.sender_id, handle: r.handle, name: r.display_name } }));
+  const newest = messages[messages.length - 1];
+  return json({ messages,
+    cursor: oldest ? `${oldest.created_at}:${oldest.id}` : cursor.raw,
+    latest_message_id: newest ? newest.id : null,
+    has_more: descending.length === 60 });
+}
+
+async function createMessage(conversationId, request, env, me) {
+  const parsed = await limitedJson(request, 8_000);
+  if (parsed.error) return parsed.error;
+  const body = limitedText(parsed.value.body, 2000);
+  if (!body) return json({ error: "メッセージを入力してください" }, 400);
+  const operationId = parsed.value.client_operation_id == null ? null : String(parsed.value.client_operation_id);
+  if (!operationId || !/^[A-Za-z0-9_-]{8,80}$/.test(operationId))
+    return json({ error: "操作IDが不正です" }, 400);
+  if (!(await conversationMember(env, conversationId, me.id)))
+    return json({ error: "見つかりません" }, 404);
+  const replay = await env.DB.prepare(`
+    SELECT id,body,created_at FROM messages
+     WHERE conversation_id=? AND sender_id=? AND client_operation_id=?
+  `).bind(conversationId, me.id, operationId).first();
+  if (replay) return replay.body === body
+    ? json({ ...replay, mine: true, replayed: true })
+    : json({ error: "同じ操作IDの内容が一致しません" }, 409);
+  if (!(await socialWriteLimit(env, me, "messages")) ||
+      !(await userLimit(env, me.id, "messages-day", dayKey(), 600)))
+    return json({ error: "送信回数が多すぎます" }, 429);
+  const other = await env.DB.prepare(`
+    SELECT u.id,u.handle,u.display_name FROM conversation_members cm
+      JOIN users u ON u.id=cm.user_id
+     WHERE cm.conversation_id=? AND cm.user_id<>? AND u.deleted_at IS NULL LIMIT 1
+  `).bind(conversationId, me.id).first();
+  if (!other || await isBlocked(env, me.id, other.id) || !(await areFriends(env, me.id, other.id)))
+    return json({ error: "現在この相手には送信できません" }, 403);
+  const id = uuid(), now = Date.now();
+  try {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO messages (id,conversation_id,sender_id,body,client_operation_id,created_at) VALUES (?,?,?,?,?,?)")
+        .bind(id, conversationId, me.id, body, operationId, now),
+      env.DB.prepare("UPDATE conversations SET updated_at=? WHERE id=?").bind(now, conversationId),
+      env.DB.prepare(`UPDATE conversation_members SET last_read_at=?,last_read_id=?
+        WHERE conversation_id=? AND user_id=?`).bind(now, id, conversationId, me.id)
+    ]);
+  } catch (error) {
+    const existing = await env.DB.prepare(`SELECT id,body,created_at FROM messages
+      WHERE conversation_id=? AND sender_id=? AND client_operation_id=?`)
+      .bind(conversationId, me.id, operationId).first();
+    if (existing) return existing.body === body
+      ? json({ ...existing, mine: true, replayed: true })
+      : json({ error: "同じ操作IDの内容が一致しません" }, 409);
+    throw error;
+  }
+  const fresh = await putNotification(env, other.id, me.id, "message", "conversation",
+    conversationId, `message:${id}`);
+  if (fresh) await sendPush(env, other.id, me.display_name || me.handle || "フレンド",
+    "新しいメッセージが届きました", { conversation: conversationId });
+  return json({ id, body, created_at: now, mine: true }, 201);
+}
+
+async function readConversation(conversationId, request, env, me) {
+  const member = await conversationMember(env, conversationId, me.id);
+  if (!member) return json({ error: "見つかりません" }, 404);
+  if (!(await socialWriteLimit(env, me, "message-read")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const parsed = await limitedJson(request, 2_000);
+  if (parsed.error) return parsed.error;
+  const messageId = String(parsed.value.last_message_id || "");
+  if (messageId && !/^[A-Za-z0-9_-]{8,80}$/.test(messageId))
+    return json({ error: "メッセージIDが不正です" }, 400);
+  let last = null;
+  if (messageId) {
+    last = await env.DB.prepare(`SELECT id,created_at FROM messages
+      WHERE id=? AND conversation_id=? AND deleted_at IS NULL`).bind(messageId, conversationId).first();
+    if (!last) return json({ error: "見つかりません" }, 404);
+  }
+  const now = Date.now();
+  const statements = [];
+  if (last) statements.push(env.DB.prepare(`UPDATE conversation_members
+    SET last_read_at=?,last_read_id=? WHERE conversation_id=? AND user_id=?
+      AND (last_read_at<? OR (last_read_at=? AND last_read_id<?))`)
+    .bind(last.created_at, last.id, conversationId, me.id, last.created_at, last.created_at, last.id));
+  statements.push(
+    env.DB.prepare("UPDATE notifications SET read_at=? WHERE user_id=? AND entity_type='conversation' AND entity_id=? AND read_at IS NULL")
+      .bind(now, me.id, conversationId)
+  );
+  await env.DB.batch(statements);
+  return json({ ok: true });
+}
+
+async function ownAlbum(env, me, albumId) {
+  return await env.DB.prepare(
+    "SELECT * FROM social_albums WHERE id=? AND user_id=? AND deleted_at IS NULL"
+  ).bind(albumId, me.id).first();
+}
+
+async function viewableAlbum(env, me, albumId) {
+  const album = await env.DB.prepare("SELECT * FROM social_albums WHERE id=? AND deleted_at IS NULL")
+    .bind(albumId).first();
+  if (!album || await isBlocked(env, me.id, album.user_id)) return null;
+  if (album.user_id === me.id || album.visibility === "public") return album;
+  if (album.visibility === "friends" && await areFriends(env, me.id, album.user_id)) return album;
+  return null;
+}
+
+async function listAlbums(url, env, me) {
+  if (!(await socialReadLimit(env, me, "albums")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const handle = String(url.searchParams.get("user") || me.handle || "");
+  const owner = await env.DB.prepare("SELECT id,handle,display_name FROM users WHERE handle=? AND deleted_at IS NULL")
+    .bind(handle).first();
+  if (!owner || await isBlocked(env, me.id, owner.id)) return json({ error: "見つかりません" }, 404);
+  const friend = owner.id !== me.id && await areFriends(env, me.id, owner.id);
+  const rows = await env.DB.prepare(`
+    SELECT a.id,a.title,a.description,a.visibility,a.updated_at,
+           COUNT(i.post_id) AS item_count
+      FROM social_albums a LEFT JOIN social_album_items i ON i.album_id=a.id
+     WHERE a.user_id=?1 AND a.deleted_at IS NULL
+       AND (?2=1 OR a.visibility='public' OR (?3=1 AND a.visibility='friends'))
+     GROUP BY a.id ORDER BY a.updated_at DESC LIMIT 100
+  `).bind(owner.id, owner.id === me.id ? 1 : 0, friend ? 1 : 0).all();
+  return json({ owner, albums: (rows.results || []).map(r => ({ ...r, item_count: Number(r.item_count) || 0 })) });
+}
+
+async function createAlbum(request, env, me) {
+  const parsed = await limitedJson(request, 24_000);
+  if (parsed.error) return parsed.error;
+  if (!(await socialWriteLimit(env, me, "albums")) ||
+      !(await userLimit(env, me.id, "albums-day", dayKey(), 30)))
+    return json({ error: "アルバム作成数が多すぎます" }, 429);
+  const title = limitedText(parsed.value.title, 100);
+  const description = limitedText(parsed.value.description, 1000);
+  const visibility = ["private", "friends", "public"].includes(parsed.value.visibility)
+    ? parsed.value.visibility : "private";
+  if (!title || description === null) return json({ error: "アルバム名を確認してください" }, 400);
+  const id = uuid(), now = Date.now();
+  await env.DB.prepare(`
+    INSERT INTO social_albums (id,user_id,title,description,visibility,created_at,updated_at)
+    VALUES (?,?,?,?,?,?,?)
+  `).bind(id, me.id, title, description || "", visibility, now, now).run();
+  return json({ id, title, description: description || "", visibility }, 201);
+}
+
+async function getAlbum(albumId, env, me) {
+  if (!(await socialReadLimit(env, me, "albums")))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const album = await viewableAlbum(env, me, albumId);
+  if (!album) return json({ error: "見つかりません" }, 404);
+  const rows = await env.DB.prepare(`
+    SELECT p.id,p.title,p.tag,p.place_name,p.taken_at,p.visibility,
+           (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             AND (p.user_id=?2 OR ph.moderation_state='ok')
+             ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id
+      FROM social_album_items i JOIN posts p ON p.id=i.post_id
+     WHERE i.album_id=?1 AND p.deleted_at IS NULL
+       AND (p.user_id=?2 OR (p.publish_at<=?3 AND
+         (p.visibility='public' OR (p.visibility='friends' AND ?4=1))))
+     ORDER BY i.sort_order,i.created_at
+  `).bind(albumId, me.id, Date.now(), await areFriends(env, me.id, album.user_id) ? 1 : 0).all();
+  return json({ album, posts: rows.results || [] });
+}
+
+async function patchAlbum(albumId, request, env, me) {
+  if (!(await socialWriteLimit(env, me, "albums")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const album = await ownAlbum(env, me, albumId);
+  if (!album) return json({ error: "見つかりません" }, 404);
+  const parsed = await limitedJson(request, 8_000);
+  if (parsed.error) return parsed.error;
+  const sets = [], values = [];
+  if ("title" in parsed.value) {
+    const title = limitedText(parsed.value.title, 100); if (!title) return json({ error: "アルバム名を確認してください" }, 400);
+    sets.push("title=?"); values.push(title);
+  }
+  if ("description" in parsed.value) {
+    const description = limitedText(parsed.value.description, 1000); if (description === null) return json({ error: "説明が長すぎます" }, 413);
+    sets.push("description=?"); values.push(description);
+  }
+  if ("visibility" in parsed.value) {
+    if (!["private", "friends", "public"].includes(parsed.value.visibility)) return json({ error: "公開範囲が不正です" }, 400);
+    sets.push("visibility=?"); values.push(parsed.value.visibility);
+  }
+  if (!sets.length) return json({ ok: true });
+  sets.push("updated_at=?"); values.push(Date.now(), albumId, me.id);
+  await env.DB.prepare(`UPDATE social_albums SET ${sets.join(",")} WHERE id=? AND user_id=?`)
+    .bind(...values).run();
+  return json({ ok: true });
+}
+
+async function deleteAlbum(albumId, env, me) {
+  if (!(await socialWriteLimit(env, me, "albums")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const result = await env.DB.prepare(
+    "UPDATE social_albums SET deleted_at=?,updated_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL"
+  ).bind(Date.now(), Date.now(), albumId, me.id).run();
+  if (!result.meta || result.meta.changes !== 1) return json({ error: "見つかりません" }, 404);
+  return json({ ok: true });
+}
+
+async function replaceAlbumItems(albumId, request, env, me) {
+  if (!(await socialWriteLimit(env, me, "album-items")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const album = await ownAlbum(env, me, albumId);
+  if (!album) return json({ error: "見つかりません" }, 404);
+  const parsed = await limitedJson(request, 24_000);
+  if (parsed.error) return parsed.error;
+  const ids = Array.isArray(parsed.value.post_ids) ? Array.from(new Set(parsed.value.post_ids.map(String)
+    .filter(id => /^[A-Za-z0-9_-]{8,80}$/.test(id)))).slice(0, 200) : [];
+  if (ids.length) {
+    const marks = ids.map(() => "?").join(",");
+    const owned = await env.DB.prepare(`SELECT id,visibility FROM posts WHERE user_id=? AND deleted_at IS NULL AND id IN (${marks})`)
+      .bind(me.id, ...ids).all();
+    if ((owned.results || []).length !== ids.length) return json({ error: "自分の投稿だけを追加できます" }, 403);
+    const validVisibility = (owned.results || []).every(p => album.visibility === "private" ||
+      (album.visibility === "friends" ? p.visibility !== "private" : p.visibility === "public"));
+    if (!validVisibility) return json({ error: "アルバムより狭い公開範囲の投稿が含まれています" }, 409);
+  }
+  const now = Date.now(), statements = [
+    env.DB.prepare("DELETE FROM social_album_items WHERE album_id=?").bind(albumId)
+  ];
+  ids.forEach((id, index) => statements.push(env.DB.prepare(
+    "INSERT INTO social_album_items (album_id,post_id,sort_order,created_at) VALUES (?,?,?,?)"
+  ).bind(albumId, id, index, now)));
+  statements.push(env.DB.prepare("UPDATE social_albums SET updated_at=? WHERE id=? AND user_id=?")
+    .bind(now, albumId, me.id));
+  await env.DB.batch(statements);
+  return json({ ok: true, count: ids.length });
+}
+
+function randomToken() {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function hashToken(value) {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function createShareLink(request, env, me) {
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  if (!(await socialWriteLimit(env, me, "shares")))
+    return json({ error: "共有リンクの作成回数が多すぎます" }, 429);
+  const type = parsed.value.target_type, id = String(parsed.value.target_id || "");
+  if (!["post", "album"].includes(type) || !/^[A-Za-z0-9_-]{8,80}$/.test(id))
+    return json({ error: "共有対象が不正です" }, 400);
+  if (type === "post") {
+    const post = await viewablePost(env, me, id);
+    if (!post) return json({ error: "見つかりません" }, 404);
+    if (post.user_id !== me.id) return json({ error: "自分の投稿だけ共有できます" }, 403);
+    if (post.visibility !== "public") return json({ error: "共有リンクは公開投稿だけ作れます" }, 409);
+  } else {
+    const album = await ownAlbum(env, me, id);
+    if (!album) return json({ error: "見つかりません" }, 404);
+    if (album.visibility !== "public") return json({ error: "共有リンクは公開アルバムだけ作れます" }, 409);
+  }
+  const days = Math.max(1, Math.min(30, Number(parsed.value.expires_in_days || 7) | 0));
+  const token = randomToken(), hash = await hashToken(token), now = Date.now();
+  await env.DB.prepare(`
+    INSERT INTO share_links (token_hash,owner_id,target_type,target_id,created_at,expires_at)
+    VALUES (?,?,?,?,?,?)
+  `).bind(hash, me.id, type, id, now, now + days * 86400000).run();
+  return json({ token, path: "/api/share/" + token, expires_at: now + days * 86400000 }, 201);
+}
+
+async function revokeShareLink(token, env, me) {
+  if (!(await socialWriteLimit(env, me, "shares")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const hash = await hashToken(token);
+  const result = await env.DB.prepare(
+    "UPDATE share_links SET revoked_at=? WHERE token_hash=? AND owner_id=? AND revoked_at IS NULL"
+  ).bind(Date.now(), hash, me.id).run();
+  if (!result.meta || result.meta.changes !== 1) return json({ error: "見つかりません" }, 404);
+  return json({ ok: true });
+}
+
+async function resolveShareLink(token, request, env) {
+  if (!/^[A-Za-z0-9_-]{20,120}$/.test(token)) return json({ error: "見つかりません" }, 404);
+  const client = await clientRateId(request);
+  if (!(await burstLimit(env, "SHARE_RATE_LIMITER", `${token.slice(0, 16)}:${client}:meta`)))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const hash = await hashToken(token), now = Date.now();
+  const link = await env.DB.prepare(`
+    SELECT target_type,target_id FROM share_links
+     WHERE token_hash=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)
+  `).bind(hash, now).first();
+  if (!link) return json({ error: "リンクは無効です" }, 404);
+  if (link.target_type === "post") {
+    const post = await env.DB.prepare(`
+      SELECT p.id,p.title,p.tag,p.place_name,p.taken_at,u.handle,u.display_name,
+             (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+               AND ph.moderation_state='ok' AND ph.key_view IS NOT NULL
+               ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id
+        FROM posts p JOIN users u ON u.id=p.user_id
+       WHERE p.id=? AND p.deleted_at IS NULL AND p.visibility='public' AND p.publish_at<=?
+    `).bind(link.target_id, now).first();
+    if (post) {
+      post.title=publicLocationLabel(post.title);post.place_name=publicLocationLabel(post.place_name);
+      if (post.photo_id) post.photo_path=`/api/share/${token}/photo/${post.photo_id}/view`;
+    }
+    return post ? json({ type: "post", post }) : json({ error: "公開が終了しました" }, 404);
+  }
+  const album = await env.DB.prepare(`
+    SELECT id,title,description,user_id FROM social_albums
+     WHERE id=? AND deleted_at IS NULL AND visibility='public'
+  `).bind(link.target_id).first();
+  if (!album) return json({ error: "公開が終了しました" }, 404);
+  const posts = await env.DB.prepare(`
+    SELECT p.id,p.title,p.tag,p.place_name,p.taken_at,
+           (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             AND ph.moderation_state='ok' AND ph.key_view IS NOT NULL
+             ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id
+      FROM social_album_items i JOIN posts p ON p.id=i.post_id
+     WHERE i.album_id=? AND p.deleted_at IS NULL AND p.visibility='public' AND p.publish_at<=?
+     ORDER BY i.sort_order,i.created_at
+  `).bind(album.id, now).all();
+  const safePosts=(posts.results||[]).map(post => ({...post,
+    title:publicLocationLabel(post.title),place_name:publicLocationLabel(post.place_name),
+    photo_path:post.photo_id?`/api/share/${token}/photo/${post.photo_id}/view`:null}));
+  return json({ type: "album", album, posts: safePosts });
+}
+
+async function getSharedPhoto(token, photoId, kind, request, env) {
+  if (!/^[A-Za-z0-9_-]{20,120}$/.test(token)) return json({ error: "見つかりません" }, 404);
+  const client = await clientRateId(request);
+  if (!(await burstLimit(env, "SHARE_RATE_LIMITER", `${token.slice(0, 16)}:${client}:photo`)))
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  const hash = await hashToken(token), now = Date.now();
+  const link = await env.DB.prepare(`
+    SELECT target_type,target_id FROM share_links
+     WHERE token_hash=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)
+  `).bind(hash, now).first();
+  if (!link) return json({ error: "リンクは無効です" }, 404);
+  const photo = await env.DB.prepare(`
+    SELECT ph.post_id,ph.key_view,ph.key_thumb,ph.moderation_state,p.visibility,p.publish_at,p.deleted_at
+      FROM photos ph JOIN posts p ON p.id=ph.post_id WHERE ph.id=?
+  `).bind(photoId).first();
+  if (!photo || photo.deleted_at || photo.visibility !== "public" || photo.publish_at > now ||
+      photo.moderation_state !== "ok") return json({ error: "見つかりません" }, 404);
+  const allowed = link.target_type === "post" ? photo.post_id === link.target_id
+    : !!(await env.DB.prepare(`SELECT 1 FROM social_album_items i
+        JOIN social_albums a ON a.id=i.album_id
+       WHERE i.album_id=? AND i.post_id=? AND a.deleted_at IS NULL AND a.visibility='public'`)
+      .bind(link.target_id, photo.post_id).first());
+  if (!allowed) return json({ error: "見つかりません" }, 404);
+  const key = kind === "thumb" ? photo.key_thumb : photo.key_view;
+  if (!key) return json({ error: "見つかりません" }, 404);
+  const object = await env.PHOTOS.get(key);
+  if (!object) return json({ error: "見つかりません" }, 404);
+  return new Response(object.body,{headers:{
+    "Content-Type":object.httpMetadata?.contentType||"image/jpeg",
+    // トークン失効・アルバム非公開化を端末キャッシュで迂回させない。
+    "Cache-Control":"private, no-store"
+  }});
 }
 
 
@@ -1142,6 +2180,31 @@ function userLimit(env, userId, name, window, limit, amount) {
   return atomicLimit(env, `ul_${name}_${window}_${userId}`, limit, amount || 1);
 }
 
+/**
+ * 短時間の連打だけを止める制限はD1へ書かない。
+ * Rate Limiting bindingが使えないローカル検証では機能を止めず、
+ * 日次上限や有料APIの厳密な上限は引き続きuserLimitで守る。
+ */
+async function burstLimit(env, bindingName, key) {
+  const binding = env[bindingName];
+  if (!binding || typeof binding.limit !== "function") return true;
+  try {
+    const result = await binding.limit({ key: String(key || "unknown") });
+    return !!(result && result.success);
+  } catch (error) {
+    console.error("rate limiter error", bindingName, error);
+    return false;
+  }
+}
+
+function socialReadLimit(env, me, scope) {
+  return burstLimit(env, "SOCIAL_READ_RATE_LIMITER", `${me.id}:${scope}`);
+}
+
+function socialWriteLimit(env, me, scope) {
+  return burstLimit(env, "SOCIAL_WRITE_RATE_LIMITER", `${me.id}:${scope}`);
+}
+
 /** 日次Cron。期限の切れた一時カウンターだけを削除し、設定値は残す。 */
 async function cleanupTransientConfig(env) {
   const today = dayKey();
@@ -1194,7 +2257,10 @@ async function shortHash(value) {
 function json(obj, status) {
   return new Response(JSON.stringify(obj), {
     status: status || 200,
-    headers: { "Content-Type": "application/json; charset=utf-8" }
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store"
+    }
   });
 }
 
@@ -2086,20 +3152,32 @@ async function moderateUploadedPhoto(env, me, bytes) {
 
 async function ensurePostPhotosModerated(env, me, postId) {
   const rows = await env.DB.prepare(
-    "SELECT key_orig,key_view,key_thumb FROM photos WHERE post_id=? AND user_id=?"
+    "SELECT id,key_view,key_thumb,moderation_view_state,moderation_thumb_state FROM photos WHERE post_id=? AND user_id=?"
   ).bind(postId, me.id).all();
   return moderatePhotoRows(env, me, rows.results || []);
 }
 
 async function moderatePhotoRows(env, me, rows) {
+  if (!rows.length) return true;
   for (const ph of rows) {
-    const key = ph.key_view || ph.key_thumb;
-    if (!key) continue;
-    const obj = await env.PHOTOS.get(key);
-    if (!obj) return false;
-    const bytes = await obj.arrayBuffer();
-    if (!bytes.byteLength || bytes.byteLength > 10_000_000) return false;
-    if ((await moderateUploadedPhoto(env, me, bytes)) !== "ok") return false;
+    // viewとthumbは別オブジェクトなので、どちらもサーバー側で確認する。
+    // 一方だけ安全な画像へ差し替えて行全体をokにする迂回を許さない。
+    if (!ph.key_view || !ph.key_thumb) return false;
+    const states = {};
+    for (const variant of ["view", "thumb"]) {
+      const key = ph[`key_${variant}`];
+      const obj = await env.PHOTOS.get(key);
+      if (!obj) return false;
+      const bytes = await obj.arrayBuffer();
+      if (!bytes.byteLength || bytes.byteLength > 10_000_000) return false;
+      states[variant] = await moderateUploadedPhoto(env, me, bytes);
+    }
+    const overall = states.view === "ok" && states.thumb === "ok" ? "ok" :
+      (states.view === "bad" || states.thumb === "bad" ? "bad" : "error");
+    if (ph.id) await env.DB.prepare(`UPDATE photos
+      SET moderation_view_state=?,moderation_thumb_state=?,moderation_state=?
+      WHERE id=? AND user_id=?`).bind(states.view, states.thumb, overall, ph.id, me.id).run();
+    if (overall !== "ok") return false;
   }
   return true;
 }
@@ -2176,6 +3254,22 @@ async function saveToken(request, env, me) {
     VALUES (?,?,?,?)
     ON CONFLICT(token) DO UPDATE SET user_id=excluded.user_id, updated_at=excluded.updated_at
   `).bind(t, me.id, platform, Date.now()).run();
+  // 1アカウント8端末まで。古い宛先を残してfan-outを増幅させない。
+  await env.DB.prepare(`
+    DELETE FROM push_tokens WHERE user_id=?1 AND token NOT IN (
+      SELECT token FROM push_tokens WHERE user_id=?1 ORDER BY updated_at DESC LIMIT 8
+    )
+  `).bind(me.id).run();
+  return json({ ok: true });
+}
+
+async function deleteToken(request, env, me) {
+  const parsed = await limitedJson(request, 8_000);
+  if (parsed.error) return parsed.error;
+  const token = String(parsed.value.token || "").trim();
+  if (!token || token.length > 4096 || /\s/.test(token)) return json({ error: "宛先が不正です" }, 400);
+  await env.DB.prepare("DELETE FROM push_tokens WHERE token=? AND user_id=?")
+    .bind(token, me.id).run();
   return json({ ok: true });
 }
 
@@ -2189,9 +3283,13 @@ async function saveToken(request, env, me) {
    ============================================================ */
 
 const SOUND = "spota.caf";     // アプリに入れた音の名前
+let fcmAccessCache = null;
 
 /** Firebase に話しかけるための証をつくる */
 async function fcmToken(env) {
+  if (fcmAccessCache && fcmAccessCache.expiresAt > Date.now() + 60_000) {
+    return { token: fcmAccessCache.token, project: fcmAccessCache.project };
+  }
   const raw = await cfg(env, "fcm_service_account");
   if (!raw) return null;
 
@@ -2238,16 +3336,24 @@ async function fcmToken(env) {
   });
   if (!res.ok) return null;
   const j = await res.json();
-  return { token: j.access_token, project: sa.project_id };
+  fcmAccessCache = {
+    token: j.access_token,
+    project: sa.project_id,
+    expiresAt: Date.now() + Math.max(300, Number(j.expires_in) || 3600) * 1000
+  };
+  return { token: fcmAccessCache.token, project: fcmAccessCache.project };
 }
 
 /** ある人に通知を届ける */
 async function sendPush(env, userId, title, body, data) {
+  if (!(await userLimit(env, userId, "push-recipient-day", dayKey(), 100)) ||
+      !(await atomicLimit(env, "push_global_hour_" + hourKey(), 10_000, 1))) return 0;
   const auth = await fcmToken(env);
   if (!auth) return 0;
 
   const rows = await env.DB
-    .prepare("SELECT token FROM push_tokens WHERE user_id=?").bind(userId).all();
+    .prepare("SELECT token FROM push_tokens WHERE user_id=? ORDER BY updated_at DESC LIMIT 8")
+    .bind(userId).all();
   const tokens = (rows.results || []).map(function (r) { return r.token; });
   if (!tokens.length) return 0;
 
@@ -2289,7 +3395,7 @@ async function sendPush(env, userId, title, body, data) {
 
 /** 自分に試しに送る */
 async function pushTest(env, me) {
-  if (!(await userLimit(env, me.id, "push-test-hour", hourKey(), 10))) {
+  if (!(await userLimit(env, me.id, "push-test-hour", hourKey(), 3))) {
     return json({ error: "テスト回数が多すぎます" }, 429);
   }
   const n = await sendPush(env, me.id, "spota", "通知はこの音で届きます", { test: "1" });
@@ -2331,6 +3437,9 @@ async function addTags(request, env, me) {
   if (own.visibility === "private") {
     return json({ error: "自分だけの思い出にはタグ付けできません" }, 409);
   }
+  if (own.publish_at > Date.now() || !own.social_announced_at) {
+    return json({ error: "公開準備が完了してからタグ付けできます" }, 409);
+  }
 
   const now = Date.now();
   const who = me.display_name || me.handle || "フレンド";
@@ -2341,16 +3450,17 @@ async function addTags(request, env, me) {
     if (!(await areFriends(env, me.id, uid))) continue;
     if (await isBlocked(env, me.id, uid)) continue;
 
-    await env.DB.prepare(`
+    const inserted = await env.DB.prepare(`
       INSERT INTO post_tags (post_id, user_id, tagged_by, status, created_at)
       VALUES (?,?,?, 'pending', ?)
       ON CONFLICT(post_id, user_id) DO NOTHING
     `).bind(postId, uid, me.id, now).run();
-
-    await sendPush(env, uid, who + " が思い出にタグ付けしました",
-      own.title || own.place_name || "",
-      { post: postId, tag: "1" });
-    n++;
+    if (inserted.meta && inserted.meta.changes === 1) {
+      await sendPush(env, uid, who + " が思い出にタグ付けしました",
+        publicLocationLabel(own.title || own.place_name || ""),
+        { post: postId, tag: "1" });
+      n++;
+    }
   }
   return json({ ok: true, count: n });
 }
