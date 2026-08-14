@@ -266,7 +266,10 @@ function startPlacing(lat,lng,opt){
   dropM.on('dragend',function(){var q=dropM.getLngLat();movePlacing(q.lat,q.lng,true);});
   closeSheet();                       // 開いている詳細を閉じる（重なり防止）
   document.body.classList.add('placing');
-  cf.classList.add('on');cf.classList.remove('pick');
+  cf.classList.add('on');
+  // EXIFが無い写真は、最初に地図を選ぶまで確定ボタンを出さない。
+  // 初期位置（画面中央）は仮置きであり、現在地として扱わない。
+  cf.classList.toggle('pick',!!placing.manualPhotoLocation);
   map.easeTo({center:[lng,lat],zoom:Math.max(map.getZoom(),16.4),duration:480});
   askPlace(lat,lng);
  }catch(e){showErr('[startPlacing] '+dump(e));}
@@ -274,12 +277,18 @@ function startPlacing(lat,lng,opt){
 function movePlacing(lat,lng,drag){
   if(!placing)return;
   placing.lat=lat;placing.lng=lng;
+  if(placing.manualPhotoLocation)placing.manualLocationChosen=true;
   if(!drag&&dropM)dropM.setLngLat([lng,lat]);
   cf.classList.remove('pick');askPlace(lat,lng);
 }
 async function askPlace(lat,lng){
  try{
   var my=++askSeq;
+  if(placing&&placing.manualPhotoLocation&&!placing.manualLocationChosen){
+    cfName.textContent='写真の場所を選んでください';
+    cfAsk.textContent='地図をタップ、またはピンを動かしてください';
+    return;
+  }
   cfName.textContent='場所を調べています…';cfAsk.textContent='この場所でいいですか？';
   var r=await revGeo(lat,lng);
   if(my!==askSeq||!placing)return;
