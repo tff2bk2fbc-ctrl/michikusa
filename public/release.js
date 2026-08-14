@@ -23,7 +23,7 @@ function releaseTags(value){
   return found.filter(function(v,i,a){return a.indexOf(v)===i;}).slice(0,8);
 }
 
-function closeReleaseScreen(){
+function closeReleaseScreen(after){
   if(!releaseScreen)return;
   var screen=releaseScreen;releaseScreen=null;
   var dispose=screen.__onClose;screen.__onClose=null;if(dispose)dispose();
@@ -35,7 +35,7 @@ function closeReleaseScreen(){
     screen.classList.add('dismissing');
   }else screen.classList.remove('on');
   var focus=screen.__previousFocus;
-  setTimeout(function(){screen.remove();if(focus&&focus.isConnected)focus.focus();},320);
+  setTimeout(function(){screen.remove();if(focus&&focus.isConnected)focus.focus();if(typeof after==='function')after();},320);
 }
 function bindProfileDismiss(screen){
   var panel=screen.querySelector('.profile-panel'),scroller=screen.querySelector('.release-body');
@@ -98,7 +98,7 @@ function makeReleaseScreen(label,options){
     if(node!==screen&&node.id!=='err'&&!node.inert){node.inert=true;screen.__inert.push(node);}
   });
   document.body.appendChild(screen);releaseScreen=screen;
-  screen.querySelector('.release-back').onclick=closeReleaseScreen;
+  screen.querySelector('.release-back').onclick=function(){closeReleaseScreen(options.onBack);};
   screen.onkeydown=function(e){
     if(e.key==='Escape'){e.preventDefault();closeReleaseScreen();}
   };
@@ -192,18 +192,18 @@ function socialRenderAlive(screen,host,generation){return releaseScreen===screen
 function feedCard(p,i){
   var who=p.author&&(p.author.name||p.author.handle)||'Spotaユーザー';
   return '<article class="timeline-card" data-post="'+esc(p.id)+'">'+
-    '<header><button class="timeline-person" type="button" data-profile="'+esc(p.author&&p.author.handle||'')+'"><i>'+esc(who.charAt(0))+'</i><span><b>'+esc(who)+'</b><small>@'+esc(p.author&&p.author.handle||'')+'</small></span></button>'+
+    '<header><button class="timeline-person" type="button" data-profile="'+esc(p.author&&p.author.handle||'')+'"><i>'+profileIconSvg(p.author&&p.author.profile_icon)+'</i><span><b>'+esc(who)+'</b><small>@'+esc(p.author&&p.author.handle||'')+'</small></span></button>'+
       (!p.mine?'<button class="timeline-follow'+(p.following?' on':'')+'" type="button" data-follow="'+i+'" aria-pressed="'+String(!!p.following)+'">'+(p.following?'フォロー中':'フォロー')+'</button>':'')+
       '<time>'+esc(releaseDate(p.taken_at||p.created_at))+'</time></header>'+
     '<button class="timeline-photo" type="button" data-photo="'+esc(p.photo_id||'')+'" data-index="'+i+'" aria-label="写真を開く"><img alt="" loading="lazy"></button>'+
     '<div class="timeline-copy"><div class="timeline-place"><b>'+esc(p.title||p.place_name||'思い出')+'</b>'+
       (p.map_available?'<button type="button" data-map="'+i+'">地図で見る</button>':'')+'</div>'+
       (p.tag?'<p>'+esc(p.tag)+'</p>':'')+
-      '<div class="timeline-actions"><button type="button" data-like="'+i+'" aria-pressed="'+String(!!p.liked)+'" class="'+(p.liked?'on':'')+'"><span aria-hidden="true">♡</span><b>'+Number(p.like_count||0)+'</b><em class="sr-only">いいね</em></button>'+
-      '<button type="button" data-comments="'+i+'"><span aria-hidden="true">○</span><b>'+Number(p.comment_count||0)+'</b><em class="sr-only">コメント</em></button>'+
-      '<button type="button" data-share="'+i+'"><span aria-hidden="true">↗</span><em class="sr-only">共有</em></button></div></div></article>';
+      '<div class="timeline-actions"><button type="button" data-like="'+i+'" aria-label="いいね '+Number(p.like_count||0)+'件" aria-pressed="'+String(!!p.liked)+'" class="'+(p.liked?'on':'')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 5.8c-2.1-2.3-5.6-1.8-7.2.6L12 8.7l-1.6-2.3c-1.6-2.4-5.1-2.9-7.2-.6-2 2.2-1.7 5.7.5 7.7L12 21l8.3-7.5c2.2-2 2.5-5.5.5-7.7Z"/></svg><b>'+Number(p.like_count||0)+'</b></button>'+
+      '<button type="button" data-comments="'+i+'" aria-label="コメント '+Number(p.comment_count||0)+'件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v11H9l-5 3Z"/><path d="M8 10h8M8 13h5"/></svg><b>'+Number(p.comment_count||0)+'</b></button>'+
+      (p.mine&&p.visibility==='public'?'<button type="button" data-share="'+i+'" aria-label="共有"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v6H5V6h6"/></svg></button>':'')+'</div></div></article>';
 }
-function bindFeedCards(screen,host,posts){
+function bindFeedCards(screen,host,posts,timelineState){
   Array.prototype.forEach.call(host.querySelectorAll('[data-profile]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){if(b.dataset.profile)openPublicProfile(b.dataset.profile);};});
   Array.prototype.forEach.call(host.querySelectorAll('[data-map]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){openTimelineMap(posts[Number(b.dataset.map)]);};});
   Array.prototype.forEach.call(host.querySelectorAll('.timeline-photo'),function(b){
@@ -215,9 +215,14 @@ function bindFeedCards(screen,host,posts){
     var p=posts[Number(b.dataset.like)],next=!p.liked;b.disabled=true;
     try{var j=await socialJson('/api/posts/'+encodeURIComponent(p.id)+'/like',{method:next?'PUT':'DELETE'});p.liked=j.liked;p.like_count=j.count;
       b.classList.toggle('on',p.liked);b.setAttribute('aria-pressed',String(p.liked));b.querySelector('b').textContent=p.like_count;
+      b.setAttribute('aria-label','いいね '+p.like_count+'件');
+      if(p.liked){b.classList.remove('flash');void b.offsetWidth;b.classList.add('flash');setTimeout(function(){b.classList.remove('flash');},430);}
     }catch(e){setTip(e.message);}b.disabled=false;
   };});
-  Array.prototype.forEach.call(host.querySelectorAll('[data-comments]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){openComments(posts[Number(b.dataset.comments)]);};});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-comments]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){
+    var state=timelineState||{};state={query:state.query||'',mode:state.mode||'recommended',scrollY:screen.scrollTop||0};
+    openComments(posts[Number(b.dataset.comments)],function(){openSocialHub('timeline',state);});
+  };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-follow]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
     var p=posts[Number(b.dataset.follow)],next=!p.following,handle=p.author&&p.author.handle;if(!handle)return;b.disabled=true;
     try{await socialJson('/api/follows/'+encodeURIComponent(handle),{method:next?'PUT':'DELETE'});p.following=next;b.classList.toggle('on',next);b.textContent=next?'フォロー中':'フォロー';b.setAttribute('aria-pressed',String(next));}
@@ -233,36 +238,38 @@ async function sharePost(post){
     else if(navigator.clipboard){await navigator.clipboard.writeText(url);setTip('共有リンクをコピーしました');}
   }catch(e){setTip(e.message||'共有できませんでした');}
 }
-async function renderTimeline(screen,host,query,mode){
+async function renderTimeline(screen,host,query,mode,restoreY){
   var generation=beginSocialRender(screen);
   mode=mode||'recommended';
-  host.innerHTML='<div class="feed-modes" role="tablist" aria-label="タイムラインの種類">'+
+  host.innerHTML='<form class="timeline-search" id="timeline-search"><span aria-hidden="true">⌕</span>'+
+      '<input id="timeline-q" value="'+esc(query||'')+'" placeholder="場所・ことば・#タグ" enterkeyhint="search" autocomplete="off">'+
+      '<button type="submit">探す</button></form>'+
+    '<div class="feed-modes" role="tablist" aria-label="タイムラインの種類">'+
       '<button type="button" data-feed-mode="recommended" class="'+(mode==='recommended'?'on':'')+'" role="tab" aria-selected="'+String(mode==='recommended')+'">おすすめ</button>'+
       '<button type="button" data-feed-mode="following" class="'+(mode==='following'?'on':'')+'" role="tab" aria-selected="'+String(mode==='following')+'">フォロー中</button></div>'+
-    '<form class="timeline-search" id="timeline-search"><span aria-hidden="true">⌕</span>'+
-      '<input id="timeline-q" value="'+esc(query||'')+'" placeholder="場所・ことば・#タグ" enterkeyhint="search" autocomplete="off">'+
-      '<button type="submit">探す</button></form><div class="timeline-status" aria-live="polite">写真を読み込んでいます…</div>';
+    '<div class="timeline-status" aria-live="polite">写真を読み込んでいます…</div>';
   Array.prototype.forEach.call(host.querySelectorAll('[data-feed-mode]'),function(b){b.onclick=function(){renderTimeline(screen,host,query,b.dataset.feedMode);};});
   host.querySelector('#timeline-search').onsubmit=function(e){e.preventDefault();renderTimeline(screen,host,host.querySelector('#timeline-q').value.trim(),mode);};
   if(!fbUser){host.querySelector('.timeline-status').innerHTML='<b>ログインするとタイムラインを見られます</b><span>公開された写真と、フレンドの写真が表示されます。</span><button class="release-main" id="timeline-login" type="button">ログインする</button>';host.querySelector('#timeline-login').onclick=function(){closeReleaseScreen();document.getElementById('btn-me').click();};return;}
   try{
-    var paths=['/api/feed?limit=24'+(mode==='following'?'&mode=following':'')+(query?'&q='+encodeURIComponent(query):''),'/api/hashtags/trending'];
-    var result=await Promise.all([socialJson(paths[0]),socialJson(paths[1]).catch(function(){return {tags:[]};})]);if(!socialRenderAlive(screen,host,generation))return;var j=result[0],tags=result[1].tags||[],posts=j.posts||[],status=host.querySelector('.timeline-status');
+    var feedBody={limit:24,mode:mode,query:query||''};
+    var result=await Promise.all([socialJson('/api/feed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(feedBody)}),socialJson('/api/hashtags/trending').catch(function(){return {tags:[]};})]);if(!socialRenderAlive(screen,host,generation))return;var j=result[0],tags=result[1].tags||[],posts=j.posts||[],status=host.querySelector('.timeline-status');
     if(!posts.length){status.innerHTML='<b>'+(mode==='following'?'フォロー中の投稿はまだありません':'写真が見つかりませんでした')+'</b><span>'+(query?'ことばを変えて、もう一度探してみてください。':'気になる人をフォローすると、ここに写真が並びます。')+'</span>';return;}
     status.outerHTML=(tags.length?'<div class="trend-row" aria-label="よく使われているタグ">'+tags.map(function(t){return '<button type="button" data-tag="'+esc(t.label)+'">'+esc(t.label)+'</button>';}).join('')+'</div>':'')+
       '<div class="timeline-list">'+posts.map(feedCard).join('')+'</div>'+(j.has_more?'<button type="button" class="feed-more" id="feed-more">さらに見る</button>':'');
     Array.prototype.forEach.call(host.querySelectorAll('[data-tag]'),function(b){b.onclick=function(){renderTimeline(screen,host,b.dataset.tag,mode);};});
-    bindFeedCards(screen,host,posts);
+    bindFeedCards(screen,host,posts,{query:query,mode:mode});
+    if(restoreY)requestAnimationFrame(function(){if(screen.isConnected)screen.scrollTop=restoreY;});
     var more=host.querySelector('#feed-more');if(more)more.onclick=async function(){
-      more.disabled=true;try{var next=await socialJson('/api/feed?limit=24&cursor='+encodeURIComponent(j.cursor)+(mode==='following'?'&mode=following':'')+(query?'&q='+encodeURIComponent(query):''));if(!socialRenderAlive(screen,host,generation))return;var offset=posts.length;
-        posts=posts.concat(next.posts||[]);var list=host.querySelector('.timeline-list');list.insertAdjacentHTML('beforeend',(next.posts||[]).map(function(p,i){return feedCard(p,offset+i);}).join(''));bindFeedCards(screen,list,posts);j=next;if(!next.has_more)more.remove();else more.disabled=false;
+      more.disabled=true;try{var next=await socialJson('/api/feed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:24,cursor:j.cursor,mode:mode,query:query||''})});if(!socialRenderAlive(screen,host,generation))return;var offset=posts.length;
+        posts=posts.concat(next.posts||[]);var list=host.querySelector('.timeline-list');list.insertAdjacentHTML('beforeend',(next.posts||[]).map(function(p,i){return feedCard(p,offset+i);}).join(''));bindFeedCards(screen,list,posts,{query:query,mode:mode});j=next;if(!next.has_more)more.remove();else more.disabled=false;
       }catch(e){more.disabled=false;setTip(e.message);}
     };
   }catch(e){if(!socialRenderAlive(screen,host,generation))return;var st=host.querySelector('.timeline-status');if(st)st.innerHTML='<b>読み込めませんでした</b><span>'+esc(e.message||'通信を確認してください')+'</span>';}
 }
 
-async function openComments(post){
-  var screen=makeReleaseScreen('コメント'),body=screen.querySelector('.release-body');
+async function openComments(post,onBack){
+  var screen=makeReleaseScreen('コメント',{onBack:onBack}),body=screen.querySelector('.release-body');
   body.innerHTML='<div class="comment-list" aria-live="polite">読み込んでいます…</div><form class="comment-form"><input maxlength="1000" placeholder="コメントを書く" aria-label="コメント"><button type="submit">送る</button></form>';
   var list=body.querySelector('.comment-list'),form=body.querySelector('.comment-form'),input=form.querySelector('input');
   function row(c){var who=c.author&&(c.author.name||c.author.handle)||'ユーザー';return '<div class="comment-row" data-comment="'+esc(c.id)+'"><i>'+esc(who.charAt(0))+'</i><div><b>'+esc(who)+'</b><p>'+esc(c.body)+'</p><time>'+esc(releaseDate(c.created_at))+'</time></div>'+(c.mine?'<button type="button" aria-label="コメントを削除">×</button>':'')+'</div>';}
@@ -277,7 +284,7 @@ async function renderNotifications(screen,host){
   var generation=beginSocialRender(screen);
   host.innerHTML='<div class="social-section-head"><b>通知</b><button id="notifications-read">すべて既読</button></div><div class="notification-list" aria-live="polite">読み込んでいます…</div>';
   try{var j=await socialJson('/api/notifications');if(!socialRenderAlive(screen,host,generation))return;var list=host.querySelector('.notification-list'),items=j.notifications||[];list.innerHTML=items.length?items.map(function(n){var who=n.actor&&(n.actor.name||n.actor.handle)||'Spota';return '<button type="button" class="notification-row'+(n.read?'':' unread')+'" data-notification="'+esc(n.id)+'" data-kind="'+esc(n.kind)+'" data-entity="'+esc(n.entityId||n.entity_id||'')+'" data-handle="'+esc(n.actor&&n.actor.handle||'')+'"><i>'+esc(who.charAt(0))+'</i><span><b>'+esc(who)+'</b><small>'+esc(notificationCopy(n))+'</small></span><time>'+esc(releaseDate(n.created_at))+'</time></button>';}).join(''):'<div class="release-empty"><b>通知はまだありません</b><span>反応やメッセージがここに届きます。</span></div>';
-    Array.prototype.forEach.call(list.querySelectorAll('.notification-row'),function(b){b.onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[b.dataset.notification]})});}catch(e){}if(b.dataset.kind==='message'&&b.dataset.entity)openConversation(b.dataset.entity,b.querySelector('b').textContent);else if(b.dataset.handle)openPublicProfile(b.dataset.handle);refreshSocialBadge();};});
+    Array.prototype.forEach.call(list.querySelectorAll('.notification-row'),function(b){b.onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[b.dataset.notification]})});}catch(e){}if(b.dataset.kind==='message'&&b.dataset.entity)openConversation(b.dataset.entity,b.querySelector('b').textContent);else if((b.dataset.kind==='like'||b.dataset.kind==='comment')&&b.dataset.entity)openSocialHub('timeline');else if(b.dataset.handle)openPublicProfile(b.dataset.handle);refreshSocialBadge();};});
   }catch(e){if(!socialRenderAlive(screen,host,generation))return;var failed=host.querySelector('.notification-list');if(failed)failed.innerHTML='<div class="release-empty"><b>通知を読めませんでした</b><span>'+esc(e.message)+'</span></div>';}
   host.querySelector('#notifications-read').onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})});Array.prototype.forEach.call(host.querySelectorAll('.notification-row'),function(r){r.classList.remove('unread');});refreshSocialBadge();}catch(e){setTip(e.message);}};
 }
@@ -301,8 +308,13 @@ async function startConversation(handle){
   catch(e){setTip(e.message||'フレンドになるとメッセージを送れます');}
 }
 async function refreshSocialBadge(){
-  var badge=document.getElementById('social-badge');if(!badge)return;if(!fbUser){badge.hidden=true;return;}
-  try{var j=await socialJson('/api/unread'),n=Number(j.notifications||0)+Number(j.messages||0);badge.hidden=!n;badge.textContent=n>99?'99+':String(n);badge.setAttribute('aria-label','未読 '+n+'件');}catch(e){badge.hidden=true;}
+  var notificationBadge=document.getElementById('notification-badge');
+  var messageBadge=document.getElementById('message-badge');
+  if(!notificationBadge||!messageBadge)return;
+  function update(badge,n,label){n=Number(n)||0;badge.hidden=!n;badge.textContent=n>99?'99+':String(n);badge.setAttribute('aria-label',label+' '+n+'件');}
+  if(!fbUser){update(notificationBadge,0,'未読通知');update(messageBadge,0,'未読メッセージ');return;}
+  try{var j=await socialJson('/api/unread');update(notificationBadge,j.notifications,'未読通知');update(messageBadge,j.messages,'未読メッセージ');}
+  catch(e){update(notificationBadge,0,'未読通知');update(messageBadge,0,'未読メッセージ');}
 }
 function openTimelineMap(p){
   if(!p||!p.map_available)return;
@@ -312,11 +324,26 @@ function openTimelineMap(p){
 }
 
 function openMemoryHub(){var screen=makeReleaseScreen('アルバム');renderAlbumHome(screen,screen.querySelector('.release-body'));}
-function openSocialHub(tab){
-  var screen=makeReleaseScreen('新着'),body=screen.querySelector('.release-body');
-  body.innerHTML='<div class="release-tabs release-tabs-three" role="tablist" aria-label="新着の表示"><button type="button" data-social-tab="timeline" role="tab">タイムライン</button><button type="button" data-social-tab="notifications" role="tab">通知</button><button type="button" data-social-tab="messages" role="tab">メッセージ</button></div><div id="release-content"></div>';
-  var content=body.querySelector('#release-content');function show(name){Array.prototype.forEach.call(body.querySelectorAll('[data-social-tab]'),function(b){var on=b.dataset.socialTab===name;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on));});if(name==='notifications')renderNotifications(screen,content);else if(name==='messages')renderConversations(screen,content);else renderTimeline(screen,content,'','recommended');}
-  Array.prototype.forEach.call(body.querySelectorAll('[data-social-tab]'),function(b){b.onclick=function(){show(b.dataset.socialTab);};});show(tab||'timeline');refreshSocialBadge();
+function openSocialHub(tab,state){
+  tab=tab||'timeline';
+  var label=tab==='notifications'?'通知':tab==='messages'?'メッセージ':'タイムライン';
+  var screen=makeReleaseScreen(label),body=screen.querySelector('.release-body');
+  if(tab==='notifications')renderNotifications(screen,body);
+  else if(tab==='messages')renderConversations(screen,body);
+  else renderTimeline(screen,body,state&&state.query||'',state&&state.mode||'recommended',state&&state.scrollY||0);
+  refreshSocialBadge();
+}
+
+async function openProfileIconPicker(handle,current){
+  var screen=makeReleaseScreen('アイコン'),body=screen.querySelector('.release-body');
+  body.innerHTML='<section class="profile-icon-picker"><p>プロフィールに表示する印を選んでください。</p><div role="radiogroup" aria-label="プロフィールアイコン">'+
+    PROFILE_ICONS.map(function(key){var on=key===current;return '<button type="button" data-profile-icon="'+key+'" class="'+(on?'on':'')+'" role="radio" aria-checked="'+String(on)+'" aria-label="'+esc(PROFILE_ICON_LABELS[key])+'">'+profileIconSvg(key)+'<span>'+esc(PROFILE_ICON_LABELS[key])+'</span></button>';}).join('')+'</div></section>';
+  Array.prototype.forEach.call(body.querySelectorAll('[data-profile-icon]'),function(button){button.onclick=async function(){
+    var key=button.dataset.profileIcon;button.disabled=true;
+    try{await socialJson('/api/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile_icon:key})});
+      if(meP)meP.profile_icon=key;setTip('アイコンを変更しました');openPublicProfile(handle);
+    }catch(e){button.disabled=false;setTip(e.message||'変更できませんでした');}
+  };});
 }
 
 /* ---------- プロフィール ---------- */
@@ -327,13 +354,13 @@ async function openPublicProfile(handle){
   try{
     var result=await Promise.all([socialJson('/api/posts?user='+encodeURIComponent(handle)+'&limit=100'),socialJson('/api/follows?user='+encodeURIComponent(handle)).catch(function(){return {};})]),j=result[0],follow=result[1]||{};
     var profile=j.profile||{},posts=j.posts||[],photoPosts=posts.filter(function(p){return !!p.photo_id;}),name=profile.name||profile.handle||handle,own=(meP&&meP.handle)===(profile.handle||handle);
-    body.innerHTML='<section class="public-profile"><button class="profile-portrait" id="profile-avatar" type="button" aria-label="'+(own?'プロフィールを編集':'プロフィール画像')+'">'+esc(name.charAt(0))+'</button>'+
+    body.innerHTML='<section class="public-profile"><button class="profile-portrait" id="profile-avatar" type="button" aria-label="'+(own?'プロフィールアイコンを変更':'プロフィールアイコン')+'">'+profileIconSvg(profile.profile_icon)+'</button>'+
       '<div class="profile-name"><h1>'+esc(name)+'</h1><p>@'+esc(profile.handle||handle)+'</p></div>'+
       (profile.bio?'<p class="profile-bio">'+esc(profile.bio)+'</p>':'')+
       '<div class="profile-stats"><span><b>'+posts.length+'</b><small>思い出</small></span><span><b>'+Number(follow.followers||0)+'</b><small>フォロワー</small></span><span><b>'+Number(follow.following||0)+'</b><small>フォロー中</small></span></div>'+
       '<div class="profile-actions">'+
         (own?'<button class="release-main" id="profile-map" type="button">自分の地図</button><button type="button" id="profile-settings">編集</button>':'<button class="release-main'+(follow.followed?' on':'')+'" id="profile-follow" type="button" aria-pressed="'+String(!!follow.followed)+'">'+(follow.followed?'フォロー中':'フォロー')+'</button><button type="button" id="profile-message">メッセージ</button>')+
-      '</div>'+(own?'':'<div class="profile-links"><button type="button" id="profile-map">地図を見る</button><button type="button" id="profile-friend">フレンド申請</button></div>')+'</section>'+
+      '</div>'+(own?'<div class="profile-links"><button type="button" id="profile-timeline">タイムラインを見る</button></div>':'<div class="profile-links"><button type="button" id="profile-map">地図を見る</button><button type="button" id="profile-friend">フレンド申請</button></div>')+'</section>'+
       (photoPosts.length?'<div class="profile-grid">'+photoPosts.map(function(p,i){return '<button type="button" data-profile-photo="'+i+'" aria-label="'+esc(p.title||'思い出')+'を開く"><img alt="" loading="lazy"><span>'+esc(p.place_name||p.title||'')+'</span></button>';}).join('')+'</div>':'<div class="release-empty"><b>見られる写真はまだありません</b><span>公開範囲と位置設定により、表示されない写真もあります。</span></div>');
     body.querySelector('#profile-map').onclick=function(){
       closeReleaseScreen();
@@ -342,7 +369,8 @@ async function openPublicProfile(handle){
       }else openFriendMap(profile.handle||handle);
     };
     var settings=body.querySelector('#profile-settings');if(settings)settings.onclick=function(){closeReleaseScreen();openMe();};
-    var avatar=body.querySelector('#profile-avatar');if(avatar&&own)avatar.onclick=function(){closeReleaseScreen();openMe();};
+    var timeline=body.querySelector('#profile-timeline');if(timeline)timeline.onclick=function(){openSocialHub('timeline');};
+    var avatar=body.querySelector('#profile-avatar');if(avatar&&own)avatar.onclick=function(){openProfileIconPicker(profile.handle||handle,profile.profile_icon||'pin');};
     var followButton=body.querySelector('#profile-follow');if(followButton)followButton.onclick=async function(){var next=!follow.followed;followButton.disabled=true;try{await socialJson('/api/follows/'+encodeURIComponent(profile.handle||handle),{method:next?'PUT':'DELETE'});follow.followed=next;followButton.classList.toggle('on',next);followButton.textContent=next?'フォロー中':'フォロー';followButton.setAttribute('aria-pressed',String(next));}catch(e){setTip(e.message);}followButton.disabled=false;};
     var message=body.querySelector('#profile-message');if(message)message.onclick=function(){startConversation(profile.handle||handle);};
     var friend=body.querySelector('#profile-friend');if(friend)friend.onclick=async function(){friend.disabled=true;await addByHandle(profile.handle||handle);friend.textContent='申請しました';};
@@ -355,21 +383,15 @@ async function openPublicProfile(handle){
 
 /* ---------- 既存の5操作へ接続 ---------- */
 (function(){
-  var scope=document.getElementById('map-scope');
-  if(scope){
-    Array.prototype.forEach.call(scope.querySelectorAll('button'),function(b){
-      b.onclick=function(){
-        if(b.dataset.scope==='public'&&!fbUser){setTip('みんなの地図を見るにはログインしてください');document.getElementById('btn-me').click();return;}
-        setMapAudience(b.dataset.scope);
-      };
-    });
-    scope.onkeydown=function(e){
-      if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;
-      e.preventDefault();var next=mapAudience==='mine'?'public':'mine';scope.querySelector('[data-scope="'+next+'"]').focus();scope.querySelector('[data-scope="'+next+'"]').click();
-    };
-    refreshMapAudienceUI();
-  }
-  var social=document.getElementById('btn-social');if(social)social.onclick=function(){openSocialHub('timeline');};
+  var scope=document.getElementById('btn-map-scope');
+  if(scope)scope.onclick=function(){
+    var next=mapAudience==='mine'?'public':'mine';
+    if(next==='public'&&!fbUser){setTip('みんなの地図を見るにはログインしてください');document.getElementById('btn-me').click();return;}
+    setMapAudience(next);
+  };
+  refreshMapAudienceUI();
+  var notifications=document.getElementById('btn-notifications');if(notifications)notifications.onclick=function(){openSocialHub('notifications');};
+  var messages=document.getElementById('btn-messages');if(messages)messages.onclick=function(){openSocialHub('messages');};
   var bulk=document.getElementById('btn-bulk');if(bulk)bulk.onclick=function(){openMemoryHub();};
   var library=document.getElementById('btn-lib');if(library)library.onclick=function(){
     if(typeof chooseMemoryDeckPhotos==='function')chooseMemoryDeckPhotos();else chooseAlbumPhotos();

@@ -13,6 +13,8 @@ const SERVER = (location.protocol==='http:'||location.protocol==='https:')
 
 const STYLE='https://tiles.openfreemap.org/styles/liberty';
 const CATS=['喫茶','食','酒','湯','宿','社','園','景','本'];
+const PROFILE_ICONS=['pin','camera','mountain','tree','star','moon','wave','flower'];
+const PROFILE_ICON_LABELS={pin:'記憶のピン',camera:'カメラ',mountain:'山',tree:'木',star:'星',moon:'月',wave:'波',flower:'花'};
 const ASK={'喫茶':['何を飲んだ / 食べた？','クリームソーダ'],'食':['何を食べた？','味玉らーめん'],
   '酒':['何を飲んだ？','レモンサワー'],'湯':['ひとこと','外気浴の椅子が最高'],
   '社':['どう撮った？','夕方、参道から'],'園':['どう撮った？','桜、朝いちばん'],
@@ -43,6 +45,20 @@ function setTip(t){var e=document.getElementById('tip');e.textContent=t;e.style.
 function valid(p){return p&&isFinite(p.lat)&&isFinite(p.lng)&&Math.abs(p.lat)<=90&&Math.abs(p.lng)<=180;}
 function nid(){return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function el(h){var d=document.createElement('div');d.innerHTML=h.trim();return d.firstElementChild;}
+function profileIconSvg(name){
+  var paths={
+    pin:'<path d="M12 21s6-5.7 6-11a6 6 0 1 0-12 0c0 5.3 6 11 6 11Z"/><circle cx="12" cy="10" r="2.2"/>',
+    camera:'<path d="M4 7.5h4l1.4-2h5.2l1.4 2h4v11H4Z"/><circle cx="12" cy="13" r="3.2"/>',
+    mountain:'<path d="m3.5 18 6.2-10 3.1 4.6 2-3 5.7 8.4Z"/><path d="m7.9 11 1.8 1.5 1.3-1"/>',
+    tree:'<path d="M12 4 7 11h2l-3 4.5h4.3V20h3.4v-4.5H18L15 11h2Z"/>',
+    star:'<path d="m12 3 2.5 5.8 6.2.6-4.7 4.1 1.4 6.1-5.4-3.2-5.4 3.2 1.4-6.1-4.7-4.1 6.2-.6Z"/>',
+    moon:'<path d="M18.5 15.7A8 8 0 0 1 8.3 5.5a7 7 0 1 0 10.2 10.2Z"/>',
+    wave:'<path d="M3 14c2.1 0 2.1-2.5 4.2-2.5s2.1 2.5 4.2 2.5 2.1-2.5 4.2-2.5 2.1 2.5 4.4 2.5"/><path d="M4.5 18c1.7 0 1.7-2 3.4-2s1.7 2 3.4 2 1.7-2 3.4-2 1.7 2 3.4 2"/>',
+    flower:'<circle cx="12" cy="12" r="2"/><path d="M12 10c-3.8-1.2-3.6-5.7 0-6 3.6.3 3.8 4.8 0 6Zm2 2c1.2-3.8 5.7-3.6 6 0-.3 3.6-4.8 3.8-6 0Zm-2 2c3.8 1.2 3.6 5.7 0 6-3.6-.3-3.8-4.8 0-6Zm-2-2c-1.2 3.8-5.7 3.6-6 0 .3-3.6 4.8-3.8 6 0Z"/>'
+  };
+  var key=PROFILE_ICONS.indexOf(name)>=0?name:'pin';
+  return '<svg class="profile-symbol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+paths[key]+'</svg>';
+}
 function visibleOwnSpots(){
   return mapAudience==='mine'?spots:spots.filter(function(p){return p.visibility==='public';});
 }
@@ -54,12 +70,12 @@ function visibleOtherSpots(){
   }catch(e){return [];}
 }
 function refreshMapAudienceUI(){
-  var box=document.getElementById('map-scope');if(!box)return;
-  Array.prototype.forEach.call(box.querySelectorAll('button'),function(b){
-    var on=b.dataset.scope===mapAudience;
-    b.classList.toggle('on',on);b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;
-  });
-  box.dataset.scope=mapAudience;
+  var button=document.getElementById('btn-map-scope');if(!button)return;
+  var viewingPublic=mapAudience==='public';
+  button.dataset.scope=mapAudience;
+  button.classList.toggle('public-map',viewingPublic);
+  button.setAttribute('aria-pressed',String(viewingPublic));
+  button.setAttribute('aria-label',viewingPublic?'自分の地図へ切り替える':'みんなの地図へ切り替える');
 }
 function setMapAudience(mode,quiet){
   if(mode!=='mine'&&mode!=='public')return;

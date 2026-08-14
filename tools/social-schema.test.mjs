@@ -5,6 +5,7 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 const migration = readFileSync(new URL("migrations/0001_social_release.sql", root), "utf8");
+const profileMigration = readFileSync(new URL("migrations/0002_profile_icon.sql", root), "utf8");
 const worker = readFileSync(new URL("src/index.js", root), "utf8");
 const wrangler = JSON.parse(readFileSync(new URL("wrangler.jsonc", root), "utf8"));
 
@@ -60,6 +61,19 @@ SELECT 'FK='||COUNT(*) FROM pragma_foreign_key_check;
   assert.match(result.stdout, /^FK=0$/m);
 });
 
+test("profile icons are constrained to the audited built-in set", () => {
+  const result = spawnSync("sqlite3", [":memory:"], {
+    input: baseSchema + profileMigration + `
+SELECT 'ICON='||profile_icon FROM users WHERE id='u1';
+UPDATE users SET profile_icon='camera' WHERE id='u1';
+SELECT 'UPDATED='||profile_icon FROM users WHERE id='u1';
+`, encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^ICON=pin$/m);
+  assert.match(result.stdout, /^UPDATED=camera$/m);
+});
+
 test("post announcement inserts every authorized recipient in one SQL statement", () => {
   const match = /const notificationInsert = env\.DB\.prepare\(`([\s\S]*?)`\)\.bind/.exec(worker);
   assert.ok(match, "announcement SQL was not found");
@@ -94,9 +108,23 @@ test("social endpoints keep authorization, composite cursors and variant moderat
   assert.doesNotMatch(worker.slice(worker.indexOf("async function announcePostIfReady"), worker.indexOf("async function announceReadyPosts")), /LIMIT 50/);
 });
 
+test("friend routes are method-locked and bounded before D1 writes", () => {
+  assert.match(worker, /p === "\/api\/friends\/request" && request\.method === "POST"/);
+  assert.match(worker, /p === "\/api\/friends\/accept" && request\.method === "POST"/);
+  assert.match(worker, /socialReadLimit\(env, me, "friends"\)/);
+  assert.match(worker, /socialWriteLimit\(env, me, "friend-request"\)/);
+  assert.match(worker, /userLimit\(env, me\.id, "friend_request", dayKey\(\), 40, 1\)/);
+  assert.match(worker, /friend_request_global_day_/);
+  assert.match(worker, /status='pending'/);
+  assert.match(worker, /Number\(pending && pending\.n \|\| 0\) >= 500/);
+  assert.match(worker, /socialWriteLimit\(env, me, "friend-accept"\)/);
+  assert.match(worker, /userLimit\(env, me\.id, "friend_accept", dayKey\(\), 200, 1\)/);
+  assert.match(worker, /friend_accept_global_day_/);
+});
+
 test("wrangler declares social burst limits and frequent delayed publishing", () => {
   const names = new Set((wrangler.ratelimits || []).map(item => item.name));
-  for (const name of ["SOCIAL_READ_RATE_LIMITER", "SOCIAL_WRITE_RATE_LIMITER", "SHARE_RATE_LIMITER"])
+  for (const name of ["SOCIAL_READ_RATE_LIMITER", "SOCIAL_WRITE_RATE_LIMITER", "SHARE_RATE_LIMITER", "GEOCODE_RATE_LIMITER"])
     assert.ok(names.has(name), `${name} is missing`);
   assert.ok(wrangler.triggers.crons.includes("*/15 * * * *"));
   assert.ok(wrangler.triggers.crons.includes("17 18 * * *"));

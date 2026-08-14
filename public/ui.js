@@ -199,8 +199,7 @@ function showDiag(){
         (window.__tStyle?('　見た目の取得 '+window.__tStyle+'ms'):'')+'<br>'+
         'ズーム <b>'+map.getZoom().toFixed(2)+'</b>（写真は '+PHOTO_ZOOM+' 以上）<br>'+
         '思い出 '+spots.length+' 件／読み込んだ場所 <b>'+pois.length+'</b> 件<br>'+
-        '取得：実行 '+loadLog.run+' 回／自前 '+(loadLog.ours||0)+
-          '／飲食 '+loadLog.hp+'／名所 '+loadLog.wiki+'／宿 '+loadLog.rk+
+        '取得：実行 '+loadLog.run+' 回／自前DB '+(loadLog.ours||0)+
         (loadLog.skip?('<br><span style="color:var(--warn)">走らない理由：'+
           esc(loadLog.skip)+'</span>'):'')+
         (loadLog.err?('<br><span style="color:var(--warn)">エラー：'+
@@ -233,9 +232,7 @@ function showDiag(){
         var q=j.quota||{};
         var line=s.querySelector('#srvq');
         if(line){
-          line.innerHTML='使用量：検索 '+((q.gsearch||{}).used||0)+'／'+((q.gsearch||{}).limit||0)+
-            '　写真判定 '+((q.vision||{}).used||0)+'　提案 '+((q.gemini||{}).used||0)+
-            '　合計 '+(q['合計円']||0)+'円';
+          line.textContent='サーバー接続：正常';
         }
       })
       .catch(function(){

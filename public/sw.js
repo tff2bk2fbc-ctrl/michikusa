@@ -1,7 +1,7 @@
 /* 一度読んだものを端末に残しておく仕組み。
    次に開くときは、待たずにそこから出す。
    同時に裏で新しいものを取りに行き、次回はそれを使う。 */
-const CACHE='spota-v25';
+const CACHE='spota-v27';
 
 self.addEventListener('install', function(){ self.skipWaiting(); });
 self.addEventListener('message', function(e){
@@ -23,9 +23,9 @@ self.addEventListener('fetch', function(e){
   if(url.pathname.startsWith('/api/')) return;      // 中身が変わるものは残さない
 
   const isSelf = url.origin===location.origin;
-  const isLib  = /cdnjs|jsdelivr|unpkg|gstatic/.test(url.hostname);
-  const isTile = /openfreemap|tiles/.test(url.hostname);
-  if(!isSelf && !isLib && !isTile) return;
+  // 地図タイルをCache Storageへ残すと閲覧地域の履歴になり得る。
+  // アプリ本体だけを保存し、地図・外部サービスの応答はブラウザ既定に任せる。
+  if(!isSelf) return;
 
   // HTMLは常にネットワークを優先する。古いindex.htmlが新しいJSへの更新を
   // 妨げないようにし、オフライン時だけ保存版へ戻る。

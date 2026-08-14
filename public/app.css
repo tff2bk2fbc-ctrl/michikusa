@@ -1,8 +1,9 @@
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;overflow:hidden;
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html,body{height:100%;width:100%;max-width:100vw;overflow:hidden;
   font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic","Noto Sans JP",system-ui,sans-serif}
 button,input,textarea{font-family:inherit;color:inherit;border:none;background:none;outline:none}
-button{cursor:pointer}
+button{cursor:pointer;touch-action:manipulation}
 .sr-only{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;
   margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;
   white-space:nowrap!important;border:0!important}
@@ -48,9 +49,19 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
 .q{flex:1;display:flex;align-items:center;gap:8px;background:var(--sf);border-radius:999px;
   padding:11px 15px;box-shadow:var(--sh);transition:background .4s;min-width:0}
 .q svg{width:16px;height:16px;color:var(--dim);flex:0 0 16px}
-.q input{flex:1;font-size:14.5px;min-width:0;background:none}
+.q input{flex:1;font-size:16px;min-width:0;background:none}
 .q input::placeholder{color:var(--dim)}
 .q .x{color:var(--dim);font-size:16px;display:none;flex:0 0 auto}
+.top-actions{display:flex;align-items:center;gap:2px;flex:0 0 auto}
+.top-action{position:relative;width:44px;height:44px;display:grid;place-items:center;border-radius:50%;
+  color:var(--ink);background:transparent;border:1px solid rgba(255,255,255,.62);
+  box-shadow:0 2px 8px rgba(0,0,0,.10);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+body.dark .top-action{border-color:rgba(255,255,255,.18)}
+.top-action svg{width:21px;height:21px}.top-action:active{background:transparent;opacity:.58}
+.top-action.public-map svg{stroke-width:2}.top-badge{position:absolute;top:-1px;right:-1px;min-width:17px;height:17px;
+  padding:0 4px;display:grid;place-items:center;border-radius:99px;background:#D7473F;color:#fff;
+  border:2px solid color-mix(in srgb,var(--sf) 82%,transparent);font-size:8.5px;font-weight:800;line-height:1}
+.top-badge[hidden]{display:none}
 .rb{width:42px;height:42px;border-radius:50%;background:var(--sf);box-shadow:var(--sh);
   display:flex;align-items:center;justify-content:center;flex:0 0 42px;overflow:hidden;
   transition:background .4s}
@@ -73,16 +84,6 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .reshead{padding:9px 14px;font-size:11px;color:var(--dim);background:var(--chip)}
 
-/* 公開地図と自分の地図。検索の下に置き、地図ラベルを大きく隠さない。 */
-.map-scope{position:fixed;z-index:39;top:calc(env(safe-area-inset-top,0px) + 64px);left:50%;
-  transform:translateX(-50%);display:flex;align-items:center;padding:3px;border-radius:999px;
-  background:rgba(255,255,255,.88);border:1px solid rgba(255,255,255,.72);
-  box-shadow:0 2px 10px rgba(0,0,0,.13);transition:opacity .2s,transform .2s}
-body.dark .map-scope{background:rgba(30,30,34,.88);border-color:rgba(255,255,255,.16)}
-.map-scope button{min-width:64px;min-height:44px;padding:0 13px;border-radius:999px;
-  color:var(--dim);font-size:12px;font-weight:650}
-.map-scope button.on{background:var(--btn);color:var(--btnink)}
-body.placing .map-scope{display:none}
 .map-locate{position:fixed;z-index:35;left:20px;bottom:calc(env(safe-area-inset-bottom,0px) + 100px);
   width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:var(--sf);
   border:1px solid var(--line);box-shadow:var(--sh);color:var(--ink)}
@@ -158,7 +159,7 @@ body.placing .map-locate{display:none}
 .empty{padding:22px 16px;text-align:center;font-size:13px;color:var(--dim);line-height:1.8}
 
 /* ---------- 入力 ---------- */
-.fld{width:100%;background:var(--chip);border-radius:12px;padding:13px 14px;font-size:15px;
+.fld{width:100%;background:var(--chip);border-radius:12px;padding:13px 14px;font-size:16px;
   margin-bottom:9px}
 .fld::placeholder{color:var(--dim)}
 .lab{font-size:12px;font-weight:600;color:var(--dim);margin:14px 0 7px}
@@ -261,7 +262,7 @@ body.placing .map-locate{display:none}
 
 /* 押した場所へ滑って動く枠 */
 .pill{position:absolute;top:0;height:100%;border-radius:26px;
-  background:rgba(255,255,255,.24);box-shadow:inset 0 0 0 1px rgba(255,255,255,.24);opacity:0;
+  background:transparent;box-shadow:none;opacity:0;
   transition:transform .42s cubic-bezier(.34,1.3,.5,1),
              width .42s cubic-bezier(.34,1.3,.5,1),opacity .3s;
   pointer-events:none}
@@ -296,6 +297,8 @@ body.placing .map-locate{display:none}
 /* プロフィール A：写真棚。地図と同じシステムフォントで統一する。 */
 .me-profile{font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic","Noto Sans JP",system-ui,sans-serif}
 .me-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.me-head>div{flex:1;min-width:0}.me-profile-icon{width:48px;height:48px;flex:0 0 48px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%}
+.me-profile-icon .profile-symbol{width:27px;height:27px}
 .me-title{font-size:22px;font-weight:700;line-height:1.3}.me-meta{font-size:12px;color:var(--dim);margin-top:4px}
 .me-close{width:44px;height:44px;display:grid;place-items:center;font-size:22px}
 .me-strip{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,1fr);
@@ -331,8 +334,8 @@ body.placing .map-locate{display:none}
    地図の紙色、墨色、細い境界線をそのまま引き継ぐ。
    写真以外の面へ影やガラスを重ねない。
    ============================================================ */
-.release-screen{position:fixed;inset:0;z-index:180;background:var(--bg);color:var(--ink);
-  overflow-y:auto;-webkit-overflow-scrolling:touch;transform:translateX(100%);
+.release-screen{position:fixed;inset:0;width:100%;max-width:100vw;z-index:180;background:var(--bg);color:var(--ink);
+  overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;transform:translateX(100%);
   transition:transform .28s cubic-bezier(.22,.78,.24,1)}
 .release-screen.on{transform:none}
 .release-bar{position:sticky;z-index:4;top:0;display:grid;grid-template-columns:52px 1fr 52px;
@@ -341,9 +344,9 @@ body.placing .map-locate{display:none}
   background:color-mix(in srgb,var(--bg) 90%,transparent);
   border-bottom:1px solid var(--line);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
 .release-back{width:44px;height:44px;display:grid;place-items:center;border-radius:50%}
-.release-back:active{background:var(--chip)}.release-back svg{width:24px;height:24px}
+.release-back:active{background:transparent;opacity:.58}.release-back svg{width:24px;height:24px}
 .release-bar-title{text-align:center;font-size:15px;font-weight:700}.release-bar-space{display:block}
-.release-body{max-width:680px;margin:0 auto;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 36px)}
+.release-body{width:100%;max-width:680px;margin:0 auto;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 36px)}
 .release-tabs{position:sticky;z-index:3;top:calc(env(safe-area-inset-top,0px) + 58px);
   display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border-bottom:1px solid var(--line)}
 .release-tabs button{min-height:50px;color:var(--dim);font-size:13.5px;font-weight:650;
@@ -370,12 +373,12 @@ body.placing .map-locate{display:none}
 .release-empty b,.timeline-status b{color:var(--ink);font-size:16px;margin-bottom:7px}
 .release-empty span,.timeline-status span{max-width:28em}.timeline-status .release-main{margin-top:20px}
 
-.timeline-search{position:sticky;z-index:2;top:calc(env(safe-area-inset-top,0px) + 109px);
+.timeline-search{position:sticky;z-index:3;top:calc(env(safe-area-inset-top,0px) + 58px);
   display:grid;grid-template-columns:22px minmax(0,1fr) 52px;align-items:center;gap:7px;
   margin:14px 12px;padding:0 5px 0 13px;min-height:48px;border-radius:999px;background:var(--sf);box-shadow:var(--sh)}
-.timeline-search svg{width:18px;height:18px;color:var(--dim)}.timeline-search>span{font-size:20px;color:var(--dim)}.timeline-search input{min-width:0;font-size:14px}
+.timeline-search svg{width:18px;height:18px;color:var(--dim)}.timeline-search>span{font-size:20px;color:var(--dim)}.timeline-search input{min-width:0;font-size:16px}
 .timeline-search button{min-height:40px;color:var(--ink);font-size:12px;font-weight:700}
-.feed-modes{display:grid;grid-template-columns:1fr 1fr;margin:18px 16px 0;border-bottom:1px solid var(--line)}
+.feed-modes{display:grid;grid-template-columns:1fr 1fr;margin:4px 16px 0;border-bottom:1px solid var(--line)}
 .feed-modes button{min-height:44px;color:var(--dim);font-size:13px;font-weight:650;border-bottom:2px solid transparent}
 .feed-modes button.on{color:var(--ink);border-color:var(--ink)}
 .daily-view{display:flex;align-items:center;gap:13px;margin:20px 16px 14px;padding:18px 0;
@@ -403,8 +406,10 @@ body.placing .map-locate{display:none}
 .timeline-copy p{margin-top:7px;font-size:13.5px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
 .timeline-actions{display:flex;align-items:center;gap:5px;margin-top:12px;border-top:1px solid var(--line);padding-top:7px}
 .timeline-actions button{min-width:48px;min-height:44px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--dim)}
-.timeline-actions button span{font-size:21px;line-height:1}.timeline-actions button b{font-size:11px}.timeline-actions button em{font-style:normal}
-.timeline-actions button.on{color:var(--ink)}.timeline-actions button.on span{font-weight:800}
+.timeline-actions button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.timeline-actions button b{font-size:11px}.timeline-actions button.on{color:var(--ink)}.timeline-actions button.on svg{fill:currentColor}
+.timeline-actions button.flash svg{animation:likeFlash .42s cubic-bezier(.18,.88,.24,1)}
+@keyframes likeFlash{0%{transform:scale(.7);opacity:.35}55%{transform:scale(1.38)}100%{transform:scale(1);opacity:1}}
 .feed-more{display:block;width:calc(100% - 32px);min-height:48px;margin:18px 16px;border:1px solid var(--line);font-size:13px;font-weight:700}
 
 .public-profile{padding:32px 18px 25px;border-bottom:1px solid var(--line);text-align:center}
@@ -444,6 +449,13 @@ body.placing .map-locate{display:none}
 .profile-drag-zone{height:16px;display:grid;place-items:center;touch-action:none}.profile-drag-zone i{width:38px;height:5px;border-radius:99px;background:var(--line)}
 .profile-screen .profile-hero{touch-action:none}
 .profile-close{font-size:24px;font-weight:300}
+.profile-symbol{width:24px;height:24px;display:block}
+.profile-portrait .profile-symbol{width:42px;height:42px}
+.profile-icon-picker{padding:30px 18px}.profile-icon-picker>p{margin-bottom:22px;color:var(--dim);font-size:13px}
+.profile-icon-picker>div{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.profile-icon-picker button{min-height:94px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:9px;border:1px solid var(--line);border-radius:16px;color:var(--ink)}
+.profile-icon-picker button.on{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.profile-icon-picker button .profile-symbol{width:30px;height:30px}.profile-icon-picker button span{font-size:11px;color:var(--dim)}
 
 .social-section-head{display:flex;align-items:center;justify-content:space-between;min-height:58px;padding:0 16px;border-bottom:1px solid var(--line)}
 .social-section-head b{font-size:17px}.social-section-head button{min-height:44px;color:var(--dim);font-size:12px}
@@ -454,7 +466,7 @@ body.placing .map-locate{display:none}
 .comment-list{padding-bottom:92px}.comment-row{display:flex;align-items:flex-start;gap:11px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .comment-row>div{min-width:0;flex:1}.comment-row b{font-size:12.5px}.comment-row p{margin-top:4px;font-size:14px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.comment-row time{color:var(--dim);font-size:10px}.comment-row>button{width:44px;height:44px;color:var(--dim)}
 .comment-form,.message-form{position:fixed;z-index:5;left:0;right:0;bottom:0;display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:8px;padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px);background:color-mix(in srgb,var(--bg) 92%,transparent);border-top:1px solid var(--line);backdrop-filter:blur(16px)}
-.comment-form input,.message-form textarea{min-height:44px;padding:11px 14px;border-radius:18px;background:var(--sf);font-size:14px;resize:none}.comment-form button,.message-form button{min-height:44px;font-size:13px;font-weight:750}
+.comment-form input,.message-form textarea{min-height:44px;padding:11px 14px;border-radius:18px;background:var(--sf);font-size:16px;resize:none}.comment-form button,.message-form button{min-height:44px;font-size:13px;font-weight:750}
 .chat-body{height:calc(100dvh - env(safe-area-inset-top,0px) - 58px);display:flex;flex-direction:column;padding-bottom:0}.message-list{flex:1;overflow-y:auto;padding:16px 12px 100px}.message-row{display:flex;flex-direction:column;align-items:flex-start;margin:7px 0}.message-row.mine{align-items:flex-end}.message-row p{max-width:78%;padding:10px 13px;border-radius:17px 17px 17px 4px;background:var(--sf);font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.message-row.mine p{border-radius:17px 17px 4px 17px;background:var(--ink);color:var(--bg)}.message-row time{margin:3px 5px 0;color:var(--dim);font-size:9px}
 
 /* 写真フォルダから1枚ずつ、左右スワイプで採否を決める。 */
@@ -560,11 +572,11 @@ body.placing .map-locate{display:none}
 
 .drop{pointer-events:auto;touch-action:none}
 /* 置こうとしている場所の印。地図を隠さないよう、輪郭だけにする */
-.drop .im{width:16px;height:16px;border-radius:50%;background:transparent;
+.drop .im{width:16px;height:16px;border-radius:50%;background-color:transparent!important;
   border:2.5px solid var(--btn);box-shadow:none}
 .drop .tl{display:none}
 .drop::after{content:'';position:absolute;left:50%;top:50%;width:38px;height:38px;
-  margin:-19px 0 0 -19px;border-radius:50%;border:1.5px solid var(--btn);opacity:.3}
+  margin:-19px 0 0 -19px;border-radius:50%;border:1.5px solid var(--btn);background:transparent!important;opacity:.3}
 .confirm{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 14px);
   z-index:80;background:var(--sf);border-radius:18px;padding:16px;box-shadow:var(--sh2);
   display:none}
@@ -579,6 +591,10 @@ body.placing .map-locate{display:none}
 .cf-cancel{width:100%;text-align:center;font-size:12px;color:var(--dim);margin-top:10px}
 .confirm.pick .cf-btns{display:none}
 body.placing .fabs,body.placing .tip,body.placing .top{display:none}
+
+@media (max-width:390px){
+  .top{gap:5px}.top-actions{gap:0}.top-action{width:44px}.q{padding-inline:13px}
+}
 
 .maplibregl-ctrl-attrib{font-size:9px!important;background:var(--sf)!important;
   border-radius:99px!important}

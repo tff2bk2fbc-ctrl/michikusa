@@ -10,27 +10,28 @@
 async function uploadPhoto(auth,postId,photoId,dataUrl){
   try{
     var blob=await (await fetch(dataUrl)).blob();
-    var pid=photoId;
+    var pid=photoId,moderationFailed=false;
     async function put(kind,body,type){
       var r=await apiAs(auth,'/api/photo?post_id='+encodeURIComponent(postId)+
         '&photo_id='+encodeURIComponent(pid)+'&kind='+kind,
         {method:'PUT',headers:{'Content-Type':type},body:body});
       if(!r.ok)throw new Error('photo upload '+r.status);
+      var j=await r.json().catch(function(){return {};});
+      if((kind==='view'||kind==='thumb')&&j.moderation&&j.moderation!=='ok'&&j.moderation!=='not-required')moderationFailed=true;
+      return j;
     }
     // 原本
     await put('orig',blob,blob.type||'image/jpeg');
     // 表示用（軽くしたもの）
     var view=await resize(dataUrl,2560,.90);
-    if(view){
-      var vb=await (await fetch(view)).blob();
-      await put('view',vb,'image/jpeg');
-    }
+    if(!view)throw new Error('view resize failed');
+    var vb=await (await fetch(view)).blob();
+    await put('view',vb,'image/jpeg');
     var th=await resize(dataUrl,512,.82);
-    if(th){
-      var tb=await (await fetch(th)).blob();
-      await put('thumb',tb,'image/jpeg');
-    }
-    return true;
+    if(!th)throw new Error('thumb resize failed');
+    var tb=await (await fetch(th)).blob();
+    await put('thumb',tb,'image/jpeg');
+    return {ok:true,moderationFailed:moderationFailed};
   }catch(e){ return false; }
 }
 function resize(dataUrl,max,q){
@@ -69,20 +70,8 @@ async function pushOne(rec){
   try{
     var auth=await captureAuth();
     if(!auth||rec.owner_scope!==auth.scope)return false;
-    // 他人に見せるものは、先に写真を確かめる
-    if(rec.photo && rec.visibility!=='private'){
-      try{
-        var vr=await apiAs(auth,'/api/vision',{method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({image:String(rec.photo)})});
-        if(!vr.ok)throw new Error('moderation unavailable');
-        var vj=await vr.json();
-        if(!vj || vj.ok!==true)throw new Error('moderation rejected');
-      }catch(e){
-        rec.visibility='private';
-        if(authIsCurrent(auth))setTip('写真を確認できないため、自分だけの記録にしました');
-      }
-    }
+    // 公開向けの安全確認は、アップロード後にWorkerがview/thumbの双方へ行う。
+    // 端末から同じ写真を先に別送せず、迂回できない一つの経路に限定する。
     if(!rec.server_id){
       var r=await apiAs(auth,'/api/posts',{method:'POST',
         headers:{'Content-Type':'application/json'},
@@ -102,7 +91,12 @@ async function pushOne(rec){
     if(rec.photo){
       rec.server_photo_id=rec.server_photo_id||nid();
       await dbPut('spots',rec);
-      if(!(await uploadPhoto(auth,rec.server_id,rec.server_photo_id,rec.photo)))return false;
+      var uploaded=await uploadPhoto(auth,rec.server_id,rec.server_photo_id,rec.photo);
+      if(!uploaded)return false;
+      if(rec.visibility!=='private'&&uploaded.moderationFailed){
+        rec.visibility='private';
+        if(authIsCurrent(auth))setTip('安全確認を完了できなかったため、自分だけの記録にしました');
+      }
     }
     rec.synced=1;
     await dbPut('spots',rec);
@@ -238,8 +232,8 @@ async function syncDown(){
     startedScope=auth.scope;startedUid=auth.uid;
     await syncDeletions(auth);
     var b=map.getBounds();
-    var r=await apiAs(auth,'/api/posts?s='+b.getSouth()+'&w='+b.getWest()+
-      '&n='+b.getNorth()+'&e='+b.getEast()+'&limit=100');
+    var r=await apiAs(auth,'/api/posts/query',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({s:b.getSouth(),w:b.getWest(),n:b.getNorth(),e:b.getEast(),limit:100})});
     if(!r.ok)return;
     var j=await r.json();
     if(!fbUser||fbUser.uid!==startedUid||activeSpotScope!==startedScope)return;
@@ -644,11 +638,13 @@ function openMe(){
       '<div style="font-size:13.5px;color:var(--dim);line-height:1.8;margin-bottom:18px">'+
       '思い出がこの端末から離れて残るようになります。機種を変えても戻ってきます。<br>'+
       'フレンドと見せあうこともできます。</div>'+
+      '<button class="btn g" id="timeline-guest" style="margin-bottom:8px">タイムラインを見る</button>'+
       '<button class="btn" id="g">Googleでログイン</button>'+
       '<button class="btn g" id="x" style="margin-top:8px">あとで</button></div>';
     var s0=showSheet(html);
     s0.querySelector('#x').onclick=closeSheet;
     s0.querySelector('#g').onclick=function(){ closeSheet(); doLogin(); };
+    s0.querySelector('#timeline-guest').onclick=function(){closeSheet();if(typeof openSocialHub==='function')openSocialHub('timeline');};
     return;
   }
 
@@ -662,7 +658,7 @@ function openMe(){
     return p?('<img src="'+esc(p.photo_thumb||p.photo)+'" alt="">'):'<i></i>';
   }).join('');
   html+='<div class="me-profile">'+
-    '<div class="me-head"><div><div class="me-title">'+esc(fbUser.displayName||'プロフィール')+'</div>'+
+    '<div class="me-head"><button class="me-profile-icon" id="me-profile-icon" aria-label="プロフィールアイコンを変更">'+profileIconSvg(meP&&meP.profile_icon)+'</button><div><div class="me-title">'+esc(fbUser.displayName||'プロフィール')+'</div>'+
     '<div class="me-meta">'+spots.length+' の思い出'+(unsynced?('　未保存 '+unsynced+'件'):'　すべて保存済み')+'</div></div>'+
     '<button class="me-close" id="x" aria-label="プロフィールを閉じる">×</button></div>'+
     '<div class="me-strip" aria-label="最近の思い出">'+profileStrip+'</div>'+
@@ -717,6 +713,7 @@ function openMe(){
   var s=showSheet(html);
   s.querySelector('#x').onclick=closeSheet;
   s.querySelector('#fr').onclick=function(){openFriends();};
+  var profileIcon=s.querySelector('#me-profile-icon');if(profileIcon)profileIcon.onclick=function(){closeSheet();if(meP&&meP.handle&&typeof openProfileIconPicker==='function')openProfileIconPicker(meP.handle,meP.profile_icon||'pin');};
   s.querySelector('#out').onclick=function(){ doLogout(); closeSheet(); };
   var pt=s.querySelector('#push-test');
   if(pt)pt.onclick=async function(){
@@ -913,7 +910,7 @@ async function openFriendMap(hd){
         server_photo_id:p.photo_id||null,friend:p.visibility==='friends'};
       if(typeof queueSharedPhoto==='function'&&p.visibility==='public'&&p.photo_id)queueSharedPhoto(others[p.id],auth);
     });
-    closeSheet(); render(true);
+    closeSheet();setMapAudience('public',true);render(true);
     var bounds=new maplibregl.LngLatBounds();
     rows.forEach(function(p){bounds.extend([p.lng,p.lat]);});
     if(rows.length===1)map.easeTo({center:[rows[0].lng,rows[0].lat],zoom:15.5,duration:850});

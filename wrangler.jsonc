@@ -12,6 +12,15 @@
   "vars": {
     "FIREBASE_PROJECT_ID": "michikusa-e34df"
   },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.05,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 0.05,
+      "invocation_logs": false
+    }
+  },
   "ratelimits": [
     {
       "name": "POSTAL_USER_RATE_LIMITER",
@@ -37,6 +46,11 @@
       "name": "SHARE_RATE_LIMITER",
       "namespace_id": "10005",
       "simple": { "limit": 90, "period": 60 }
+    },
+    {
+      "name": "GEOCODE_RATE_LIMITER",
+      "namespace_id": "10006",
+      "simple": { "limit": 60, "period": 60 }
     }
   ],
   "d1_databases": [

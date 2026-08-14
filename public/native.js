@@ -119,11 +119,11 @@ async function setupPush(){
         body:JSON.stringify({token:t.value,platform:'ios'})}).catch(function(){});
     });
     if(!window.__spotaPushAction)window.__spotaPushAction=await P.addListener('pushNotificationActionPerformed',function(ev){
-      // 通知から開いたとき、その場所へ飛ぶ
+      // Pushに正確な座標は入れない。通知種別から認証済み画面だけを開く。
       var d=(ev&&ev.notification&&ev.notification.data)||{};
-      if(d.lat&&d.lng){
-        map.easeTo({center:[Number(d.lng),Number(d.lat)],zoom:16.5,duration:800});
-      }
+      if(d.conversation&&typeof openConversation==='function')openConversation(String(d.conversation),'メッセージ');
+      else if(d.profile&&typeof openPublicProfile==='function')openPublicProfile(String(d.profile));
+      else if(d.post&&typeof openSocialHub==='function')openSocialHub('timeline');
     });
     await P.register();
   }catch(e){}
@@ -164,6 +164,24 @@ function requestInitialHome(){
 }
 window.requestInitialHome=requestInitialHome;
 if(window.__michikusaMapReady)requestInitialHome();
+
+// 設定アプリから位置許可を変更して戻ったときは、初回失敗を引きずらない。
+try{
+  var App=plugin('App');
+  if(App&&App.addListener)App.addListener('appStateChange',async function(state){
+    if(!state||!state.isActive)return;
+    var Geo=plugin('Geolocation'),granted=false;
+    try{var permission=Geo&&await Geo.checkPermissions();granted=!!permission&&permission.location==='granted';}catch(e){}
+    if(locDone&&!granted){
+      locDone=false;window.__homed=0;
+      if(meM){meM.remove();meM=null;}
+      map.jumpTo({center:[138.2529,36.2048],zoom:4.6,pitch:0,bearing:0});
+      if(typeof autoLoad==='function')autoLoad(true);
+      return;
+    }
+    if(!locDone){window.__homed=0;requestInitialHome();}
+  });
+}catch(e){}
 
 /* ============================================================
    写真 / 現在地 / 昼夜

@@ -43,7 +43,7 @@ function visibilityDescription(v){
   if(v==='private')return '自分だけに表示されます';
   var settings=meP&&meP.settings||{};
   var precision=v==='friends'?settings.friend_precision:settings.public_precision;
-  return visibilityLabel(v)+'に表示・位置は'+precisionLabel(precision);
+  return visibilityLabel(v)+'に表示・位置は'+precisionLabel(precision)+'。公開用画像は安全確認のためGoogle Cloud Visionへ送信されます';
 }
 
 /* ============================================================
@@ -366,7 +366,6 @@ function openAdd(p){
   var nm=s.querySelector('#f-n');
   var ok=s.querySelector('#ok');
   var vis=s.querySelector('#post-vis'), visNote=s.querySelector('#post-vis-note');
-
   function setPostVisibility(value){
     chosenVisibility=value;
     if(!vis)return;
@@ -400,28 +399,6 @@ function openAdd(p){
   var p1=s.querySelector('#p1'), p2=s.querySelector('#p2');
   if(p1) p1.onclick=function(){ closeSheet(); document.getElementById('in-cam').click(); };
   if(p2) p2.onclick=function(){ closeSheet(); document.getElementById('in-lib').click(); };
-
-  /* 写真から、ひとことの候補を出してもらう */
-  (function(){
-    if(!p.photo)return;
-    var box=s.querySelector('#sug'); if(!box)return;
-    if(String(p.photo).length>3000000)return;
-    api('/api/suggest',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({image:String(p.photo),category:cat})})
-      .then(function(r){return r.json();})
-      .then(function(j){
-        var items=(j&&j.items)||[];
-        if(!items.length)return;
-        box.innerHTML=items.map(function(t){
-          return '<button class="chip" data-t="'+esc(t)+'">'+esc(t)+'</button>';
-        }).join('');
-        box.style.display='flex';
-        Array.prototype.forEach.call(box.querySelectorAll('.chip'),function(b){
-          b.onclick=function(){ ft.value=b.dataset.t; ft.focus(); };
-        });
-      }).catch(function(){});
-  })();
 
   /* 一緒にいた人を選ぶ */
   var tb=s.querySelector('#tag-btn'), tc=s.querySelector('#tag-cnt');

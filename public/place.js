@@ -347,23 +347,35 @@ map.on('click',function(e){
     return best;
   }
 
+  function recordForFeature(list,feature){
+    var props=feature&&feature.properties||{},rid=String(props.rid||'');
+    if(rid){
+      var byId=list.filter(function(x){return String(x.id||x.server_id||x.spot||'')===rid;})[0];
+      if(byId)return byId;
+    }
+    var lat=Number(props.lat),lng=Number(props.lng);
+    if(isFinite(lat)&&isFinite(lng)){
+      var byPoint=list.filter(function(x){return Math.abs(Number(x.lat)-lat)<1e-7&&Math.abs(Number(x.lng)-lng)<1e-7;})[0];
+      if(byPoint)return byPoint;
+    }
+    return null;
+  }
+
   var f=nearest(['photo-ic','mine-ring','mine-ic']);
   if(f){
-    var s=visibleOwnSpots().filter(function(x){return x.n===f.properties.n;})[0];
+    var s=recordForFeature(visibleOwnSpots(),f);
     if(s){ openPlace(s,true); return; }
   }
 
   f=nearest(['frnd-ring','frnd-ic']);
   if(f){
-    var shared=visibleOtherSpots();
-    for(var i=0;i<shared.length;i++){
-      if(shared[i].n===f.properties.n){ openPlace(shared[i],false); return; }
-    }
+    var shared=recordForFeature(visibleOtherSpots(),f);
+    if(shared){openPlace(shared,false);return;}
   }
 
   f=nearest(['spot-dot','spot-ic']);
   if(f){
-    var p3=pois.filter(function(x){return x.n===f.properties.n;})[0];
+    var p3=recordForFeature(pois,f);
     if(p3){ openPlace(p3,false); return; }
   }
 
@@ -401,8 +413,8 @@ async function revGeo(lat,lng){
   try{
     // 写真EXIF由来の座標も含め、位置情報を第三者へ直接送らない。
     // Worker 側でキャッシュ・レート制限して地名へ変換する。
-    var r=await fetch(SERVER+'/api/reverse?zoom=18&lat='+encodeURIComponent(lat)+
-      '&lng='+encodeURIComponent(lng));
+    var r=await fetch(SERVER+'/api/reverse',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({lat:lat,lng:lng})});
     if(r.ok){var j=await r.json(),a=j.address||{};
       var seq=[a.province||a.state,a.city||a.town||a.village||a.county,
         a.city_district||a.suburb,a.neighbourhood||a.quarter,a.road],o=[];

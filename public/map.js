@@ -179,6 +179,10 @@ function retint(st){
 }
 
 /* ---------- 地図 ---------- */
+// 正確な現在地は端末へ永続化しない。旧版が残した値も起動時に破棄し、
+// 現在の権限確認が終わる前は日本全体の中立表示だけを使う。
+try{localStorage.removeItem('spota_last_location');}catch(e){}
+var initialMapView={center:[138.2529,36.2048],zoom:4.6};
 const map=new maplibregl.Map({
   container:'map',
   /* 以前は「元の色で読む → 色を変えて差し替える」の2段階だった。
@@ -187,7 +191,9 @@ const map=new maplibregl.Map({
   style:{version:8,sources:{},layers:[
     {id:'bg',type:'background',paint:{'background-color':night?'#1C1C1E':'#F2F0EA'}}
   ]},
-  center:[139.7745,35.7150],zoom:15.4,pitch:48,bearing:-12,maxPitch:70,
+  // 現在地取得前に特定の街（以前は上野）を現在地のように見せない。
+  // 許可後はnative.jsが実際の現在地へ移動する。
+  center:initialMapView.center,zoom:initialMapView.zoom,pitch:0,bearing:0,maxPitch:70,
   antialias:true,
   fadeDuration:0,
   attributionControl:{
@@ -382,7 +388,8 @@ function fcOf(list,mine){
     .filter(function(p){ return !(big&&mine&&p.photo); })
     .map(function(p){
       return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
-        properties:{n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0,
+        properties:{rid:String(p.id||p.server_id||p.spot||''),lat:p.lat,lng:p.lng,
+        n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0,
         hot:p.hot?1:0, spot:p.spot||0}};
     })};
 }
@@ -522,11 +529,16 @@ function makeRoundIcon(url,mine,key,count){
   photoDiag.try++;
 
   var im=new Image();
-  var src=url;
-  if(!/^data:/.test(url)){
-    // よその画像は自分のサーバーを通す。そうしないとCanvasで加工できない
-    src=SERVER+'/api/img?u='+encodeURIComponent(url);
-    im.crossOrigin='anonymous';
+  var src=String(url||'');
+  // 地図ピンには端末内または自分の配信元の画像だけを使う。
+  // 第三者画像の自動取得は、閲覧履歴・IP・位置の推測材料になるため行わない。
+  if(/^https?:/i.test(src)){
+    try{
+      var parsed=new URL(src,location.href);
+      if(parsed.origin!==location.origin && parsed.origin!==new URL(SERVER,location.href).origin){
+        delete makingIcons[key]; photoDiag.ngLoad++; return;
+      }
+    }catch(e){ delete makingIcons[key]; photoDiag.ngLoad++; return; }
   }
 
   im.onload=function(){
@@ -626,7 +638,8 @@ function photoFeatures(){
     var key=photoKey(o.p,o.mine)+'_'+count;
     if(!madeIcons[key]){ makeRoundIcon(o.img,o.mine,key,count); return; }
     out.push({type:'Feature',geometry:{type:'Point',coordinates:[o.p.lng,o.p.lat]},
-      properties:{n:o.p.n,mine:o.mine?1:0,icon:key,count:count}});
+      properties:{rid:String(o.p.id||o.p.server_id||o.p.spot||''),lat:o.p.lat,lng:o.p.lng,
+        n:o.p.n,mine:o.mine?1:0,icon:key,count:count}});
   });
   return out;
 }

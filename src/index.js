@@ -7,7 +7,7 @@
  *  必要なもの
  *   - D1  : binding "DB"
  *   - R2  : binding "PHOTOS"
- *   - Secret : HOTPEPPER_KEY
+ *   - Secrets: GOOGLE_API_KEY / FCM_SERVICE_ACCOUNT（利用機能を有効にする場合）
  *   - Var    : FIREBASE_PROJECT_ID
  *
  *  原則
@@ -18,29 +18,14 @@
  *      （ずらすだけだと、繰り返し観測して平均を取れば真の位置が割れる）
  */
 
-const HP = "https://webservice.recruit.co.jp/hotpepper/gourmet/v1/";
 const JWKS = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const POSTAL_CODE_API = "https://jp-postal-code-api.ttskch.com/api/v1/";
-const MAPLIBRE_VENDOR = {
-  "/vendor/maplibre-gl-4.7.1.min.js": {
-    url: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js",
-    type: "application/javascript; charset=utf-8"
-  },
-  "/vendor/maplibre-gl-4.7.1.min.css": {
-    url: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css",
-    type: "text/css; charset=utf-8"
-  }
-};
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
     const respond = (response) => cors(response, request);
-
-    // WebViewから外部CDNへ直接取りに行くと、通信制限や一時障害で地図全体が
-    // 起動しなくなる。固定版をWorker経由の同一オリジンで配信する。
-    if (MAPLIBRE_VENDOR[p]) return secure(await mapLibreVendor(p));
 
     // 静的ファイル。HTMLだけは毎回確認させる
     // （Safariが強くキャッシュするため、更新が反映されない事故を防ぐ）
@@ -52,11 +37,11 @@ export default {
         h.set("Cache-Control", "no-cache, no-store, must-revalidate");
         h.set("Content-Security-Policy", [
           "default-src 'self'",
-          "script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com",
-          "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-          "img-src 'self' data: blob: capacitor: https:",
-          "connect-src 'self' capacitor: https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems",
-          "font-src 'self' data: https:",
+          "script-src 'self'",
+          "style-src 'self' 'unsafe-inline'",
+          "img-src 'self' data: blob: capacitor:",
+          "connect-src 'self' capacitor: https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com",
+          "font-src 'self' data:",
           "worker-src 'self' blob:",
           "frame-src https://*.firebaseapp.com https://accounts.google.com",
           "object-src 'none'",
@@ -73,33 +58,34 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-37"
+          build: "api-39"
         }));
       }
-      if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
-      if (p === "/api/rakuten")   return respond(await rakuten(url, request, env));
-      if (p === "/api/places")    return respond(await nearbyPlaces(url, env));
-      if (p === "/api/geocode")   return respond(await geocode(url, request, env));
-      if (p === "/api/reverse")   return respond(await reverseGeocode(url, request, env));
-      if (p === "/api/wiki")      return respond(await wiki(url, request, env));
-      if (p === "/api/img")       return secure(await proxyImage(url, request, env));
+      if (p === "/api/places" && request.method === "POST")
+        return respond(await nearbyPlaces(request, env));
+      if (p === "/api/places") return respond(json({ error: "POSTだけです" }, 405));
+      if (p === "/api/geocode")   return respond(await geocode(request, env));
+      if (p === "/api/reverse")   return respond(await reverseGeocode(request, env));
       const sharedPhotoRoute = /^\/api\/share\/([A-Za-z0-9_-]{20,120})\/photo\/([A-Za-z0-9_-]{8,80})\/(thumb|view)$/.exec(p);
       if (sharedPhotoRoute && request.method === "GET")
         return respond(await getSharedPhoto(sharedPhotoRoute[1], sharedPhotoRoute[2], sharedPhotoRoute[3], request, env));
       if (p.startsWith("/api/share/") && request.method === "GET")
         return respond(await resolveShareLink(p.slice("/api/share/".length), request, env));
 
+      // 認証処理より前にmethodを固定し、非POST bodyで申請処理へ到達させない。
+      if (p === "/api/friends" && request.method !== "GET")
+        return respond(json({ error: "GETだけです" }, 405));
+      if ((p === "/api/friends/request" || p === "/api/friends/accept") && request.method !== "POST")
+        return respond(json({ error: "POSTだけです" }, 405));
+
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
       if (!me) return respond(json({ error: "ログインが必要です" }, 401));
 
-      // 外部の有料APIと、ユーザーに紐づく通知・タグ操作は必ず認証後に置く。
-      if (p === "/api/gsearch")   return respond(await gsearch(url, env, me));
+      // ユーザーに紐づく通知・タグ操作は必ず認証後に置く。
       if (p === "/api/postal-code" && request.method === "POST")
         return respond(await postalCodeLookup(request, env, me));
       if (p === "/api/postal-code") return respond(json({ error: "POSTだけです" }, 405));
-      if (p === "/api/vision" && request.method === "POST") return respond(await vision(request, env, me));
-      if (p === "/api/suggest" && request.method === "POST") return respond(await suggest(request, env, me));
       if (p === "/api/push/token" && request.method === "POST") return respond(await saveToken(request, env, me));
       if (p === "/api/push/token" && request.method === "DELETE") return respond(await deleteToken(request, env, me));
       if (p === "/api/push/test"  && request.method === "POST") return respond(await pushTest(env, me));
@@ -110,10 +96,18 @@ export default {
       if (p === "/api/me" && request.method === "GET")    return respond(json(await getMe(env, me)));
       if (p === "/api/me" && request.method === "PATCH")  return respond(await patchMe(request, env, me));
 
-      if (p === "/api/posts" && request.method === "GET")  return respond(await listPosts(url, env, me));
+      if (p === "/api/posts" && request.method === "GET") {
+        const handle = String(url.searchParams.get("user") || "").trim();
+        if (!/^[a-zA-Z0-9_.-]{3,30}$/.test(handle))
+          return respond(json({ error: "ユーザーIDが不正です" }, 400));
+        return respond(await listProfilePosts(handle, url, env, me));
+      }
       if (p === "/api/posts" && request.method === "POST") return respond(await createPost(request, env, me));
-      if (p === "/api/feed" && request.method === "GET")
-        return respond(await listFeed(url, env, me));
+      if (p === "/api/posts/query" && request.method === "POST")
+        return respond(await listPostsQuery(request, env, me));
+      if (p === "/api/feed" && request.method === "POST")
+        return respond(await listFeedQuery(request, env, me));
+      if (p === "/api/feed") return respond(json({ error: "POSTだけです" }, 405));
       if (p === "/api/hashtags/trending" && request.method === "GET")
         return respond(await trendingHashtags(url, env, me));
       const likeRoute = /^\/api\/posts\/([A-Za-z0-9_-]{8,80})\/like$/.exec(p);
@@ -143,9 +137,18 @@ export default {
       if (p.startsWith("/api/photo/") && request.method === "GET")
         return respond(await getPhoto(p, env, me));
 
-      if (p === "/api/friends" && request.method === "GET")  return respond(json(await listFriends(env, me)));
-      if (p === "/api/friends/request") return respond(await friendRequest(request, env, me));
-      if (p === "/api/friends/accept")  return respond(await friendAccept(request, env, me));
+      if (p === "/api/friends" && request.method === "GET") {
+        if (!(await socialReadLimit(env, me, "friends")))
+          return respond(json({ error: "読み込み回数が多すぎます" }, 429));
+        return respond(json(await listFriends(env, me)));
+      }
+      if (p === "/api/friends") return respond(json({ error: "GETだけです" }, 405));
+      if (p === "/api/friends/request" && request.method === "POST")
+        return respond(await friendRequest(request, env, me));
+      if (p === "/api/friends/request") return respond(json({ error: "POSTだけです" }, 405));
+      if (p === "/api/friends/accept" && request.method === "POST")
+        return respond(await friendAccept(request, env, me));
+      if (p === "/api/friends/accept") return respond(json({ error: "POSTだけです" }, 405));
       if (p === "/api/block" && request.method === "POST")
         return respond(await blockUser(request, env, me));
 
@@ -201,7 +204,7 @@ export default {
       return respond(json({ error: "そのAPIはありません" }, 404));
     } catch (e) {
       // DB名や外部APIの詳細を利用者へ返さない。
-      console.error("api error", e);
+      console.error("api error", safeLogError(e));
       return respond(json({ error: "サーバー内エラー" }, 500));
     }
   },
@@ -227,8 +230,12 @@ let jwksCache = null, jwksAt = 0;
 async function getJwks() {
   const now = Date.now();
   if (jwksCache && now - jwksAt < 3600_000) return jwksCache;
-  const r = await fetch(JWKS);
-  jwksCache = await r.json();
+  const r = await fetch(JWKS, { signal: AbortSignal.timeout(5_000) });
+  if (!r.ok) throw new Error("authentication keys unavailable");
+  const text = await r.text();
+  if (new TextEncoder().encode(text).byteLength > 200_000)
+    throw new Error("authentication keys invalid");
+  jwksCache = JSON.parse(text);
   jwksAt = now;
   return jwksCache;
 }
@@ -346,6 +353,7 @@ async function getMe(env, me) {
     handle: me.handle,
     display_name: me.display_name,
     bio: me.bio,
+    profile_icon: me.profile_icon || "pin",
     settings: {
       default_visibility: me.default_visibility,
       friend_precision:   me.friend_precision,
@@ -365,6 +373,7 @@ async function patchMe(request, env, me) {
   const b = parsed.value;
   const allow = {
     handle: "text", display_name: "text", bio: "text",
+    profile_icon: ["pin","camera","mountain","tree","star","moon","wave","flower"],
     default_visibility: ["private", "friends", "public"],
     friend_precision:   ["exact", "approx", "area", "hidden"],
     public_precision:   ["exact", "approx", "area", "hidden"],
@@ -697,11 +706,7 @@ async function ownPostArchive(url, env, me) {
  * この範囲で「自分が見てよい投稿」を返す。
  * 座標の出し分けもSQLの中で済ませ、真の座標が外に出ないようにする。
  */
-async function listPosts(url, env, me) {
-  const targetHandle = String(url.searchParams.get("user") || "").trim();
-  if (targetHandle && !/^[a-zA-Z0-9_.-]{3,30}$/.test(targetHandle))
-    return json({ error: "ユーザーIDが不正です" }, 400);
-  if (targetHandle) return listProfilePosts(targetHandle, url, env, me);
+async function listMapPosts(url, env, me) {
   const s = Number(url.searchParams.get("s"));
   const w = Number(url.searchParams.get("w"));
   const n = Number(url.searchParams.get("n"));
@@ -779,6 +784,16 @@ async function listPosts(url, env, me) {
   return json({ count: out.length, posts: out });
 }
 
+async function listPostsQuery(request, env, me) {
+  const parsed = await limitedJson(request, 2_000);
+  if (parsed.error) return parsed.error;
+  const url = new URL("https://internal.invalid/posts");
+  for (const key of ["s", "w", "n", "e", "limit"]) {
+    if (parsed.value[key] !== undefined) url.searchParams.set(key, String(parsed.value[key]));
+  }
+  return listMapPosts(url, env, me);
+}
+
 async function listProfilePosts(handle, url, env, me) {
   if (!(await socialReadLimit(env, me, "profile"))) {
     return json({ error: "読み込み回数が多すぎます" }, 429);
@@ -787,7 +802,7 @@ async function listProfilePosts(handle, url, env, me) {
   const limit = Number.isFinite(requested) ? Math.max(1, Math.min(100, Math.trunc(requested))) : 100;
   const now = Date.now();
   const profile = await env.DB.prepare(
-    "SELECT id,handle,display_name,bio,profile_public FROM users WHERE handle=? AND deleted_at IS NULL"
+    "SELECT id,handle,display_name,bio,profile_public,profile_icon FROM users WHERE handle=? AND deleted_at IS NULL"
   ).bind(handle).first();
   if (!profile) return json({ error: "ユーザーが見つかりません" }, 404);
   if (profile.id !== me.id && await isBlocked(env, me.id, profile.id)) {
@@ -800,7 +815,7 @@ async function listProfilePosts(handle, url, env, me) {
     )
     SELECT p.id,p.user_id,p.title,p.category,p.tag,p.place_name,p.taken_at,p.created_at,
            p.visibility,p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
-           p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
+           p.fixed_lat,p.fixed_lng,u.display_name,u.handle,u.profile_icon,(p.user_id=?1) AS mine,
            (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
              AND (p.user_id=?1 OR ph.moderation_state='ok')
              ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
@@ -832,7 +847,7 @@ async function listProfilePosts(handle, url, env, me) {
       photo_id:r.photo_id||null,
       like_count:Number(r.like_count)||0,comment_count:Number(r.comment_count)||0,
       liked:!!r.liked,following:!!r.following,
-      author:{id:r.user_id,name:r.display_name,handle:r.handle},
+      author:{id:r.user_id,name:r.display_name,handle:r.handle,profile_icon:r.profile_icon||"pin"},
       map_available:!!c,
       ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})});
   }
@@ -841,6 +856,7 @@ async function listProfilePosts(handle, url, env, me) {
       id:profile.id,
       handle:profile.handle,
       name:profile.display_name,
+      profile_icon:profile.profile_icon||"pin",
       bio:(profile.id===me.id||profile.profile_public)?(profile.bio||""):""
     },
     count:out.length,
@@ -881,7 +897,7 @@ async function listFeed(url, env, me) {
     SELECT p.id,p.user_id,p.title,p.category,p.tag,p.place_name,p.body,
            p.taken_at,p.created_at,p.visibility,
            p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
-           p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
+           p.fixed_lat,p.fixed_lng,u.display_name,u.handle,u.profile_icon,(p.user_id=?1) AS mine,
            (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
              AND (p.user_id=?1 OR ph.moderation_state='ok')
              ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
@@ -926,7 +942,7 @@ async function listFeed(url, env, me) {
       visibility:r.visibility,mine:!!r.mine,photo_id:r.photo_id||null,
       like_count:Number(r.like_count)||0,comment_count:Number(r.comment_count)||0,
       liked:!!r.liked,following:!!r.following,
-      author:{id:r.user_id,name:r.display_name,handle:r.handle},
+      author:{id:r.user_id,name:r.display_name,handle:r.handle,profile_icon:r.profile_icon||"pin"},
       map_available:!!c,
       ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})
     });
@@ -937,6 +953,18 @@ async function listFeed(url, env, me) {
     cursor:last?`${last.created_at}:${last.id}`:rawCursor,
     has_more:(rows.results||[]).length===limit
   });
+}
+
+async function listFeedQuery(request, env, me) {
+  const parsed = await limitedJson(request, 2_000);
+  if (parsed.error) return parsed.error;
+  const url = new URL("https://internal.invalid/feed");
+  const value = parsed.value;
+  if (value.limit !== undefined) url.searchParams.set("limit", String(value.limit));
+  if (value.cursor !== undefined) url.searchParams.set("cursor", String(value.cursor));
+  if (value.query !== undefined) url.searchParams.set("q", String(value.query));
+  if (value.mode === "following") url.searchParams.set("mode", "following");
+  return listFeed(url, env, me);
 }
 
 async function coordsFor(env, row) {
@@ -1168,7 +1196,12 @@ async function friendRequest(request, env, me) {
   const parsed = await limitedJson(request, 4_000);
   if (parsed.error) return parsed.error;
   const handle = limitedText(parsed.value.handle, 30);
-  if (!handle) return json({ error: "IDを確認してください" }, 400);
+  if (!/^[A-Za-z0-9_.-]{3,30}$/.test(handle))
+    return json({ error: "IDを確認してください" }, 400);
+  if (!(await socialWriteLimit(env, me, "friend-request")) ||
+      !(await userLimit(env, me.id, "friend_request", dayKey(), 40, 1)) ||
+      !(await atomicLimit(env, "friend_request_global_day_" + dayKey(), 100_000, 1)))
+    return json({ error: "申請回数が多すぎます" }, 429);
   const target = await env.DB.prepare("SELECT id FROM users WHERE handle=? AND deleted_at IS NULL")
     .bind(handle).first();
   if (!target) return json({ error: "そのIDのユーザーはいません" }, 404);
@@ -1182,6 +1215,8 @@ async function friendRequest(request, env, me) {
      ORDER BY status='accepted' DESC,updated_at DESC LIMIT 1
   `).bind(me.id, target.id).first();
   if (current && current.status === "accepted") return json({ ok: true, status: "accepted" });
+  if (current && current.requester_id === me.id && current.status === "pending")
+    return json({ ok: true, status: "pending" });
   // 相手からの申請が既にあれば、その場で成立させる
   const rev = current && current.requester_id === target.id && current.status === "pending" ? current : null;
   if (rev) {
@@ -1189,6 +1224,12 @@ async function friendRequest(request, env, me) {
       .bind(now, rev.id).run();
     return json({ ok: true, status: "accepted" });
   }
+
+  const pending = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM friendships WHERE requester_id=? AND status='pending'"
+  ).bind(me.id).first();
+  if (Number(pending && pending.n || 0) >= 500)
+    return json({ error: "未回答の申請が多すぎます" }, 409);
 
   await env.DB.prepare(`
     INSERT INTO friendships (requester_id,addressee_id,status,created_at,updated_at)
@@ -1203,6 +1244,12 @@ async function friendAccept(request, env, me) {
   const parsed = await limitedJson(request, 4_000);
   if (parsed.error) return parsed.error;
   const user_id = String(parsed.value.user_id || "");
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(user_id))
+    return json({ error: "対象が不正です" }, 400);
+  if (!(await socialWriteLimit(env, me, "friend-accept")) ||
+      !(await userLimit(env, me.id, "friend_accept", dayKey(), 200, 1)) ||
+      !(await atomicLimit(env, "friend_accept_global_day_" + dayKey(), 100_000, 1)))
+    return json({ error: "操作回数が多すぎます" }, 429);
   const r = await env.DB.prepare(`
     UPDATE friendships SET status='accepted',updated_at=?
      WHERE requester_id=? AND addressee_id=? AND status='pending'
@@ -1940,7 +1987,7 @@ async function revokeShareLink(token, env, me) {
 async function resolveShareLink(token, request, env) {
   if (!/^[A-Za-z0-9_-]{20,120}$/.test(token)) return json({ error: "見つかりません" }, 404);
   const client = await clientRateId(request);
-  if (!(await burstLimit(env, "SHARE_RATE_LIMITER", `${token.slice(0, 16)}:${client}:meta`)))
+  if (!(await publicShareAllowance(env, client, token, "meta")))
     return json({ error: "読み込み回数が多すぎます" }, 429);
   const hash = await hashToken(token), now = Date.now();
   const link = await env.DB.prepare(`
@@ -1986,7 +2033,7 @@ async function resolveShareLink(token, request, env) {
 async function getSharedPhoto(token, photoId, kind, request, env) {
   if (!/^[A-Za-z0-9_-]{20,120}$/.test(token)) return json({ error: "見つかりません" }, 404);
   const client = await clientRateId(request);
-  if (!(await burstLimit(env, "SHARE_RATE_LIMITER", `${token.slice(0, 16)}:${client}:photo`)))
+  if (!(await publicShareAllowance(env, client, token, "photo")))
     return json({ error: "読み込み回数が多すぎます" }, 429);
   const hash = await hashToken(token), now = Date.now();
   const link = await env.DB.prepare(`
@@ -2019,105 +2066,21 @@ async function getSharedPhoto(token, photoId, kind, request, env) {
 
 
 /* ============================================================
-   ホットペッパー中継（既存）
-   ============================================================ */
-
-/**
- * ホットペッパーのキーを探す。
- *  1. Cloudflare のシークレット
- *  2. D1 の app_config テーブル  ← デプロイで消えない
- * 同じ isolate の中では覚えておき、毎回D1を読まないようにする。
- */
-const cfgCache = {};
-async function cfg(env, key) {
-  if (cfgCache[key] !== undefined) return cfgCache[key];
-  try {
-    const r = await env.DB.prepare("SELECT v FROM app_config WHERE k=?").bind(key).first();
-    cfgCache[key] = (r && r.v) ? r.v : null;
-  } catch (e) { cfgCache[key] = null; }
-  return cfgCache[key];
-}
-async function getHpKey(env) {
-  if (env.HOTPEPPER_KEY) return { key: env.HOTPEPPER_KEY, src: "env" };
-  const v = await cfg(env, "hotpepper_key");
-  return { key: v, src: v ? "d1" : "none" };
-}
-
-async function hotpepper(url, request, env) {
-  const got = await getHpKey(env);
-  const key = got.key;
-  if (!key) return json({ error: "ホットペッパーのキーが見つかりません（envにもD1にもありません）" }, 500);
-
-  const lat = url.searchParams.get("lat"), lng = url.searchParams.get("lng");
-  const range = url.searchParams.get("range") || "5";
-  const keyword = url.searchParams.get("keyword") || "";
-  if (keyword.length > 120 || !/^[1-5]$/.test(range)) {
-    return json({ error: "検索条件が不正です" }, 400);
-  }
-  // キーワード検索のときは位置が無くてもよい（全国から探す）
-  if (!keyword && (!lat || !lng)) return json({ error: "lat / lng が必要です" }, 400);
-  if ((lat || lng) && !validCoords(Number(lat), Number(lng))) {
-    return json({ error: "位置が不正です" }, 400);
-  }
-  if (!(await publicAllowance(request, env, "hotpepper", 120, 500))) {
-    return json({ error: "検索回数が多すぎます" }, 429);
-  }
-
-  const shops = [];
-  let available = 0;
-  const pages = Math.min(3, Math.max(1, Number.parseInt(url.searchParams.get("pages") || "2", 10) || 2));
-
-  for (let page = 0; page < pages; page++) {
-    const api = new URL(HP);
-    api.searchParams.set("key", key);
-    if (lat && lng) {
-      api.searchParams.set("lat", lat);
-      api.searchParams.set("lng", lng);
-      api.searchParams.set("range", range);
-    }
-    if (keyword) api.searchParams.set("keyword", keyword);
-    api.searchParams.set("count", "100");
-    api.searchParams.set("start", String(page * 100 + 1));
-    api.searchParams.set("format", "json");
-
-    const res = await fetch(api.toString(), { cf: { cacheTtl: 3600 } });
-    if (!res.ok) return json({ error: "ホットペッパー HTTP " + res.status }, 502);
-
-    const body = await res.json();
-    const r = body && body.results;
-    if (!r) return json({ error: "応答の形式が想定と違います" }, 502);
-    if (r.error) return json({ error: "API: " + (r.error[0] && r.error[0].message) }, 502);
-
-    available = Number(r.results_available) || 0;
-    const list = r.shop || [];
-    for (const s of list) {
-      shops.push({
-        hpid: s.id, n: s.name, lat: Number(s.lat), lng: Number(s.lng),
-        genre: s.genre ? s.genre.code : "", gname: s.genre ? s.genre.name : "",
-        addr: s.address || "", budget: s.budget ? s.budget.name : "",
-        url: s.urls ? s.urls.pc : "",
-        photo: s.photo && s.photo.mobile ? (s.photo.mobile.l || s.photo.mobile.s) : ""
-      });
-    }
-    if (list.length < 100 || shops.length >= available) break;
-  }
-  // 取ってきたものは、こちらにも残しておく
-  await savePlaces(env, shops.map(function (s) {
-    return { n: s.n, lat: s.lat, lng: s.lng, c: "食",
-             src: "hotpepper", sid: s.hpid, addr: s.addr, gname: s.gname, budget: s.budget };
-  }));
-
-  return json({ count: shops.length, available, shops });
-}
-
-
-/* ============================================================
    小道具
    ============================================================ */
 
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID()
     : "x" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+/** 外部ログへURL・高精度座標・長い応答本文を残さない。 */
+function safeLogError(error) {
+  return String(error && error.message || error || "error")
+    .replace(/https?:\/\/\S+/gi, "[url]")
+    .replace(/-?\d{1,3}\.\d{4,}/g, "[number]")
+    .replace(/[\r\n\t]+/g, " ")
+    .slice(0, 240);
 }
 
 function limitedText(value, max) {
@@ -2206,7 +2169,7 @@ async function burstLimit(env, bindingName, key) {
     const result = await binding.limit({ key: String(key || "unknown") });
     return !!(result && result.success);
   } catch (error) {
-    console.error("rate limiter error", bindingName, error);
+    console.error("rate limiter error", bindingName, safeLogError(error));
     return false;
   }
 }
@@ -2217,6 +2180,13 @@ function socialReadLimit(env, me, scope) {
 
 function socialWriteLimit(env, me, scope) {
   return burstLimit(env, "SOCIAL_WRITE_RATE_LIMITER", `${me.id}:${scope}`);
+}
+
+/** tokenを変えてIP制限を回避できないよう、client全体→token単位の順で制限する。 */
+async function publicShareAllowance(env, client, token, scope) {
+  if (!(await burstLimit(env, "SHARE_RATE_LIMITER", `${client}:all`))) return false;
+  if (!(await atomicLimit(env, "share_public_day_" + dayKey(), 100_000, 1))) return false;
+  return burstLimit(env, "SHARE_RATE_LIMITER", `${client}:${token.slice(0, 16)}:${scope}`);
 }
 
 /** 日次Cron。期限の切れた一時カウンターだけを削除し、設定値は残す。 */
@@ -2233,7 +2203,17 @@ async function cleanupTransientConfig(env) {
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'postal\\_code\\_day\\_%' ESCAPE '\\' AND k<>?")
       .bind("postal_code_day_" + today),
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'q\\_%' ESCAPE '\\' AND k NOT LIKE ?")
-      .bind("%_" + month)
+      .bind("%_" + month),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'share_public_day_%' AND k<>?")
+      .bind("share_public_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'reverse_global_day_%' AND k<>?")
+      .bind("reverse_global_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'places_global_day_%' AND k<>?")
+      .bind("places_global_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'friend_request_global_day_%' AND k<>?")
+      .bind("friend_request_global_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'friend_accept_global_day_%' AND k<>?")
+      .bind("friend_accept_global_day_" + today)
   ];
   for (const statement of statements) await statement.run();
 }
@@ -2283,7 +2263,7 @@ function cors(res, request) {
   const origin = request.headers.get("Origin");
   const selfOrigin = new URL(request.url).origin;
   const allowed = !origin || origin === selfOrigin || origin === "capacitor://localhost" ||
-    origin === "http://localhost" || origin === "null";
+    origin === "http://localhost";
   if (origin && allowed) h.set("Access-Control-Allow-Origin", origin);
   else h.delete("Access-Control-Allow-Origin");
   h.append("Vary", "Origin");
@@ -2303,184 +2283,6 @@ function secure(res) {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
 
-async function mapLibreVendor(path) {
-  const asset = MAPLIBRE_VENDOR[path];
-  if (!asset) return new Response("Not found", { status: 404 });
-  try {
-    const upstream = await fetch(asset.url, {
-      cf: { cacheEverything: true, cacheTtl: 31536000 }
-    });
-    if (!upstream.ok) throw new Error("upstream " + upstream.status);
-    return new Response(upstream.body, {
-      status: 200,
-      headers: {
-        "Content-Type": asset.type,
-        "Cache-Control": "public, max-age=31536000, immutable"
-      }
-    });
-  } catch (_) {
-    return new Response("Map library unavailable", {
-      status: 503,
-      headers: { "Cache-Control": "no-store" }
-    });
-  }
-}
-
-
-/* ============================================================
-   楽天トラベル / 施設検索
-   アプリIDは D1 の app_config に入れる。
-   応答に含めないので、外には出ない。
-   ============================================================ */
-/* 2026年2月の刷新で、ドメイン・パス・認証方式がすべて変わった。
-   旧 app.rakuten.co.jp は5月14日に停止済み。
-   新方式では applicationId に加えて accessKey がヘッダーで必須。 */
-const RK = "https://openapi.rakuten.co.jp/engine/api/Travel/SimpleHotelSearch/20260731";
-
-async function rakuten(url, request, env) {
-  const id = await cfg(env, "rakuten_id");
-  const ak = await cfg(env, "rakuten_key");
-  if (!id) return json({ error: "楽天のアプリケーションIDが未設定です" }, 500);
-  if (!ak) return json({ error: "楽天のアクセスキーが未設定です（rakuten_key）" }, 500);
-
-  const lat = Number(url.searchParams.get("lat"));
-  const lng = Number(url.searchParams.get("lng"));
-  if (!validCoords(lat, lng)) return json({ error: "lat / lng が必要です" }, 400);
-  if (!(await publicAllowance(request, env, "rakuten", 60, 300))) {
-    return json({ error: "検索回数が多すぎます" }, 429);
-  }
-
-  let km = Number(url.searchParams.get("km") || 3);
-  if (!isFinite(km)) km = 3;
-  km = Math.min(3, Math.max(0.1, Math.round(km * 10) / 10));
-
-  const api = new URL(RK);
-  api.searchParams.set("applicationId", String(id).trim());
-  api.searchParams.set("format", "json");
-  api.searchParams.set("datumType", "1");            // 1 = 世界測地系（度）
-  api.searchParams.set("latitude", lat.toFixed(6));
-  api.searchParams.set("longitude", lng.toFixed(6));
-  api.searchParams.set("searchRadius", km.toFixed(1));
-  api.searchParams.set("hits", "30");
-
-  // 新方式は送信元の申告にも厳しい。登録した許可サイトと一致させる
-  const site = (await cfg(env, "rakuten_site")) || url.origin;
-  api.searchParams.set("httpReferer", site);
-
-  const res = await fetch(api.toString(), {
-    cf: { cacheTtl: 3600 },
-    headers: {
-      "accessKey": String(ak).trim(),        // 新方式で必須
-      "Referer": site,
-      "Origin": site,
-      "User-Agent": "michikusa/1.0",
-      "Accept": "application/json"
-    }
-  });
-
-  const text = await res.text();
-  let body = null;
-  try { body = JSON.parse(text); } catch (e) {}
-
-  if (!res.ok) {
-    if (res.status === 404) return json({ count: 0, hotels: [] });   // 該当なし
-    return json({ error: "楽天トラベルを利用できません" }, 502);
-  }
-  if (body && body.error) {
-    return json({ error: "楽天: " + (body.error_description || body.error) }, 502);
-  }
-
-  const hotels = [];
-  ((body && body.hotels) || []).forEach(function (h) {
-    const arr = h.hotel || [];
-    let info = null;
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i] && arr[i].hotelBasicInfo) { info = arr[i].hotelBasicInfo; break; }
-    }
-    if (!info) return;
-    const la = Number(info.latitude), ln = Number(info.longitude);
-    if (!isFinite(la) || !isFinite(ln)) return;
-    hotels.push({
-      id: String(info.hotelNo || ""),
-      n: info.hotelName || "",
-      lat: la, lng: ln,
-      addr: [info.address1, info.address2].filter(Boolean).join(""),
-      photo: info.hotelImageUrl || info.hotelThumbnailUrl || "",
-      min: info.hotelMinCharge || null,
-      url: info.hotelInformationUrl || ""
-    });
-  });
-
-  await savePlaces(env, hotels.map(function (x) {
-    return { n: x.n, lat: x.lat, lng: x.lng, c: "宿",
-             src: "user", sid: "rk_" + x.id, addr: x.addr,
-             gname: x.min ? ("1泊 " + Number(x.min).toLocaleString() + "円〜") : "宿" };
-  }));
-
-  return json({ count: hotels.length, hotels: hotels });
-}
-
-
-/* ============================================================
-   画像の中継
-
-   よその画像をそのまま Canvas で加工しようとすると、
-   ブラウザが安全のために止めてしまう。
-   一度こちらを通せば自分の画像として扱えるので、加工できる。
-   ============================================================ */
-const IMG_OK = [
-  "img.travel.rakuten.co.jp",
-  "imgfp.hotp.jp",
-  "imgfp.hotp.jp.",
-  "upload.wikimedia.org",
-  "img.hotp.jp"
-];
-
-async function proxyImage(url, request, env) {
-  const src = url.searchParams.get("u");
-  if (!src) return new Response("u が必要です", { status: 400 });
-  if (src.length > 2048) return new Response("URLが長すぎます", { status: 400 });
-
-  let t;
-  try { t = new URL(src); } catch (e) { return new Response("URLが不正です", { status: 400 }); }
-  if (t.protocol !== "https:") return new Response("https だけです", { status: 400 });
-
-  // 決めた場所からの画像だけ通す（何でも中継すると踏み台にされる）
-  const okHost = IMG_OK.some(function (d) {
-    return t.hostname === d || t.hostname.endsWith("." + d);
-  });
-  if (!okHost) return new Response("その場所は許可していません", { status: 403 });
-  if (!(await publicAllowance(request, env, "image-proxy", 180, 1000))) {
-    return new Response("利用回数が多すぎます", { status: 429 });
-  }
-
-  const res = await fetch(t.toString(), {
-    cf: { cacheTtl: 86400, cacheEverything: true },
-    headers: { "User-Agent": "michikusa/1.0" }
-  });
-  if (!res.ok) return new Response("取得できません " + res.status, { status: 502 });
-
-  const ct = (res.headers.get("Content-Type") || "").split(";")[0].toLowerCase();
-  if (!["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"].includes(ct)) {
-    return new Response("対応していない画像です", { status: 415 });
-  }
-  const declared = Number(res.headers.get("Content-Length") || 0);
-  if (declared > 10_000_000) return new Response("画像が大きすぎます", { status: 413 });
-  const bytes = await res.arrayBuffer();
-  if (!bytes.byteLength || bytes.byteLength > 10_000_000) {
-    return new Response("画像サイズが不正です", { status: 413 });
-  }
-
-  return new Response(bytes, {
-    headers: {
-      "Content-Type": ct,
-      "Cache-Control": "public, max-age=604800",
-      "Access-Control-Allow-Origin": "*"
-    }
-  });
-}
-
-
 /* ============================================================
    地名検索 / 逆引き（Nominatim 中継）
 
@@ -2494,12 +2296,6 @@ async function clientRateId(request) {
   // IPそのものはD1へ残さず、短い一方向ハッシュだけを回数キーに使う。
   const ip = request.headers.get("CF-Connecting-IP") || "unknown";
   return "client-" + await shortHash(ip);
-}
-
-async function publicAllowance(request, env, name, hourly, daily) {
-  const client = await clientRateId(request);
-  return (await userLimit(env, client, name + "-hour", hourKey(), hourly)) &&
-    (await userLimit(env, client, name + "-day", dayKey(), daily));
 }
 
 async function nominatimAllowance(request, env, name, hourly) {
@@ -2612,13 +2408,20 @@ async function postalCodeLookup(request, env, me) {
   return cached;
 }
 
-async function geocode(url, request, env) {
-  if (request.method !== "GET") return json({ error: "GETだけです" }, 405);
-  const q = String(url.searchParams.get("q") || "").trim();
+async function geocode(request, env) {
+  if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const q = String(parsed.value.q || "").trim();
   if (!q || q.length > 120 || /[\u0000-\u001f]/.test(q)) {
     return json({ error: "検索語が不正です" }, 400);
   }
-  const limit = Math.min(4, Math.max(1, Number.parseInt(url.searchParams.get("limit") || "4", 10) || 4));
+  const limit = Math.min(4, Math.max(1, Number.parseInt(parsed.value.limit || "4", 10) || 4));
+  const client = await clientRateId(request);
+  // cache hitでもWorker invocationは発生するため、cache照会より先にclient単位で止める。
+  if (!(await burstLimit(env, "GEOCODE_RATE_LIMITER", client))) {
+    return json({ error: "地名検索が混み合っています" }, 429);
+  }
   const key = "geocode?q=" + encodeURIComponent(q.toLocaleLowerCase("ja")) + "&limit=" + limit;
   return cachedNominatim(key, 86400, async function () {
     if (!(await nominatimAllowance(request, env, "search", 40))) {
@@ -2631,7 +2434,8 @@ async function geocode(url, request, env) {
     up.searchParams.set("accept-language", "ja");
     up.searchParams.set("countrycodes", "jp");
     up.searchParams.set("limit", String(limit));
-    const r = await fetch(up, { headers: { "User-Agent": NOMINATIM_UA, "Accept": "application/json" } });
+    const r = await fetch(up, { headers: { "User-Agent": NOMINATIM_UA, "Accept": "application/json" },
+      signal: AbortSignal.timeout(8_000) });
     if (!r.ok) return json({ error: "地名検索を利用できません" }, 502);
     const rows = await r.json();
     const places = (Array.isArray(rows) ? rows : []).slice(0, limit).map(function (p) {
@@ -2648,50 +2452,29 @@ async function geocode(url, request, env) {
   });
 }
 
-async function reverseGeocode(url, request, env) {
-  if (request.method !== "GET") return json({ error: "GETだけです" }, 405);
-  let lat = Number(url.searchParams.get("lat"));
-  let lng = Number(url.searchParams.get("lng"));
+// 回帰テスト用。HTTP経路は上のdefault exportだけが公開する。
+export { friendRequest, geocode };
+
+async function reverseGeocode(request, env) {
+  if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  let lat = Number(parsed.value.lat);
+  let lng = Number(parsed.value.lng);
   if (!validCoords(lat, lng)) return json({ error: "位置が不正です" }, 400);
+  const client = await clientRateId(request);
+  if (!(await userLimit(env, client, "reverse-hour", hourKey(), 300)) ||
+      !(await userLimit(env, client, "reverse-day", dayKey(), 3000)) ||
+      !(await atomicLimit(env, "reverse_global_day_" + dayKey(), 200_000, 1))) {
+    return json({ error: "住所検索が混み合っています" }, 429);
+  }
   // 約11m単位へ丸め、端末由来の過剰に細かい座標を第三者へ渡さない。
   lat = Math.round(lat * 10_000) / 10_000;
   lng = Math.round(lng * 10_000) / 10_000;
-  const zoom = Math.min(18, Math.max(3, Number.parseInt(url.searchParams.get("zoom") || "18", 10) || 18));
-
-  // 国交省データを入れたD1があれば最優先する。外部へ座標を送らず、地域を1つずつ
-  // 追加できる。未接続・未収録地域だけ従来のNominatimへフォールバックする。
+  // 国交省・デジタル庁由来のD1だけで判定し、EXIF位置を第三者へ送らない。
   const local = await reverseFromAddressDb(lat, lng, env);
   if (local) return json(local);
-
-  const key = "reverse?lat=" + lat.toFixed(4) + "&lng=" + lng.toFixed(4) + "&zoom=" + zoom;
-  return cachedNominatim(key, 604800, async function () {
-    if (!(await nominatimAllowance(request, env, "reverse", 120))) {
-      return json({ error: "地名検索が混み合っています" }, 429);
-    }
-    const up = new URL(NOMINATIM + "/reverse");
-    up.searchParams.set("lat", lat.toFixed(4));
-    up.searchParams.set("lon", lng.toFixed(4));
-    up.searchParams.set("zoom", String(zoom));
-    up.searchParams.set("format", "jsonv2");
-    up.searchParams.set("addressdetails", "1");
-    up.searchParams.set("accept-language", "ja");
-    const r = await fetch(up, { headers: { "User-Agent": NOMINATIM_UA, "Accept": "application/json" } });
-    if (!r.ok) return json({ error: "地名検索を利用できません" }, 502);
-    const p = await r.json();
-    const src = p && typeof p.address === "object" ? p.address : {};
-    const address = {};
-    for (const k of ["province", "state", "city", "town", "village", "county",
-                     "city_district", "suburb", "neighbourhood", "quarter", "road"]) {
-      const v = limitedText(src[k], 160);
-      if (v) address[k] = v;
-    }
-    return json({
-      name: limitedText(p && p.name, 160) || "",
-      display_name: limitedText(p && p.display_name, 500) || "",
-      address,
-      lat: String(lat), lon: String(lng)
-    });
-  });
+  return json({ name: "撮影場所", display_name: "", address: {}, source: "local-none" });
 }
 
 const ADDRESS_DB_BINDINGS = [
@@ -2746,7 +2529,7 @@ async function reverseFromAddressDb(lat, lng, env) {
         return result.results || [];
       } catch (error) {
         // 段階導入中に未初期化DBがあっても外部フォールバックを止めない。
-        console.error("address db error", error);
+        console.error("address db error", safeLogError(error));
         return [];
       }
     }));
@@ -2827,7 +2610,7 @@ async function findAdminArea(latE6, lngE6, databases) {
       try {
         if (pointInPolygonRings(lngE6, latE6, decodeBoundaryRings(row.rings))) return { complete: false, area: row, db: result.db };
       } catch (error) {
-        console.error("admin boundary decode error", error);
+        console.error("admin boundary decode error", safeLogError(error));
       }
     }
   }
@@ -2872,105 +2655,6 @@ function geoDistanceMeters(lat1, lng1, lat2, lng2) {
 
 
 /* ============================================================
-   Google の場所検索
-
-   使うのは検索だけ。地図の表示には使わない。
-   （地図は自前のものを使い続ける。見た目が資産なので）
-
-   料金は「取り出す項目の種類」で段階が変わる。
-   必要な項目だけを指定して、安い段階に収める。
-   ============================================================ */
-const GPLACES = "https://places.googleapis.com/v1/places:searchText";
-
-async function gsearch(url, env, me) {
-  const key = await cfg(env, "google_key");
-  if (!key) return json({ error: "Googleのキーが未設定です" }, 500);
-
-  const q = (url.searchParams.get("q") || "").trim();
-  if (!q) return json({ error: "探す言葉が必要です" }, 400);
-  if (q.length > 120) return json({ error: "検索語が長すぎます" }, 400);
-
-  if (!(await userLimit(env, me.id, "gsearch-hour", hourKey(), 60)) ||
-      !(await userLimit(env, me.id, "gsearch-day", dayKey(), 300))) {
-    return json({ error: "検索回数が多すぎます" }, 429);
-  }
-  if (!(await useQuota(env, "gsearch"))) {
-    return json({ count: 0, places: [], capped: true });   // 上限。黙って空を返す
-  }
-
-  const lat = Number(url.searchParams.get("lat"));
-  const lng = Number(url.searchParams.get("lng"));
-
-  const body = {
-    textQuery: q,
-    languageCode: "ja",
-    regionCode: "JP",
-    maxResultCount: 10
-  };
-  // 近くを優先する。位置が分かるときだけ
-  if (validCoords(lat, lng)) {
-    body.locationBias = {
-      circle: { center: { latitude: lat, longitude: lng }, radius: 30000 }
-    };
-  }
-
-  // 取り出す項目を絞る。ここを増やすと段階が上がって高くなる
-  const fields = [
-    "places.id",
-    "places.displayName",
-    "places.formattedAddress",
-    "places.location",
-    "places.primaryTypeDisplayName",
-    "places.types"
-  ].join(",");
-
-  const res = await fetch(GPLACES, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Goog-Api-Key": key,
-      "X-Goog-FieldMask": fields
-    },
-    body: JSON.stringify(body),
-    cf: { cacheTtl: 3600, cacheEverything: true }
-  });
-
-  const text = await res.text();
-  let j = null;
-  try { j = JSON.parse(text); } catch (e) {}
-
-  if (!res.ok) {
-    return json({
-      error: "Google HTTP " + res.status,
-      detail: (j && j.error && j.error.message) || text.slice(0, 300)
-    }, 502);
-  }
-
-  const out = [];
-  ((j && j.places) || []).forEach(function (p) {
-    const loc = p.location || {};
-    if (!isFinite(loc.latitude) || !isFinite(loc.longitude)) return;
-    out.push({
-      gid: p.id || "",
-      n: (p.displayName && p.displayName.text) || "",
-      lat: loc.latitude,
-      lng: loc.longitude,
-      addr: p.formattedAddress || "",
-      gname: (p.primaryTypeDisplayName && p.primaryTypeDisplayName.text) || "",
-      types: p.types || []
-    });
-  });
-
-  await savePlaces(env, out.map(function (g) {
-    return { n: g.n, lat: g.lat, lng: g.lng, c: "景",
-             src: "user", sid: "g_" + g.gid, addr: g.addr, gname: g.gname };
-  }));
-
-  return json({ count: out.length, places: out });
-}
-
-
-/* ============================================================
    自前の場所マスタ
 
    外から取ってきたものは、そのつど places に貯める。
@@ -2979,14 +2663,27 @@ async function gsearch(url, env, me) {
    ============================================================ */
 
 /** この範囲にある、貯めてある場所を返す */
-async function nearbyPlaces(url, env) {
-  const s = Number(url.searchParams.get("s"));
-  const w = Number(url.searchParams.get("w"));
-  const n = Number(url.searchParams.get("n"));
-  const e = Number(url.searchParams.get("e"));
+async function nearbyPlaces(request, env) {
+  const parsed = await limitedJson(request, 512);
+  if (parsed.error) return parsed.error;
+  const body = parsed.value;
+  const s = Number(body.s);
+  const w = Number(body.w);
+  const n = Number(body.n);
+  const e = Number(body.e);
   if (![s, w, n, e].every(isFinite)) return json({ error: "範囲の指定が不正です" }, 400);
+  if (s < -90 || n > 90 || w < -180 || e > 180 || s > n || w > e || n - s > 3 || e - w > 3) {
+    return json({ error: "範囲の指定が大きすぎます" }, 400);
+  }
+  const client = await clientRateId(request);
+  if (!(await userLimit(env, client, "places-hour", hourKey(), 600)) ||
+      !(await userLimit(env, client, "places-day", dayKey(), 5000)) ||
+      !(await atomicLimit(env, "places_global_day_" + dayKey(), 200_000, 1))) {
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  }
 
-  const limit = Math.min(400, Number(url.searchParams.get("limit") || 300));
+  const requested = Number(body.limit || 300);
+  const limit = Number.isFinite(requested) ? Math.max(1, Math.min(400, Math.trunc(requested))) : 300;
 
   const rows = await env.DB.prepare(`
     SELECT id, name, lat, lng, category, genre, budget, address, source
@@ -3005,37 +2702,6 @@ async function nearbyPlaces(url, env) {
   return json({ count: out.length, places: out });
 }
 
-/** 取ってきたものを貯める。同じものは上書きしない */
-async function savePlaces(env, list) {
-  if (!list || !list.length) return 0;
-  const now = Date.now();
-  const stmts = [];
-  for (const p of list) {
-    if (!p.n || !isFinite(p.lat) || !isFinite(p.lng)) continue;
-    const sid = p.sid || (p.n + "_" + p.lat.toFixed(5) + "_" + p.lng.toFixed(5));
-    stmts.push(
-      env.DB.prepare(`
-        INSERT INTO places (id,name,lat,lng,category,source,source_id,address,genre,budget,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
-        ON CONFLICT(source, source_id) DO NOTHING
-      `).bind(
-        crypto.randomUUID ? crypto.randomUUID() : ("p" + now + Math.random()),
-        p.n, p.lat, p.lng, p.c || "景", p.src || "user", sid,
-        p.addr || null, p.gname || null, p.budget || null, now
-      )
-    );
-  }
-  if (!stmts.length) return 0;
-  try {
-    // 一度に送れる数には限りがあるので、小分けにする
-    for (let i = 0; i < stmts.length; i += 50) {
-      await env.DB.batch(stmts.slice(i, i + 50));
-    }
-  } catch (e) { return 0; }
-  return stmts.length;
-}
-
-
 /* ============================================================
    使いすぎを止める仕組み
 
@@ -3044,11 +2710,9 @@ async function savePlaces(env, list) {
    金額ではなく回数で管理すれば、構造的に超えない。
 
    月あたりの上限（無料枠に収まる数）
-     Places 検索  … 4,500 回（無料枠 5,000 の手前で止める）
      Vision 判定  … 900 枚（無料枠 1,000 の手前）
-     Gemini       … 1,200 回
    ============================================================ */
-const LIMITS = { gsearch: 4500, vision: 900, gemini: 1200 };
+const LIMITS = { vision: 900 };
 
 function monthKey() {
   const d = new Date();
@@ -3065,56 +2729,16 @@ async function useQuota(env, name) {
    写真を見て判断する
 
    ① 安全確認（Vision）… 不適切な画像を弾く。公開する以上、必須
-   ② ひとことの提案（Gemini）… 「何を食べた？」の候補を出す
-
-   どちらも回数の上限つき。安全確認は判定不能時も必ず非公開側へ倒す。
+   回数の上限つき。安全確認は判定不能時も必ず非公開側へ倒す。
    ============================================================ */
 
 const VISION = "https://vision.googleapis.com/v1/images:annotate";
-const GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
-
-/** 写真が出しても大丈夫かを確かめる */
-async function vision(request, env, me) {
-  const key = await cfg(env, "google_key");
-  if (!key) return json({ ok: false, error: "安全確認を利用できません" }, 503);
-
-  const parsed = await limitedJson(request, 14_000_000);
-  if (parsed.error) return parsed.error;
-  const img = cleanBase64Image(parsed.value.image);
-  if (!img) return json({ error: "画像が必要です" }, 400);
-
-  const cached = await getModerationCache(env, me.id, img);
-  if (cached) return json({ ok: cached.state === "ok", reason: cached.reason, labels: [] });
-
-  if (!(await userLimit(env, me.id, "vision-hour", hourKey(), 30)) ||
-      !(await userLimit(env, me.id, "vision-day", dayKey(), 120)) ||
-      !(await useQuota(env, "vision"))) {
-    return json({ ok: false, error: "安全確認の利用上限です" }, 429);
-  }
-
-  const result = await callVision(key, img);
-  if (result.state === "error") {
-    return json({ ok: false, error: "画像を安全確認できません" }, 503);
-  }
-  await putModerationCache(env, me.id, img, result);
-  return json({
-    ok: result.state === "ok",
-    reason: result.state === "bad" ? "不適切な内容の可能性" : null,
-    labels: result.labels
-  });
-}
-
-function cleanBase64Image(value) {
-  const img = String(value || "").replace(/^data:image\/[A-Za-z0-9.+-]+;base64,/, "");
-  if (!img || img.length > 13_500_000 || !/^[A-Za-z0-9+/=\s]+$/.test(img)) return null;
-  return img.replace(/\s/g, "");
-}
 
 async function callVision(key, img) {
 
-  const res = await fetch(VISION + "?key=" + encodeURIComponent(key), {
+  const res = await fetch(VISION, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Goog-Api-Key": key },
     body: JSON.stringify({
       requests: [{
         image: { content: img },
@@ -3123,7 +2747,8 @@ async function callVision(key, img) {
           { type: "LABEL_DETECTION", maxResults: 6 }
         ]
       }]
-    })
+    }),
+    signal: AbortSignal.timeout(10_000)
   });
 
   if (!res.ok) return { state: "error", labels: [] };
@@ -3177,7 +2802,7 @@ async function moderateUploadedPhoto(env, me, bytes) {
   const img = bytesToBase64(bytes);
   const cached = await getModerationCache(env, me.id, img);
   if (cached) return cached.state;
-  const key = await cfg(env, "google_key");
+  const key = env.GOOGLE_API_KEY;
   if (!key ||
       !(await userLimit(env, me.id, "vision-hour", hourKey(), 30)) ||
       !(await userLimit(env, me.id, "vision-day", dayKey(), 120)) ||
@@ -3218,62 +2843,6 @@ async function moderatePhotoRows(env, me, rows) {
   }
   return true;
 }
-
-/** 写真を見て、ひとことの候補を出す */
-async function suggest(request, env, me) {
-  const key = await cfg(env, "google_key");
-  if (!key) return json({ items: [] });
-
-  const parsed = await limitedJson(request, 14_000_000);
-  if (parsed.error) return parsed.error;
-  const b = parsed.value;
-  const img = cleanBase64Image(b.image);
-  if (!img) return json({ items: [] });
-
-  if (!(await userLimit(env, me.id, "suggest-hour", hourKey(), 30)) ||
-      !(await userLimit(env, me.id, "suggest-day", dayKey(), 120))) {
-    return json({ error: "提案の利用回数が多すぎます" }, 429);
-  }
-  if (!(await useQuota(env, "gemini"))) return json({ items: [] });
-
-  const cat = String(b.category || "");
-  const ask = (cat === "景" || cat === "社" || cat === "園")
-    ? "この写真をどう撮ったかを短く言い表す言葉を3つ。例：夕方、対岸から／桜、朝いちばん"
-    : "この写真に写っている料理や飲みものの名前を3つ。例：味玉らーめん／クリームソーダ";
-
-  const res = await fetch(GEMINI + "?key=" + encodeURIComponent(key), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{
-        parts: [
-          { text: ask + "\n日本語で、それぞれ12文字以内。JSONの配列だけを返してください。説明は不要です。" },
-          { inline_data: { mime_type: "image/jpeg", data: img } }
-        ]
-      }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 120 }
-    })
-  });
-
-  if (!res.ok) return json({ items: [] });
-  const j = await res.json();
-  let text = "";
-  try {
-    text = j.candidates[0].content.parts[0].text || "";
-  } catch (e) { return json({ items: [] }); }
-
-  text = text.replace(/```json|```/g, "").trim();
-  let items = [];
-  try { items = JSON.parse(text); } catch (e) {
-    items = text.split(/[\n、,]/).map(function (s) { return s.trim(); });
-  }
-  items = (items || []).filter(function (s) {
-    return typeof s === "string" && s.length > 0 && s.length <= 16;
-  }).slice(0, 3);
-
-  return json({ items: items });
-}
-
 
 /** 通知の宛先を預かる */
 async function saveToken(request, env, me) {
@@ -3327,7 +2896,7 @@ async function fcmToken(env) {
   if (fcmAccessCache && fcmAccessCache.expiresAt > Date.now() + 60_000) {
     return { token: fcmAccessCache.token, project: fcmAccessCache.project };
   }
-  const raw = await cfg(env, "fcm_service_account");
+  const raw = env.FCM_SERVICE_ACCOUNT;
   if (!raw) return null;
 
   let sa;
@@ -3369,7 +2938,8 @@ async function fcmToken(env) {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" +
-          unsigned + "." + sigB64
+          unsigned + "." + sigB64,
+    signal: AbortSignal.timeout(8_000)
   });
   if (!res.ok) return null;
   const j = await res.json();
@@ -3417,7 +2987,8 @@ async function sendPush(env, userId, title, body, data) {
             "Authorization": "Bearer " + auth.token,
             "Content-Type": "application/json"
           },
-          body: JSON.stringify(msg)
+          body: JSON.stringify(msg),
+          signal: AbortSignal.timeout(8_000)
         }
       );
       if (r.ok) sent++;
@@ -3718,155 +3289,4 @@ async function takeTag(request, env, me) {
     ).bind(postId, me.id, claimId, newId).run();
     throw e;
   }
-}
-
-
-/* ============================================================
-   Wikipedia 周辺記事（最新版UIとの互換機能）
-   ============================================================ */
-const WIKI_UA = "spota/1.0 (https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev)";
-
-function wikiCat(value) {
-  const text = String(value || "");
-  if (/温泉|銭湯|浴場/.test(text)) return "湯";
-  if (/神社|寺院|寺|大社|神宮|仏閣/.test(text)) return "社";
-  if (/公園|庭園|植物園|渓谷|滝|湖沼/.test(text)) return "園";
-  if (/図書館|書店/.test(text)) return "本";
-  return "景";
-}
-
-async function wiki(url, request, env) {
-  const mode = url.searchParams.get("mode") || "near";
-  if (!(await publicAllowance(request, env, "wiki", 60, 500))) {
-    return json({ error: "検索回数が多すぎます" }, 429);
-  }
-  if (mode === "near") return wikiNear(url, env);
-  if (mode === "views") return wikiViews(url, env);
-  return json({ error: "mode が不正です" }, 400);
-}
-
-async function wikiNear(url, env) {
-  const lat = Number(url.searchParams.get("lat"));
-  const lng = Number(url.searchParams.get("lng"));
-  if (!validCoords(lat, lng)) return json({ error: "lat / lng が必要です" }, 400);
-  const radius = Math.min(10_000, Math.max(500, Number(url.searchParams.get("radius") || 3000)));
-  const local = await wikiNearFromD1(lat, lng, radius, env);
-  if (local) return json(local);
-  const cacheKey = "wiki_" + lat.toFixed(2) + "," + lng.toFixed(2) + "," + Math.round(radius / 1000);
-  const cached = await dataCacheGet(env, cacheKey, 86400);
-  if (cached) return json(Object.assign({ cached: true }, cached));
-
-  const api = new URL("https://ja.wikipedia.org/w/api.php");
-  for (const [key, value] of Object.entries({
-    action: "query", format: "json", formatversion: "2", generator: "geosearch",
-    ggscoord: lat.toFixed(6) + "|" + lng.toFixed(6), ggsradius: String(radius),
-    ggslimit: "60", prop: "coordinates|description|pageimages|categories",
-    cllimit: "30", clshow: "!hidden", piprop: "thumbnail", pithumbsize: "320"
-  })) api.searchParams.set(key, value);
-  const response = await fetch(api, {
-    headers: { "User-Agent": WIKI_UA, "Accept": "application/json" },
-    cf: { cacheTtl: 86400, cacheEverything: true }
-  });
-  if (!response.ok) return json({ error: "Wikipediaを利用できません", pages: [] }, 200);
-  const body = await response.json();
-  const pages = ((body.query && body.query.pages) || []).map(function (page) {
-    const coordinate = page.coordinates && page.coordinates[0];
-    if (!coordinate || !validCoords(coordinate.lat, coordinate.lon)) return null;
-    return {
-      title: limitedText(page.title, 200) || "", lat: coordinate.lat, lng: coordinate.lon,
-      desc: limitedText(page.description, 500) || "",
-      photo: page.thumbnail ? page.thumbnail.source : "",
-      cats: (page.categories || []).slice(0, 30).map((item) => String(item.title || "").replace(/^Category:/, ""))
-    };
-  }).filter(Boolean);
-  const out = { count: pages.length, pages };
-  await dataCacheSet(env, cacheKey, out);
-  await savePlaces(env, pages.map(function (page) {
-    return {
-      n: page.title, lat: page.lat, lng: page.lng,
-      c: wikiCat(page.title + " " + page.desc + " " + page.cats.join(" ")),
-      src: "user", sid: "wk_" + page.title, gname: page.desc || null
-    };
-  }));
-  return json(out);
-}
-
-async function wikiNearFromD1(lat, lng, radius, env) {
-  const databases = ADDRESS_DB_BINDINGS.map((name) => env[name]).filter(Boolean);
-  if (!databases.length) return null;
-  const latDelta = radius / 110_540;
-  const lngDelta = radius / Math.max(1, 111_320 * Math.cos(lat * Math.PI / 180));
-  const minGridLat = Math.floor((lat - latDelta) * 100), maxGridLat = Math.floor((lat + latDelta) * 100);
-  const minGridLng = Math.floor((lng - lngDelta) * 100), maxGridLng = Math.floor((lng + lngDelta) * 100);
-  const latE6 = Math.round(lat * 1e6), lngE6 = Math.round(lng * 1e6);
-  const found = [];
-  // Workersの同時外部接続上限6本を超えないよう、地域DBを2回に分ける。
-  for (let offset = 0; offset < databases.length; offset += 6) {
-    const batches = await Promise.all(databases.slice(offset, offset + 6).map(async function (db) {
-      try {
-        const result = await db.prepare(`
-          SELECT page_id,title,type,lat_e6,lng_e6
-          FROM wikipedia_places
-          WHERE grid_lat BETWEEN ? AND ? AND grid_lng BETWEEN ? AND ?
-          ORDER BY ((lat_e6-?)*(lat_e6-?))+((lng_e6-?)*(lng_e6-?))
-          LIMIT 160
-        `).bind(minGridLat, maxGridLat, minGridLng, maxGridLng,
-                latE6, latE6, lngE6, lngE6).all();
-        return result.results || [];
-      } catch (error) { return []; }
-    }));
-    found.push(...batches.flat());
-  }
-  if (!found.length) return null;
-  const pages = found.map(function (row) {
-    const pageLat = row.lat_e6 / 1e6, pageLng = row.lng_e6 / 1e6;
-    return {
-      title: row.title, lat: pageLat, lng: pageLng, desc: "", photo: "", cats: [],
-      type: row.type || "", distance_m: Math.round(geoDistanceMeters(lat, lng, pageLat, pageLng)),
-      page_id: row.page_id
-    };
-  }).filter((page) => page.distance_m <= radius)
-    .sort((a, b) => a.distance_m - b.distance_m).slice(0, 60);
-  return pages.length ? { count: pages.length, pages, source: "jawiki-dump" } : null;
-}
-
-async function wikiViews(url, env) {
-  const titles = String(url.searchParams.get("titles") || "").split("|")
-    .map((title) => title.trim()).filter(Boolean).slice(0, 15);
-  if (!titles.length) return json({ views: {} });
-  const end = new Date(Date.now() - 86400000);
-  const start = new Date(end.getTime() - 6 * 86400000);
-  const formatDate = (date) => date.toISOString().slice(0, 10).replace(/-/g, "") + "00";
-  const span = formatDate(start) + "/" + formatDate(end), views = {};
-  for (const title of titles) {
-    const key = "pv_" + span + "_" + title;
-    const cached = await dataCacheGet(env, key, 86400);
-    if (cached) { views[title] = cached.v; continue; }
-    try {
-      const endpoint = "https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/ja.wikipedia/all-access/user/" +
-        encodeURIComponent(title.replace(/ /g, "_")) + "/daily/" + span;
-      const response = await fetch(endpoint, { headers: { "User-Agent": WIKI_UA }, cf: { cacheTtl: 86400, cacheEverything: true } });
-      if (!response.ok) { views[title] = 0; continue; }
-      const body = await response.json();
-      views[title] = (body.items || []).reduce((sum, item) => sum + (item.views || 0), 0);
-      await dataCacheSet(env, key, { v: views[title] });
-    } catch (error) { views[title] = 0; }
-  }
-  return json({ views });
-}
-
-async function dataCacheGet(env, key, maxAgeSeconds) {
-  try {
-    const row = await env.DB.prepare("SELECT v,at FROM api_cache WHERE k=?").bind(key).first();
-    if (!row || Date.now() - row.at > maxAgeSeconds * 1000) return null;
-    return JSON.parse(row.v);
-  } catch (error) { return null; }
-}
-
-async function dataCacheSet(env, key, value) {
-  try {
-    const now = Date.now();
-    await env.DB.prepare("INSERT INTO api_cache (k,v,at) VALUES (?,?,?) ON CONFLICT(k) DO UPDATE SET v=?,at=?")
-      .bind(key, JSON.stringify(value), now, JSON.stringify(value), now).run();
-  } catch (error) {}
 }

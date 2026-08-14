@@ -32,9 +32,13 @@ test('map audience keeps private memories off the public map', async () => {
 test('release UI uses authenticated social routes and persisted actions', async () => {
   const html = await read('public/index.html');
   const release = await read('public/release.js');
-  assert.match(html, /id="map-scope"/);
+  assert.match(html, /id="btn-map-scope"/);
+  assert.match(html, /id="btn-notifications"/);
+  assert.match(html, /id="btn-messages"/);
   assert.match(html, /release\.js\?v=/);
-  assert.match(release, /'\/api\/feed\?limit=/);
+  assert.match(html, /http-equiv="Content-Security-Policy"/);
+  assert.match(release, /socialJson\('\/api\/feed',\{method:'POST'/);
+  assert.doesNotMatch(release, /\/api\/feed\?/);
   assert.match(release, /socialJson\('\/api\/posts\?user=/);
   assert.match(release, /\/api\/notifications/);
   assert.match(release, /\/api\/conversations/);
@@ -43,12 +47,94 @@ test('release UI uses authenticated social routes and persisted actions', async 
   assert.match(release, /data-comments/);
 });
 
+test('PDF map header and iPhone viewport rules stay fixed', async () => {
+  const html = await read('public/index.html');
+  const css = await read('public/app.css');
+  const release = await read('public/release.js');
+  const top = html.slice(html.indexOf('<div class="top">'), html.indexOf('<div class="results"'));
+  assert.ok(top.indexOf('class="q"') < top.indexOf('id="btn-map-scope"'));
+  assert.ok(top.indexOf('id="btn-map-scope"') < top.indexOf('id="btn-notifications"'));
+  assert.ok(top.indexOf('id="btn-notifications"') < top.indexOf('id="btn-messages"'));
+  assert.match(release, /mapAudience==='mine'\?'public':'mine'/);
+  assert.match(css, /\.pill\{[^}]*background:transparent;box-shadow:none/s);
+  assert.match(css, /\.timeline-search input\{[^}]*font-size:16px/s);
+  assert.match(css, /\.comment-form input,.message-form textarea\{[^}]*font-size:16px/s);
+  assert.match(css, /\.release-screen\{[^}]*overflow-x:hidden/s);
+});
+
+test('initial map never falls back to the former Ueno coordinate', async () => {
+  const map = await read('public/map.js');
+  const native = await read('public/native.js');
+  assert.doesNotMatch(map, /center:\[139\.7745,35\.7150\]/);
+  assert.doesNotMatch(map, /localStorage\.getItem\('spota_last_location'/);
+  assert.doesNotMatch(native, /localStorage\.setItem\('spota_last_location'/);
+  assert.match(map, /localStorage\.removeItem\('spota_last_location'/);
+  assert.match(map, /center:\[138\.2529,36\.2048\],zoom:4\.6/);
+  assert.match(native, /permission\.location==='granted'/);
+  assert.match(native, /map\.jumpTo\(\{center:\[138\.2529,36\.2048\],zoom:4\.6/);
+});
+
+test('sensitive map bounds and timeline queries stay out of request URLs', async () => {
+  const sync = await read('public/sync.js');
+  const release = await read('public/release.js');
+  const worker = await read('src/index.js');
+  assert.match(sync, /apiAs\(auth,'\/api\/posts\/query',\{method:'POST'/);
+  assert.doesNotMatch(sync, /\/api\/posts\?s=/);
+  assert.match(release, /socialJson\('\/api\/feed',\{method:'POST'/);
+  assert.doesNotMatch(release, /\/api\/feed\?/);
+  assert.match(worker, /p === "\/api\/posts\/query" && request\.method === "POST"/);
+  assert.match(worker, /p === "\/api\/feed" && request\.method === "POST"/);
+  assert.match(worker, /const handle = String\(url\.searchParams\.get\("user"\) \|\| ""\)\.trim\(\)/);
+  assert.match(worker, /return respond\(await listProfilePosts\(handle, url, env, me\)\)/);
+  assert.match(worker, /async function listMapPosts/);
+});
+
+test('photo sync requires both derived variants before marking a record synced', async () => {
+  const sync = await read('public/sync.js');
+  const uploadStart = sync.indexOf('async function uploadPhoto');
+  const uploadEnd = sync.indexOf('function resize', uploadStart);
+  const upload = sync.slice(uploadStart, uploadEnd);
+  assert.match(upload, /if\(!view\)throw new Error\('view resize failed'\)/);
+  assert.match(upload, /if\(!th\)throw new Error\('thumb resize failed'\)/);
+  assert.match(upload, /await put\('view'/);
+  assert.match(upload, /await put\('thumb'/);
+});
+
+test('timeline is reachable without changing the fixed five-item home nav', async () => {
+  const sync = await read('public/sync.js');
+  const release = await read('public/release.js');
+  assert.match(sync, /id="timeline-guest"/);
+  assert.match(sync, /openSocialHub\('timeline'\)/);
+  assert.match(release, /id="profile-timeline"/);
+});
+
+test('map click resolution uses a stable record identity instead of place name', async () => {
+  const map = await read('public/map.js');
+  const place = await read('public/place.js');
+  assert.match(map, /rid:String\(p\.id\|\|p\.server_id\|\|p\.spot\|\|''\)/);
+  assert.match(place, /function recordForFeature/);
+  assert.match(place, /String\(x\.id\|\|x\.server_id\|\|x\.spot\|\|''\)===rid/);
+  assert.doesNotMatch(place, /visibleOwnSpots\(\)\.filter\(function\(x\)\{return x\.n===f\.properties\.n;/);
+});
+
+test('external place providers and image proxy are not callable at runtime', async () => {
+  const worker = await read('src/index.js');
+  const data = await read('public/data.js');
+  const map = await read('public/map.js');
+  for (const route of ['/api/img','/api/hotpepper','/api/rakuten','/api/wiki','/api/gsearch']) {
+    assert.doesNotMatch(worker, new RegExp(route.replaceAll('/', '\\/')));
+    assert.doesNotMatch(data, new RegExp(route.replaceAll('/', '\\/')));
+  }
+  assert.doesNotMatch(map, /SERVER\+'\/api\/img/);
+});
+
 test('profile sheet follows the PDF dismissal gesture and the home nav stays at five actions', async () => {
   const html = await read('public/index.html');
   const release = await read('public/release.js');
   const css = await read('public/app.css');
-  for (const id of ['btn-social','btn-bulk','btn-cam','btn-lib','btn-me'])
+  for (const id of ['btn-loc','btn-bulk','btn-cam','btn-lib','btn-me'])
     assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="btn-social"/);
   assert.match(release, /function bindProfileDismiss/);
   assert.match(release, /panel\.offsetHeight\*\.30\|\|vy>900/);
   assert.match(release, /cancelAnimationFrame\(raf\)/);
@@ -73,12 +159,14 @@ test('map library is delivered from the same origin and startup guards the map i
   const core = await read('public/core.js');
   const ui = await read('public/ui.js');
   const worker = await read('src/index.js');
-  const route = worker.indexOf('if (MAPLIBRE_VENDOR[p])');
-  const assets = worker.indexOf('if (!p.startsWith("/api/"))');
+  const lazy = await read('public/lazy.js');
   assert.match(html, /\/vendor\/maplibre-gl-4\.7\.1\.min\.js/);
   assert.match(html, /\/vendor\/maplibre-gl-4\.7\.1\.min\.css/);
   assert.doesNotMatch(html, /cdnjs\.cloudflare\.com\/ajax\/libs\/maplibre-gl/);
-  assert.ok(route >= 0 && route < assets, 'vendor route must run before static assets');
+  await read('public/vendor/maplibre-gl-4.7.1.min.js');
+  await read('public/vendor/maplibre-gl-4.7.1.min.css');
+  assert.doesNotMatch(worker, /MAPLIBRE_VENDOR|mapLibreVendor/);
+  assert.doesNotMatch(lazy, /cdnjs|jsdelivr|unpkg|gstatic/);
   assert.match(core, /liveMap=window\.__michikusaMap/);
   assert.match(ui, /liveMap=window\.__michikusaMap/);
 });
