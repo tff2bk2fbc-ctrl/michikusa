@@ -109,6 +109,23 @@ test('photo sync creates bounded JPEG variants before the first server write', a
   assert.ok(upload.indexOf("await put('thumb'") < upload.indexOf("await put('view'"));
   assert.ok(upload.indexOf("await put('view'") < upload.indexOf("await put('orig'"));
   assert.doesNotMatch(upload, /await put\('orig',blob,blob\.type/);
+  assert.doesNotMatch(upload, /fetch\((?:th|view|archive)\)/);
+  assert.match(sync, /function dataUrlBlob\(dataUrl\)/);
+  assert.match(sync, /new Blob\(\[bytes\],\{type:'image\/jpeg'\}\)/);
+});
+
+test('JPEG data URLs become uploadable Blobs without a CSP-governed fetch', async () => {
+  const sync = await read('public/sync.js');
+  const start = sync.indexOf('function dataUrlBlob');
+  const end = sync.indexOf('function resize', start);
+  const source = sync.slice(start, end);
+  const convert = Function('atob', 'Blob', 'Uint8Array', source + ';return dataUrlBlob;')(
+    atob, Blob, Uint8Array
+  );
+  const blob = convert('data:image/jpeg;base64,/9j/2Q==');
+  assert.equal(blob.type, 'image/jpeg');
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], [0xff, 0xd8, 0xff, 0xd9]);
+  assert.throws(() => convert('data:image/png;base64,iVBORw0KGgo='), /jpeg data invalid/);
 });
 
 test('legacy posts with a missing server photo are returned to the upload queue', async () => {

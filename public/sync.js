@@ -33,18 +33,27 @@ async function uploadPhoto(auth,postId,photoId,dataUrl){
     if(!view)throw new Error('view resize failed');
     var th=await resize(view,512,.82);
     if(!th)throw new Error('thumb resize failed');
-    var tb=await (await fetch(th)).blob();
+    var tb=dataUrlBlob(th);
     // まず地図表示に必要な小さい2種類を確実に作り、最後に高品質版を預ける。
     await put('thumb',tb,'image/jpeg');
-    var vb=await (await fetch(view)).blob();
+    var vb=dataUrlBlob(view);
     await put('view',vb,'image/jpeg');
-    var ab=await (await fetch(archive)).blob();
+    var ab=dataUrlBlob(archive);
     await put('orig',ab,'image/jpeg');
     return {ok:true,moderation:moderationState};
   }catch(e){
     // 同期ループ側で再試行できるよう、認証情報や画像本体は返さず理由だけ保持する。
     return {ok:false,error:e&&e.message?String(e.message):'photo upload failed'};
   }
+}
+/* data: URLをfetchするとCSPのconnect-srcに遮断されるため、端末内だけでBlob化する。 */
+function dataUrlBlob(dataUrl){
+  var comma=String(dataUrl||'').indexOf(',');
+  var head=comma>=0?dataUrl.slice(0,comma):'';
+  if(comma<0||!/^data:image\/jpeg;base64$/i.test(head))throw new Error('jpeg data invalid');
+  var raw=atob(dataUrl.slice(comma+1)),bytes=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+  return new Blob([bytes],{type:'image/jpeg'});
 }
 function resize(dataUrl,max,q){
   return new Promise(function(res){
