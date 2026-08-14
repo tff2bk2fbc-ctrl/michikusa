@@ -22,6 +22,13 @@ function ask(c){return ASK[c]||['ひとこと',''];}
 const HP_CAT={G001:'酒',G002:'酒',G011:'酒',G012:'酒',G014:'喫茶'};
 
 let spots=[], pois=[], placing=null, dropM=null, meM=null, askSeq=0;
+/*
+ * みんなの地図は公開投稿だけ、自分の地図は自分の全記録だけを描く。
+ * 投稿自体は常に自分の記録として保存され、公開を選んだものだけが
+ * みんなの地図にも現れる。ログイン前は端末内の記録を失ったように
+ * 見せないため、自分の地図から始める。
+ */
+let mapAudience='mine';
 let night=(function(){
   try{var saved=localStorage.getItem('mk_color_mode');if(saved)return saved==='dark';}catch(e){}
   var h=new Date().getHours();return h<6||h>=18;
@@ -36,6 +43,31 @@ function setTip(t){var e=document.getElementById('tip');e.textContent=t;e.style.
 function valid(p){return p&&isFinite(p.lat)&&isFinite(p.lng)&&Math.abs(p.lat)<=90&&Math.abs(p.lng)<=180;}
 function nid(){return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
 function el(h){var d=document.createElement('div');d.innerHTML=h.trim();return d.firstElementChild;}
+function visibleOwnSpots(){
+  return mapAudience==='mine'?spots:spots.filter(function(p){return p.visibility==='public';});
+}
+function visibleOtherSpots(){
+  if(mapAudience!=='public')return [];
+  try{
+    return Object.keys(others||{}).map(function(k){return others[k];})
+      .filter(function(p){return p.visibility==='public';});
+  }catch(e){return [];}
+}
+function refreshMapAudienceUI(){
+  var box=document.getElementById('map-scope');if(!box)return;
+  Array.prototype.forEach.call(box.querySelectorAll('button'),function(b){
+    var on=b.dataset.scope===mapAudience;
+    b.classList.toggle('on',on);b.setAttribute('aria-checked',String(on));b.tabIndex=on?0:-1;
+  });
+  box.dataset.scope=mapAudience;
+}
+function setMapAudience(mode,quiet){
+  if(mode!=='mine'&&mode!=='public')return;
+  mapAudience=mode;refreshMapAudienceUI();
+  if(typeof render==='function')render(true);
+  if(mode==='public'&&typeof syncDown==='function')syncDown();
+  if(!quiet)setTip(mode==='public'?'みんなの地図':'自分の地図');
+}
 
 /* ---------- 端末内の保存 ---------- */
 let db=null, dbOpenPromise=null;

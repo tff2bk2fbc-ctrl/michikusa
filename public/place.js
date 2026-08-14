@@ -143,9 +143,16 @@ function showSheet(html,onClose){
 }
 
 function openPlace(p,mine){
-  var mySpots=spots.filter(function(s){return s.n===p.n;});
+  function samePlace(s){
+    if(!s||s.n!==p.n)return false;
+    if(!valid(s)||!valid(p))return true;
+    return Math.hypot((s.lat-p.lat)*111000,(s.lng-p.lng)*91000)<180;
+  }
+  var mySpots=visibleOwnSpots().filter(samePlace);
+  var sharedSpots=visibleOtherSpots().filter(samePlace);
+  var allSpots=mySpots.concat(sharedSpots);
   var photoPlaceholder='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="8" height="8"%3E%3Crect width="8" height="8" fill="%23e9e7e2"/%3E%3C/svg%3E';
-  var photoSpots=mySpots.filter(function(s){return s.photo||s.server_photo_id;});
+  var photoSpots=allSpots.filter(function(s){return s.photo||s.server_photo_id;});
   var photos=photoSpots.map(function(s){return s.photo||photoPlaceholder;});
   var photoIds=photoSpots.map(function(s){return s.server_photo_id||null;});
   if(p.photo&&photos.indexOf(p.photo)<0){photos.unshift(p.photo);photoIds.unshift(null);}
@@ -156,7 +163,7 @@ function openPlace(p,mine){
     '<div class="head"><div class="av"'+(av?' style="background-image:url('+
       JSON.stringify(av).replace(/"/g,'&quot;')+')"':'')+'>'+(av?'':esc((p.n||'?').charAt(0)))+'</div>'+
     '<div class="t"><h2>'+esc(p.n)+'</h2><p>'+esc(meta)+
-      (mySpots.length?' ・ '+mySpots.length+'件の思い出':'')+'</p></div></div>'+
+      (allSpots.length?' ・ '+allSpots.length+'件の思い出':'')+'</p></div></div>'+
     '<div class="acts"><button class="main" id="a-add">ここに追加</button>'+
     '<button id="a-route">経路</button></div>';
 
@@ -168,8 +175,7 @@ function openPlace(p,mine){
         JSON.stringify(u).replace(/"/g,'&quot;')+')"></button>';
     }).join('')+'</div>';
   }
-  var frnd=Object.keys(others).map(function(k){return others[k];})
-    .filter(function(o){return o.n===p.n&&o.tag;});
+  var frnd=sharedSpots.filter(function(o){return o.tag;});
   if(frnd.length){
     html+='<div class="posts">'+frnd.map(function(o){
       return '<div class="post"><div class="av2"></div><div class="b"><b>'+
@@ -195,8 +201,9 @@ function openPlace(p,mine){
   Array.prototype.forEach.call(s.querySelectorAll('[data-ph]'),function(e2){
     e2.onclick=function(){
       var i=Number(e2.dataset.ph);
-      var m=mySpots.filter(function(x){return x.photo||x.server_photo_id;})[i]||mySpots[0]||{};
-      openViewer(photos, i, 'じぶん', p.place||p.n, m.tag||'', m.d||'', [],photoIds);
+      var m=photoSpots[i]||allSpots[0]||{};
+      var who=m.author&&(m.author.name||m.author.handle)||'じぶん';
+      openViewer(photos, i, who, p.place||p.n, m.tag||'', m.d||'', [],photoIds);
     };
   });
   s.querySelector('#a-add').onclick=function(){
@@ -347,15 +354,15 @@ map.on('click',function(e){
 
   var f=nearest(['photo-ic','mine-ring','mine-ic']);
   if(f){
-    var s=spots.filter(function(x){return x.n===f.properties.n;})[0];
+    var s=visibleOwnSpots().filter(function(x){return x.n===f.properties.n;})[0];
     if(s){ openPlace(s,true); return; }
   }
 
   f=nearest(['frnd-ring','frnd-ic']);
   if(f){
-    var ks=Object.keys(others);
-    for(var i=0;i<ks.length;i++){
-      if(others[ks[i]].n===f.properties.n){ openPlace(others[ks[i]],false); return; }
+    var shared=visibleOtherSpots();
+    for(var i=0;i<shared.length;i++){
+      if(shared[i].n===f.properties.n){ openPlace(shared[i],false); return; }
     }
   }
 

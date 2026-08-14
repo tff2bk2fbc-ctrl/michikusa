@@ -306,7 +306,8 @@ function afterStyle(){
    ============================================================ */
 function photoOf(p){
   if(p.photo)return p.photo;
-  var m=spots.filter(function(s){return s.n===p.n&&s.photo;});
+  var m=visibleOwnSpots().concat(visibleOtherSpots())
+    .filter(function(s){return s.n===p.n&&s.photo;});
   return m.length?m[m.length-1].photo:'';
 }
 
@@ -390,10 +391,11 @@ let lastSig='';
 function render(force){
  try{
   if(!map.getSource('mine'))return;
-  map.getSource('mine').setData(fcOf(spots,true));
+  var own=visibleOwnSpots(),shared=visibleOtherSpots();
+  map.getSource('mine').setData(fcOf(own,true));
   map.getSource('spot').setData(fcOf(pois,false));
   if(map.getSource('frnd'))
-    map.getSource('frnd').setData(fcOf(Object.keys(others).map(function(k){return others[k];}),false));
+    map.getSource('frnd').setData(fcOf(shared,false));
   refreshPhotoSource();
  }catch(e){ showErr('[render] '+dump(e)); }
 }
@@ -514,7 +516,7 @@ function roundRect(x,px,py,w,hh,r){
 
 /** 写真を切り抜いて、地図に登録する。
     形は地図の見た目によらず同じ。角を少し落とした四角。 */
-function makeRoundIcon(url,mine,key){
+function makeRoundIcon(url,mine,key,count){
   if(madeIcons[key]||makingIcons[key])return;
   makingIcons[key]=1;
   photoDiag.try++;
@@ -552,6 +554,15 @@ function makeRoundIcon(url,mine,key){
       x.drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,ring,ring,S-ring*2,S-ring*2);
       x.restore();
 
+      if(count>1){
+        var badge=25,bx=S-badge-3,by=3;
+        x.fillStyle=mine?(night?'#F2F2F4':'#111111'):(night?'#F2F2F4':'#FFFFFF');
+        x.beginPath();x.arc(bx+badge/2,by+badge/2,badge/2,0,Math.PI*2);x.fill();
+        x.fillStyle=mine?(night?'#111111':'#FFFFFF'):(night?'#111111':'#111111');
+        x.font='700 15px -apple-system,system-ui,sans-serif';x.textAlign='center';x.textBaseline='middle';
+        x.fillText(String(Math.min(count,99)),bx+badge/2,by+badge/2+.5);
+      }
+
       var dat=x.getImageData(0,0,S,H);
       if(map.hasImage(key))map.removeImage(key);
       // ImageData をそのまま渡すのが一番確実
@@ -587,14 +598,12 @@ function photoFeatures(){
   if(map.getZoom()<PHOTO_ZOOM)return out;
   var b=map.getBounds(), c=map.getCenter(), list=[];
 
-  // 地図に写真で出るのは、自分が撮ったものだけ。
-  // 店の宣材写真を並べると「グルメアプリ」になってしまう。
-  // ここはアルバムなので、写っているのは自分の記録だけでいい。
-  spots.filter(valid).forEach(function(s){
+  // 自分の地図では本人の記録を、みんなの地図では公開された記録だけを出す。
+  // 店の宣材写真ではなく、利用者本人の写真だけを地図上のアルバムとして扱う。
+  visibleOwnSpots().filter(valid).forEach(function(s){
     if(b.contains([s.lng,s.lat])&&s.photo)list.push({p:s,mine:true,img:s.photo});
   });
-  Object.keys(others).forEach(function(k){
-    var o=others[k];
+  visibleOtherSpots().forEach(function(o){
     if(valid(o)&&b.contains([o.lng,o.lat])&&o.photo)list.push({p:o,mine:false,img:o.photo});
   });
 
@@ -604,11 +613,20 @@ function photoFeatures(){
   });
   list=list.slice(0,30);
 
+  var counts={};
   list.forEach(function(o){
-    var key=photoKey(o.p,o.mine);
-    if(!madeIcons[key]){ makeRoundIcon(o.img,o.mine,key); return; }
+    var group=(o.mine?'m':'o')+'|'+String(o.p.n||'')+'|'+o.p.lat.toFixed(3)+'|'+o.p.lng.toFixed(3);
+    counts[group]=(counts[group]||0)+1;o.group=group;
+  });
+  var emitted={};
+
+  list.forEach(function(o){
+    if(emitted[o.group])return;emitted[o.group]=1;
+    var count=counts[o.group]||1;
+    var key=photoKey(o.p,o.mine)+'_'+count;
+    if(!madeIcons[key]){ makeRoundIcon(o.img,o.mine,key,count); return; }
     out.push({type:'Feature',geometry:{type:'Point',coordinates:[o.p.lng,o.p.lat]},
-      properties:{n:o.p.n,mine:o.mine?1:0,icon:key}});
+      properties:{n:o.p.n,mine:o.mine?1:0,icon:key,count:count}});
   });
   return out;
 }

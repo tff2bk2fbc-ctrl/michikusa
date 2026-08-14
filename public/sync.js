@@ -263,11 +263,15 @@ async function syncDown(){
       }else{
         // 他人の思い出。地図には出すが端末には残さない
         var k=p.id;
-        if(others[k])return;
-        others[k]={n:p.title,c:p.category,lat:p.lat,lng:p.lng,
+        var shared=others[k]||{};
+        Object.assign(shared,{id:p.id,n:p.title,c:p.category,lat:p.lat,lng:p.lng,
           gname:(p.author&&p.author.name?p.author.name+' の思い出':''),
-          tag:p.tag||'',author:p.author,precision:p.precision,friend:true};
-        added++;
+          place:p.place_name||'',tag:p.tag||'',d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
+          author:p.author,precision:p.precision,visibility:p.visibility,
+          server_photo_id:p.photo_id||null,friend:p.visibility==='friends'});
+        others[k]=shared;
+        if(typeof queueSharedPhoto==='function'&&shared.visibility==='public'&&shared.server_photo_id)queueSharedPhoto(shared,auth);
+        if(!others[k].__counted){others[k].__counted=1;added++;}
       }
     });
     if(added)render(true);
@@ -416,12 +420,13 @@ window.initAuth=function(){
 
     firebase.auth().onAuthStateChanged(async function(u){
       var authSeq=++authChangeSeq;
+      if(typeof closeReleaseScreen==='function')closeReleaseScreen();
       fbUser=u;meP=null;var b=document.getElementById('btn-me');
       if(!b)return;
       await activateSpotScope(u);
       if(authSeq!==authChangeSeq)return;
       if(u){
-        b.innerHTML='<b>'+esc((u.displayName||'?').trim().charAt(0))+'</b>';
+        b.innerHTML='<div class="bc"><b>'+esc((u.displayName||'?').trim().charAt(0))+'</b></div>';
         var auth=await captureAuth(u);
         if(!auth||authSeq!==authChangeSeq)return;
         await retryPendingDeletes(auth);
@@ -430,13 +435,15 @@ window.initAuth=function(){
         var profile=await loadMe(auth);
         if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
         meP=profile;
+        if(typeof setMapAudience==='function')setMapAudience('public',true);
         await migrateOwnedLegacy(auth);
         await offerLegacySpots(u,auth);
         if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
         syncUp();syncDown().then(function(){syncOwnArchive(auth);});askHandle();setupPush();checkTags();
       }else{
-        b.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>';
+        b.innerHTML='<div class="bc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></div>';
         meP=null;
+        if(typeof setMapAudience==='function')setMapAudience('mine',true);
       }
     });
 
@@ -616,6 +623,7 @@ function doLogout(){
   var FA=plugin('FirebaseAuthentication');
   if(isApp&&FA){ try{ FA.signOut(); }catch(e){} }
   fbUser=null;meP=null;activateSpotScope(null);
+  if(typeof closeReleaseScreen==='function')closeReleaseScreen();
   try{ firebase.auth().signOut(); }catch(e){}
   setTip('ログアウトしました');
 }
@@ -885,13 +893,16 @@ async function openFriendMap(hd){
     var j=await r.json();
     if(!authIsCurrent(auth))return;
     if(!r.ok)throw new Error(j.error||'地図を開けませんでした');
-    var rows=(j.posts||[]).filter(function(p){return !p.mine;});
+    var rows=(j.posts||[]).filter(function(p){return !p.mine&&p.visibility==='public'&&p.map_available;});
     if(!rows.length){setTip('表示できる思い出はまだありません');return;}
     others={};
     rows.forEach(function(p){
-      others[p.id]={n:p.title,c:p.category,lat:p.lat,lng:p.lng,
+      others[p.id]={id:p.id,n:p.title,c:p.category,lat:p.lat,lng:p.lng,
         gname:(p.author&&p.author.name?p.author.name+' の思い出':''),
-        tag:p.tag||'',author:p.author,precision:p.precision,friend:true};
+        place:p.place_name||'',tag:p.tag||'',d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
+        author:p.author,precision:p.precision,visibility:p.visibility,
+        server_photo_id:p.photo_id||null,friend:p.visibility==='friends'};
+      if(typeof queueSharedPhoto==='function'&&p.visibility==='public'&&p.photo_id)queueSharedPhoto(others[p.id],auth);
     });
     closeSheet(); render(true);
     var bounds=new maplibregl.LngLatBounds();

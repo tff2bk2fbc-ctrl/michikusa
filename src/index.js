@@ -59,7 +59,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-34"
+          build: "api-35"
         }));
       }
       if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
@@ -92,6 +92,8 @@ export default {
 
       if (p === "/api/posts" && request.method === "GET")  return respond(await listPosts(url, env, me));
       if (p === "/api/posts" && request.method === "POST") return respond(await createPost(request, env, me));
+      if (p === "/api/feed" && request.method === "GET")
+        return respond(await listFeed(url, env, me));
       if (p === "/api/posts/ownership" && request.method === "POST")
         return respond(await ownedPostIds(request, env, me));
       if (p === "/api/posts/deletions" && request.method === "GET")
@@ -598,6 +600,10 @@ async function listProfilePosts(handle, url, env, me) {
   const requested = Number(url.searchParams.get("limit") || 100);
   const limit = Number.isFinite(requested) ? Math.max(1, Math.min(100, Math.trunc(requested))) : 100;
   const now = Date.now();
+  const profile = await env.DB.prepare(
+    "SELECT id,handle,display_name,bio,profile_public FROM users WHERE handle=? AND deleted_at IS NULL"
+  ).bind(handle).first();
+  if (!profile) return json({ error: "ユーザーが見つかりません" }, 404);
   const rows = await env.DB.prepare(`
     WITH friend AS (
       SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END AS uid
@@ -606,6 +612,8 @@ async function listProfilePosts(handle, url, env, me) {
     SELECT p.id,p.user_id,p.title,p.category,p.tag,p.place_name,p.taken_at,p.created_at,
            p.visibility,p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
            p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
+           (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
            CASE WHEN p.user_id=?1 THEN 'exact'
                 WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
                 WHEN p.user_id IN (SELECT uid FROM friend) THEN u.friend_precision
@@ -623,12 +631,95 @@ async function listProfilePosts(handle, url, env, me) {
   `).bind(me.id, handle, now, limit).all();
   const out=[];
   for(const r of rows.results||[]){
-    const c=await coordsFor(env,r);if(!c)continue;
+    const c=await coordsFor(env,r);
     out.push({id:r.id,title:r.title,category:r.category,tag:r.tag,place_name:r.place_name,
       taken_at:r.taken_at,visibility:r.visibility,mine:!!r.mine,
-      author:{id:r.user_id,name:r.display_name,handle:r.handle},lat:c[0],lng:c[1],precision:c[2]});
+      photo_id:r.photo_id||null,
+      author:{id:r.user_id,name:r.display_name,handle:r.handle},
+      map_available:!!c,
+      ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})});
   }
-  return json({count:out.length,posts:out});
+  return json({
+    profile:{
+      id:profile.id,
+      handle:profile.handle,
+      name:profile.display_name,
+      bio:(profile.id===me.id||profile.profile_public)?(profile.bio||""):""
+    },
+    count:out.length,
+    posts:out
+  });
+}
+
+/**
+ * 地図の範囲とは独立した、最近の公開・フレンド投稿。
+ * 真の座標はここでも返さず、ユーザー設定に応じた座標だけを付ける。
+ */
+async function listFeed(url, env, me) {
+  if (!(await userLimit(env, me.id, "feed-read-hour", hourKey(), 180))) {
+    return json({ error: "読み込み回数が多すぎます" }, 429);
+  }
+  const requested = Number(url.searchParams.get("limit") || 24);
+  const limit = Number.isFinite(requested)
+    ? Math.max(1, Math.min(40, Math.trunc(requested))) : 24;
+  const query = limitedText(String(url.searchParams.get("q") || "").replace(/^#/, "").trim(), 40);
+  if (query === null) return json({ error: "検索語が長すぎます" }, 400);
+  const rawCursor = String(url.searchParams.get("cursor") || "9007199254740991:zzzzzzzz");
+  const match = /^(\d{1,16}):([A-Za-z0-9_-]{0,80})$/.exec(rawCursor);
+  if (!match) return json({ error: "カーソルが不正です" }, 400);
+  const cursorTime = Number(match[1]), cursorId = match[2];
+  if (!Number.isSafeInteger(cursorTime)) return json({ error: "カーソルが不正です" }, 400);
+  const now = Date.now();
+  const rows = await env.DB.prepare(`
+    WITH friend AS (
+      SELECT CASE WHEN requester_id=?1 THEN addressee_id ELSE requester_id END AS uid
+        FROM friendships
+       WHERE status='accepted' AND (requester_id=?1 OR addressee_id=?1)
+    )
+    SELECT p.id,p.user_id,p.title,p.category,p.tag,p.place_name,p.body,
+           p.taken_at,p.created_at,p.visibility,
+           p.lat,p.lng,p.approx_lat,p.approx_lng,p.area_lat,p.area_lng,
+           p.fixed_lat,p.fixed_lng,u.display_name,u.handle,(p.user_id=?1) AS mine,
+           (SELECT ph.id FROM photos ph WHERE ph.post_id=p.id
+             ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
+           CASE WHEN p.user_id=?1 THEN 'exact'
+                WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
+                WHEN p.user_id IN (SELECT uid FROM friend) THEN u.friend_precision
+                ELSE u.public_precision END AS prec
+      FROM posts p JOIN users u ON u.id=p.user_id
+     WHERE p.deleted_at IS NULL AND p.publish_at<=?2
+       AND (p.visibility='public' OR
+            (p.visibility='friends' AND p.user_id IN (SELECT uid FROM friend)))
+       AND (p.created_at<?3 OR (p.created_at=?3 AND p.id<?4))
+       AND (?5='' OR p.tag LIKE '%'||?5||'%' OR p.title LIKE '%'||?5||'%'
+            OR p.place_name LIKE '%'||?5||'%' OR p.body LIKE '%'||?5||'%')
+       AND EXISTS (SELECT 1 FROM photos ph WHERE ph.post_id=p.id AND ph.key_thumb IS NOT NULL)
+       AND NOT EXISTS (
+         SELECT 1 FROM blocks b
+          WHERE (b.blocker_id=?1 AND b.blocked_id=p.user_id)
+             OR (b.blocker_id=p.user_id AND b.blocked_id=?1)
+       )
+     ORDER BY p.created_at DESC,p.id DESC LIMIT ?6
+  `).bind(me.id, now, cursorTime, cursorId, query || "", limit).all();
+
+  const out=[];
+  for (const r of rows.results || []) {
+    const c=await coordsFor(env,r);
+    out.push({
+      id:r.id,title:r.title,category:r.category,tag:r.tag,body:r.body||"",
+      place_name:r.place_name,taken_at:r.taken_at,created_at:r.created_at,
+      visibility:r.visibility,mine:!!r.mine,photo_id:r.photo_id||null,
+      author:{id:r.user_id,name:r.display_name,handle:r.handle},
+      map_available:!!c,
+      ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})
+    });
+  }
+  const last=(rows.results||[])[(rows.results||[]).length-1];
+  return json({
+    posts:out,
+    cursor:last?`${last.created_at}:${last.id}`:rawCursor,
+    has_more:(rows.results||[]).length===limit
+  });
 }
 
 async function coordsFor(env, row) {
