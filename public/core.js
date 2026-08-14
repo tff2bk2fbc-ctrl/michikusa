@@ -91,6 +91,7 @@ function setMapAudience(mode,quiet){
 
 /* ---------- 端末内の保存 ---------- */
 let db=null, dbOpenPromise=null;
+let dbLastError='';
 const GUEST_SCOPE=(function(){
   try{
     var v=localStorage.getItem('mk_guest_scope');
@@ -120,8 +121,23 @@ function tx(s,m){return db.transaction(s,m).objectStore(s);}
 function dbPut(s,v){return new Promise(function(r){if(!db)return r(false);
   try{
     if(s==='spots'&&!v.owner_scope)v.owner_scope=activeSpotScope;
-    var q=tx(s,'readwrite').put(v);q.onsuccess=function(){r(true);};q.onerror=function(){r(false);};
-  }catch(e){r(false);}});}
+    // request.success は、書き込みトランザクションの確定より先に発火する。
+    // iOSの容量超過では、その後transactionがabortしても従来は成功扱いになっていた。
+    var transaction=db.transaction(s,'readwrite'),settled=false;
+    transaction.objectStore(s).put(v);
+    function fail(e){
+      if(settled)return;settled=true;
+      var err=transaction.error||(e&&e.target&&e.target.error)||e;
+      dbLastError=String(err&&err.name||err&&err.message||'IndexedDB write failed').slice(0,80);
+      r(false);
+    }
+    transaction.oncomplete=function(){if(settled)return;settled=true;dbLastError='';r(true);};
+    transaction.onerror=fail;transaction.onabort=fail;
+  }catch(e){dbLastError=String(e&&e.name||e&&e.message||'IndexedDB write failed').slice(0,80);r(false);}});}
+function dbFailureReason(){
+  return /QuotaExceeded/i.test(dbLastError)?'端末の保存容量が不足しています':
+    (dbLastError?'端末保存エラー: '+dbLastError:'端末へ保存できませんでした');
+}
 function dbDel(s,k){return new Promise(function(r){if(!db)return r(false);
   try{var q=tx(s,'readwrite').delete(k);q.onsuccess=function(){r(true);};q.onerror=function(){r(false);};}catch(e){r(false);}});}
 function dbAll(s){return new Promise(function(r){if(!db)return r([]);

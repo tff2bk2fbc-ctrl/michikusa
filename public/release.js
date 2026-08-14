@@ -201,6 +201,7 @@ function feedCard(p,i){
       (p.tag?'<p>'+esc(p.tag)+'</p>':'')+
       '<div class="timeline-actions"><button type="button" data-like="'+i+'" aria-label="いいね '+Number(p.like_count||0)+'件" aria-pressed="'+String(!!p.liked)+'" class="'+(p.liked?'on':'')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 5.8c-2.1-2.3-5.6-1.8-7.2.6L12 8.7l-1.6-2.3c-1.6-2.4-5.1-2.9-7.2-.6-2 2.2-1.7 5.7.5 7.7L12 21l8.3-7.5c2.2-2 2.5-5.5.5-7.7Z"/></svg><b>'+Number(p.like_count||0)+'</b></button>'+
       '<button type="button" data-comments="'+i+'" aria-label="コメント '+Number(p.comment_count||0)+'件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v11H9l-5 3Z"/><path d="M8 10h8M8 13h5"/></svg><b>'+Number(p.comment_count||0)+'</b></button>'+
+      (p.visibility==='public'?'<button type="button" data-flash="'+i+'" aria-label="フラッシュ '+Number(p.flash_count||0)+'件" aria-pressed="'+String(!!p.flashed)+'" class="'+(p.flashed?'on':'')+'" '+(p.flashed?'disabled':'')+'><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 5.8 13h5.5l-.8 9L18.2 11h-5.5Z"/></svg><b>'+Number(p.flash_count||0)+'</b></button>':'')+
       (p.mine&&p.visibility==='public'?'<button type="button" data-share="'+i+'" aria-label="共有"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v6H5V6h6"/></svg></button>':'')+'</div></div></article>';
 }
 function bindFeedCards(screen,host,posts,timelineState){
@@ -222,6 +223,18 @@ function bindFeedCards(screen,host,posts,timelineState){
   Array.prototype.forEach.call(host.querySelectorAll('[data-comments]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){
     var state=timelineState||{};state={query:state.query||'',mode:state.mode||'recommended',scrollY:screen.scrollTop||0};
     openComments(posts[Number(b.dataset.comments)],function(){openSocialHub('timeline',state);});
+  };});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-flash]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
+    var p=posts[Number(b.dataset.flash)];if(!p||p.flashed)return;
+    b.disabled=true;
+    try{
+      var j=await socialJson('/api/posts/'+encodeURIComponent(p.id)+'/flash',{method:'POST'});
+      p.flashed=!!j.flashed;p.flash_count=Number(j.flash_count)||0;
+      b.classList.add('on','flash-burst');b.setAttribute('aria-pressed','true');
+      b.setAttribute('aria-label','フラッシュ '+p.flash_count+'件');b.querySelector('b').textContent=p.flash_count;
+      setTimeout(function(){b.classList.remove('flash-burst');},520);
+      setTip(Number(j.recipient_count)?Number(j.recipient_count)+'人へフラッシュしました':'フラッシュしました');
+    }catch(e){b.disabled=false;setTip(e.message||'フラッシュできませんでした');}
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-follow]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
     var p=posts[Number(b.dataset.follow)],next=!p.following,handle=p.author&&p.author.handle;if(!handle)return;b.disabled=true;
@@ -326,12 +339,12 @@ async function openComments(post,onBack){
   form.onsubmit=async function(e){e.preventDefault();var value=input.value.trim();if(!value)return;form.querySelector('button').disabled=true;try{var c=await socialJson('/api/posts/'+encodeURIComponent(post.id)+'/comments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:value,client_operation_id:nid()})});if(list.querySelector('.release-empty'))list.innerHTML='';list.insertAdjacentHTML('beforeend',row(c));input.value='';bindDelete();}catch(err){setTip(err.message);}form.querySelector('button').disabled=false;};
 }
 
-function notificationCopy(n){return {like:'あなたの思い出にいいねしました',comment:'コメントしました',follow:'あなたをフォローしました',post:'新しい思い出を公開しました',message:'メッセージが届きました'}[n.kind]||'お知らせがあります';}
+function notificationCopy(n){return {like:'あなたの思い出にいいねしました',comment:'コメントしました',flash:'公開された思い出をフラッシュで届けました',follow:'あなたをフォローしました',post:'新しい思い出を公開しました',message:'メッセージが届きました'}[n.kind]||'お知らせがあります';}
 async function renderNotifications(screen,host){
   var generation=beginSocialRender(screen);
   host.innerHTML='<div class="social-section-head"><b>通知</b><button id="notifications-read">すべて既読</button></div><div class="notification-list" aria-live="polite">読み込んでいます…</div>';
   try{var j=await socialJson('/api/notifications');if(!socialRenderAlive(screen,host,generation))return;var list=host.querySelector('.notification-list'),items=j.notifications||[];list.innerHTML=items.length?items.map(function(n){var who=n.actor&&(n.actor.name||n.actor.handle)||'Spota';return '<button type="button" class="notification-row'+(n.read?'':' unread')+'" data-notification="'+esc(n.id)+'" data-kind="'+esc(n.kind)+'" data-entity="'+esc(n.entityId||n.entity_id||'')+'" data-handle="'+esc(n.actor&&n.actor.handle||'')+'"><i>'+esc(who.charAt(0))+'</i><span><b>'+esc(who)+'</b><small>'+esc(notificationCopy(n))+'</small></span><time>'+esc(releaseDate(n.created_at))+'</time></button>';}).join(''):'<div class="release-empty"><b>通知はまだありません</b><span>反応やメッセージがここに届きます。</span></div>';
-    Array.prototype.forEach.call(list.querySelectorAll('.notification-row'),function(b){b.onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[b.dataset.notification]})});}catch(e){}if(b.dataset.kind==='message'&&b.dataset.entity)openConversation(b.dataset.entity,b.querySelector('b').textContent);else if((b.dataset.kind==='like'||b.dataset.kind==='comment')&&b.dataset.entity)openSocialHub('timeline');else if(b.dataset.handle)openPublicProfile(b.dataset.handle);refreshSocialBadge();};});
+    Array.prototype.forEach.call(list.querySelectorAll('.notification-row'),function(b){b.onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[b.dataset.notification]})});}catch(e){}if(b.dataset.kind==='message'&&b.dataset.entity)openConversation(b.dataset.entity,b.querySelector('b').textContent);else if((b.dataset.kind==='like'||b.dataset.kind==='comment'||b.dataset.kind==='flash')&&b.dataset.entity)openSocialHub('timeline');else if(b.dataset.handle)openPublicProfile(b.dataset.handle);refreshSocialBadge();};});
   }catch(e){if(!socialRenderAlive(screen,host,generation))return;var failed=host.querySelector('.notification-list');if(failed)failed.innerHTML='<div class="release-empty"><b>通知を読めませんでした</b><span>'+esc(e.message)+'</span></div>';}
   host.querySelector('#notifications-read').onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})});Array.prototype.forEach.call(host.querySelectorAll('.notification-row'),function(r){r.classList.remove('unread');});refreshSocialBadge();}catch(e){setTip(e.message);}};
 }

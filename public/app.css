@@ -416,7 +416,10 @@ body.placing .map-locate{display:none}
 .timeline-actions button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
 .timeline-actions button b{font-size:11px}.timeline-actions button.on{color:var(--ink)}.timeline-actions button.on svg{fill:currentColor}
 .timeline-actions button.flash svg{animation:likeFlash .42s cubic-bezier(.18,.88,.24,1)}
+.timeline-actions button[data-flash].on svg{fill:currentColor;stroke:currentColor}
+.timeline-actions button.flash-burst svg{animation:flashBurst .5s cubic-bezier(.18,.88,.24,1)}
 @keyframes likeFlash{0%{transform:scale(.7);opacity:.35}55%{transform:scale(1.38)}100%{transform:scale(1);opacity:1}}
+@keyframes flashBurst{0%{transform:scale(.72) rotate(-8deg);opacity:.3}50%{transform:scale(1.45) rotate(5deg)}100%{transform:scale(1);opacity:1}}
 .feed-more{display:block;width:calc(100% - 32px);min-height:48px;margin:18px 16px;border:1px solid var(--line);font-size:13px;font-weight:700}
 
 .public-profile{padding:32px 18px 25px;border-bottom:1px solid var(--line);text-align:center}

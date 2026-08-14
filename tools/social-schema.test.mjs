@@ -6,6 +6,7 @@ import test from "node:test";
 const root = new URL("../", import.meta.url);
 const migration = readFileSync(new URL("migrations/0001_social_release.sql", root), "utf8");
 const profileMigration = readFileSync(new URL("migrations/0002_profile_icon.sql", root), "utf8");
+const flashMigration = readFileSync(new URL("migrations/0003_post_flash.sql", root), "utf8");
 const worker = readFileSync(new URL("src/index.js", root), "utf8");
 const wrangler = JSON.parse(readFileSync(new URL("wrangler.jsonc", root), "utf8"));
 
@@ -47,18 +48,32 @@ SELECT 'PHOTO='||moderation_state||','||moderation_view_state||','||moderation_t
 SELECT 'TABLES='||COUNT(*) FROM sqlite_master WHERE type='table' AND name IN
   ('follows','post_likes','post_comments','post_hashtags','conversations',
    'conversation_members','messages','notifications','social_albums',
-   'social_album_items','share_links');
+   'social_album_items','share_links','post_flashes');
 SELECT 'FK='||COUNT(*) FROM pragma_foreign_key_check;
 `;
   const result = spawnSync("sqlite3", [":memory:"], {
-    input: baseSchema + migration + checks,
+    input: baseSchema + migration + flashMigration + checks,
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^VIS=private$/m);
   assert.match(result.stdout, /^PHOTO=legacy,legacy,legacy$/m);
-  assert.match(result.stdout, /^TABLES=11$/m);
+  assert.match(result.stdout, /^TABLES=12$/m);
   assert.match(result.stdout, /^FK=0$/m);
+});
+
+test("flash is one action per user and never stores image or coordinates", () => {
+  const sql = baseSchema + migration + flashMigration + `
+INSERT INTO post_flashes(post_id,user_id,recipient_count,created_at)
+  VALUES ('post-old','u2',5,2);
+INSERT OR IGNORE INTO post_flashes(post_id,user_id,recipient_count,created_at)
+  VALUES ('post-old','u2',1,3);
+SELECT 'FLASH='||COUNT(*)||','||MAX(recipient_count) FROM post_flashes;
+`;
+  const result = spawnSync("sqlite3", [":memory:"], { input: sql, encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^FLASH=1,5$/m);
+  assert.doesNotMatch(flashMigration, /\blat\b|\blng\b|coordinate/i);
 });
 
 test("profile icons are constrained to the audited built-in set", () => {
@@ -105,6 +120,10 @@ test("social endpoints keep authorization, composite cursors and variant moderat
   assert.match(worker, /SOCIAL_READ_RATE_LIMITER/);
   assert.match(worker, /SOCIAL_WRITE_RATE_LIMITER/);
   assert.match(worker, /SHARE_RATE_LIMITER/);
+  assert.match(worker, /flashRoute/);
+  assert.match(worker, /post\.visibility !== "public"/);
+  assert.match(worker, /moderation_state='ok'/);
+  assert.match(worker, /userLimit\(env, me\.id, "flash-day"/);
   assert.doesNotMatch(worker.slice(worker.indexOf("async function announcePostIfReady"), worker.indexOf("async function announceReadyPosts")), /LIMIT 50/);
 });
 

@@ -73,6 +73,14 @@ async function photoForLocalStorage(dataUrl){
   return dataUrl;
 }
 
+async function putSpotWithStorageRecovery(rec){
+  if(await dbPut('spots',rec))return true;
+  // 同期済みの高解像度コピーだけを整理してから、同じレコードを一度だけ再試行する。
+  // 未同期の写真は対象外なので、通信失敗時の原本を失わない。
+  if(typeof compactSyncedPhotos==='function')await compactSyncedPhotos();
+  return dbPut('spots',rec);
+}
+
 function secureShuffle(list){
   list=list.slice();
   for(var i=list.length-1;i>0;i--){
@@ -86,7 +94,10 @@ async function chosenCandidateFile(candidate,index){
   if(!candidate.asset)throw new Error('写真参照なし');
   var assetUrl=new URL(candidate.asset,location.href);
   // ネイティブプラグインがアプリ内へ渡した写真だけを読む。外部URLは許可しない。
-  if(assetUrl.origin!==location.origin)throw new Error('写真参照元が不正です');
+  var nativeBridge=!!candidate.nativeAsset&&
+    /^(capacitor:|ionic:|https?:)$/.test(assetUrl.protocol)&&
+    assetUrl.hostname==='localhost'&&assetUrl.pathname.indexOf('/_capacitor_file_')===0;
+  if(assetUrl.origin!==location.origin&&!nativeBridge)throw new Error('写真参照元が不正です');
   var r=await fetch(assetUrl.href);if(!r.ok)throw new Error('写真取得 '+r.status);
   var b=await r.blob(),f=new File([b],'memory-'+index+'.jpg',{type:b.type||'image/jpeg'});
   if(candidate.exif)Object.defineProperty(f,'__spotaExif',{value:candidate.exif});
@@ -134,7 +145,7 @@ async function chooseMemoryDeckPhotos(){
   if(!got.length){ setTip('選ばれませんでした'); return; }
   var candidates=got.map(function(photo){return {
     asset:typeof nativePhotoUrl==='function'?nativePhotoUrl(photo):(photo.webPath||photo.uri||photo.path||''),
-    exif:typeof mediaPhotoExif==='function'?mediaPhotoExif(photo):(photo.exif||{})
+    exif:typeof mediaPhotoExif==='function'?mediaPhotoExif(photo):(photo.exif||{}),nativeAsset:true
   };}).filter(function(c){return !!c.asset;});
   if(!candidates.length){setTip('写真を読めませんでした');return;}openMemoryDeck(candidates);
 }
@@ -314,14 +325,14 @@ async function handleBulk(files){
       btn.disabled=false;btn.textContent='地図に置く場所を選んでください';
       setTip('「入れる」を1か所以上選んでください');return;
     }
-    var done=0, donePlaces=0, readFailed=0, saveFailed=0;
+    var done=0, donePlaces=0, readFailed=0, saveFailed=0,readError='';
     for(var i=0;i<use.length;i++){
       var g=use[i];
       btn.textContent=(i+1)+' / '+use.length+' を置いています…';
       var savedHere=0;
       for(var q=0;q<g.items.length;q++){
         var item=g.items[q];
-        var itemFile=null;try{itemFile=await chosenCandidateFile(item.source,q);}catch(e){readFailed++;}
+        var itemFile=null;try{itemFile=await chosenCandidateFile(item.source,q);}catch(e){readFailed++;readError=String(e&&e.message||e||'写真の再読込に失敗').slice(0,80);}
         var url=itemFile?await readAsData(itemFile):null;
         if(!url){if(itemFile)readFailed++;continue;}
         if(activeSpotScope!==workScope)return;
@@ -329,7 +340,7 @@ async function handleBulk(files){
         var rec={id:nid(),n:g.name,c:g.cat,lat:item.lat,lng:item.lng,place:g.place||'',
           tag:'',d:item.d||new Date(item.at).toISOString().slice(0,10),photo:url,
           visibility:defaultPostVisibility(),owner_scope:workScope};
-        if(!(await dbPut('spots',rec))){
+        if(!(await putSpotWithStorageRecovery(rec))){
           saveFailed++;
           continue;
         }
@@ -345,11 +356,12 @@ async function handleBulk(files){
     if(!done){
       btn.disabled=false;btn.textContent='もう一度試す';
       if(readFailed){
-        msg.innerHTML='写真データを保存用に読み直せませんでした。<br><span style="font-size:12px">写真を選び直して、もう一度お試しください。</span>';
-        setTip('写真データを読み直せませんでした');
+        msg.innerHTML='写真データを保存用に読み直せませんでした。<br><span style="font-size:12px">'+esc(readError||'写真を選び直して、もう一度お試しください。')+'</span>';
+        setTip('写真データを読み直せませんでした: '+(readError||'不明なエラー'));
       }else{
-        msg.innerHTML='端末へ写真を保存できませんでした。<br><span style="font-size:12px">空き容量を確認して、もう一度お試しください。</span>';
-        setTip('端末へ写真を保存できませんでした');
+        var storageError=typeof dbFailureReason==='function'?dbFailureReason():'端末へ保存できませんでした';
+        msg.innerHTML=esc(storageError)+'。<br><span style="font-size:12px">同期済み写真を整理して再試行しましたが、保存を確定できませんでした。</span>';
+        setTip(storageError);
       }
       return;
     }
@@ -475,8 +487,9 @@ function openAdd(p){
       tag:ft.value.trim(),d:p.date||new Date().toISOString().slice(0,10),
       photo:localPhoto, tagged:tagged.map(function(u){return u.id;}),
       visibility:chosenVisibility,owner_scope:sheetScope};
-    if(!(await dbPut('spots',rec))){
-      ok.disabled=false;ok.textContent='ここに残す';setTip('端末へ保存できませんでした');return;
+    if(!(await putSpotWithStorageRecovery(rec))){
+      ok.disabled=false;ok.textContent='ここに残す';
+      setTip(typeof dbFailureReason==='function'?dbFailureReason():'端末へ保存できませんでした');return;
     }
     if(p.fp)await seenAdd(p.fp,sheetScope);
     if(activeSpotScope!==sheetScope){closeSheet();return;}

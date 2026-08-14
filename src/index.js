@@ -58,7 +58,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-40"
+          build: "api-41"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
@@ -115,6 +115,9 @@ export default {
         return respond(await putLike(likeRoute[1], env, me));
       if (likeRoute && request.method === "DELETE")
         return respond(await deleteLike(likeRoute[1], env, me));
+      const flashRoute = /^\/api\/posts\/([A-Za-z0-9_-]{8,80})\/flash$/.exec(p);
+      if (flashRoute && request.method === "POST")
+        return respond(await flashPost(flashRoute[1], env, me));
       const commentsRoute = /^\/api\/posts\/([A-Za-z0-9_-]{8,80})\/comments(?:\/([A-Za-z0-9_-]{8,80}))?$/.exec(p);
       if (commentsRoute && !commentsRoute[2] && request.method === "GET")
         return respond(await listComments(commentsRoute[1], url, env, me));
@@ -821,7 +824,9 @@ async function listProfilePosts(handle, url, env, me) {
              ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
            (SELECT COUNT(*) FROM post_likes l WHERE l.post_id=p.id) AS like_count,
            (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.deleted_at IS NULL) AS comment_count,
+           (SELECT COUNT(*) FROM post_flashes x WHERE x.post_id=p.id) AS flash_count,
            EXISTS(SELECT 1 FROM post_likes l WHERE l.post_id=p.id AND l.user_id=?1) AS liked,
+           EXISTS(SELECT 1 FROM post_flashes x WHERE x.post_id=p.id AND x.user_id=?1) AS flashed,
            EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?1 AND f.followee_id=p.user_id) AS following,
            CASE WHEN p.user_id=?1 THEN 'exact'
                 WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
@@ -846,7 +851,7 @@ async function listProfilePosts(handle, url, env, me) {
       taken_at:r.taken_at,visibility:r.visibility,mine:!!r.mine,
       photo_id:r.photo_id||null,
       like_count:Number(r.like_count)||0,comment_count:Number(r.comment_count)||0,
-      liked:!!r.liked,following:!!r.following,
+      flash_count:Number(r.flash_count)||0,liked:!!r.liked,flashed:!!r.flashed,following:!!r.following,
       author:{id:r.user_id,name:r.display_name,handle:r.handle,profile_icon:r.profile_icon||"pin"},
       map_available:!!c,
       ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})});
@@ -903,7 +908,9 @@ async function listFeed(url, env, me) {
              ORDER BY ph.sort_order,ph.created_at LIMIT 1) AS photo_id,
            (SELECT COUNT(*) FROM post_likes l WHERE l.post_id=p.id) AS like_count,
            (SELECT COUNT(*) FROM post_comments c WHERE c.post_id=p.id AND c.deleted_at IS NULL) AS comment_count,
+           (SELECT COUNT(*) FROM post_flashes x WHERE x.post_id=p.id) AS flash_count,
            EXISTS(SELECT 1 FROM post_likes l WHERE l.post_id=p.id AND l.user_id=?1) AS liked,
+           EXISTS(SELECT 1 FROM post_flashes x WHERE x.post_id=p.id AND x.user_id=?1) AS flashed,
            EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?1 AND f.followee_id=p.user_id) AS following,
            CASE WHEN p.user_id=?1 THEN 'exact'
                 WHEN p.fixed_lat IS NOT NULL THEN 'fixed'
@@ -941,7 +948,7 @@ async function listFeed(url, env, me) {
       place_name:r.mine?r.place_name:publicLocationLabel(r.place_name),taken_at:r.taken_at,created_at:r.created_at,
       visibility:r.visibility,mine:!!r.mine,photo_id:r.photo_id||null,
       like_count:Number(r.like_count)||0,comment_count:Number(r.comment_count)||0,
-      liked:!!r.liked,following:!!r.following,
+      flash_count:Number(r.flash_count)||0,liked:!!r.liked,flashed:!!r.flashed,following:!!r.following,
       author:{id:r.user_id,name:r.display_name,handle:r.handle,profile_icon:r.profile_icon||"pin"},
       map_available:!!c,
       ...(c?{lat:c[0],lng:c[1],precision:c[2]}:{})
@@ -1389,6 +1396,118 @@ async function deleteLike(postId, env, me) {
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_likes WHERE post_id=?")
     .bind(postId).first();
   return json({ ok: true, liked: false, count: Number(count && count.n) || 0 });
+}
+
+async function flashPost(postId, env, me) {
+  // 再送リクエストも含め、認証済み利用者ごとの短時間連打を先に止める。
+  if (!(await socialWriteLimit(env, me, "flash")))
+    return json({ error: "操作回数が多すぎます" }, 429);
+  const post = await viewablePost(env, me, postId);
+  if (!post) return json({ error: "見つかりません" }, 404);
+  // ランダムな相手へ届ける操作なので、フレンド限定・非公開投稿には使わせない。
+  if (post.visibility !== "public" || post.publish_at > Date.now())
+    return json({ error: "公開済みの思い出だけフラッシュできます" }, 409);
+  const ready = await env.DB.prepare(`
+    SELECT 1 FROM photos
+     WHERE post_id=? AND key_thumb IS NOT NULL AND moderation_state='ok' LIMIT 1
+  `).bind(postId).first();
+  if (!ready) return json({ error: "写真の安全確認が完了していません" }, 409);
+
+  const replay = await env.DB.prepare(
+    "SELECT recipient_count FROM post_flashes WHERE post_id=? AND user_id=?"
+  ).bind(postId, me.id).first();
+  if (replay) {
+    const total = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_flashes WHERE post_id=?")
+      .bind(postId).first();
+    return json({ ok: true, flashed: true, recipient_count: Number(replay.recipient_count) || 0,
+      flash_count: Number(total && total.n) || 0, replayed: true });
+  }
+
+  if (!(await userLimit(env, me.id, "flash-day", dayKey(), 10, 1)) ||
+      !(await atomicLimit(env, "flash_global_day_" + dayKey(), 50_000, 1)))
+    return json({ error: "今日のフラッシュ回数が上限です" }, 429);
+
+  const now = Date.now();
+  const claimed = await env.DB.prepare(`
+    INSERT OR IGNORE INTO post_flashes (post_id,user_id,recipient_count,created_at)
+    VALUES (?,?,0,?)
+  `).bind(postId, me.id, now).run();
+  if (!claimed.meta || claimed.meta.changes !== 1) {
+    const existing = await env.DB.prepare(
+      "SELECT recipient_count FROM post_flashes WHERE post_id=? AND user_id=?"
+    ).bind(postId, me.id).first();
+    const total = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_flashes WHERE post_id=?")
+      .bind(postId).first();
+    return json({ ok: true, flashed: true,
+      recipient_count: Number(existing && existing.recipient_count) || 0,
+      flash_count: Number(total && total.n) || 0, replayed: true });
+  }
+
+  try {
+    // Firebase UIDの主キー順をランダムな位置から循環して読み、全ユーザーのRANDOM() sortを避ける。
+    const pivot = uuid().replaceAll("-", "");
+  async function candidatesAfter(boundary, limit) {
+    const rows = await env.DB.prepare(`
+      SELECT u.id FROM users u
+       WHERE u.deleted_at IS NULL AND u.id<>?1 AND u.id<>?2 AND u.id>=?3
+         AND NOT EXISTS (SELECT 1 FROM blocks b
+           WHERE (b.blocker_id=?1 AND b.blocked_id=u.id)
+              OR (b.blocker_id=u.id AND b.blocked_id=?1))
+         AND NOT EXISTS (SELECT 1 FROM blocks b
+           WHERE (b.blocker_id=?2 AND b.blocked_id=u.id)
+              OR (b.blocker_id=u.id AND b.blocked_id=?2))
+       ORDER BY u.id LIMIT ?4
+    `).bind(me.id, post.user_id, boundary, limit).all();
+    return rows.results || [];
+  }
+  async function candidatesBefore(boundary, limit) {
+    if (limit <= 0) return [];
+    const rows = await env.DB.prepare(`
+      SELECT u.id FROM users u
+       WHERE u.deleted_at IS NULL AND u.id<>?1 AND u.id<>?2 AND u.id<?3
+         AND NOT EXISTS (SELECT 1 FROM blocks b
+           WHERE (b.blocker_id=?1 AND b.blocked_id=u.id)
+              OR (b.blocker_id=u.id AND b.blocked_id=?1))
+         AND NOT EXISTS (SELECT 1 FROM blocks b
+           WHERE (b.blocker_id=?2 AND b.blocked_id=u.id)
+              OR (b.blocker_id=u.id AND b.blocked_id=?2))
+       ORDER BY u.id LIMIT ?4
+    `).bind(me.id, post.user_id, boundary, limit).all();
+    return rows.results || [];
+  }
+  let recipients = await candidatesAfter(pivot, 5);
+  if (recipients.length < 5) {
+    const wrapped = await candidatesBefore(pivot, 5 - recipients.length);
+    recipients = recipients.concat(wrapped);
+  }
+
+  const statements = [env.DB.prepare(
+    "UPDATE post_flashes SET recipient_count=? WHERE post_id=? AND user_id=?"
+  ).bind(recipients.length, postId, me.id)];
+  for (const recipient of recipients) {
+    statements.push(env.DB.prepare(`
+      INSERT OR IGNORE INTO notifications
+        (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+      VALUES (?,?,?,'flash','post',?,?,?)
+    `).bind(uuid(), recipient.id, me.id, postId, `flash:${postId}:${me.id}`, now));
+  }
+  const results = await env.DB.batch(statements);
+  const fresh = recipients.filter((_, index) =>
+    results[index + 1] && results[index + 1].meta && results[index + 1].meta.changes === 1);
+  await Promise.all(fresh.map(recipient => sendPush(env, recipient.id,
+    me.display_name || me.handle || "誰か", "公開された思い出がフラッシュで届きました", { post: postId })));
+  const total = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_flashes WHERE post_id=?")
+    .bind(postId).first();
+    return json({ ok: true, flashed: true, recipient_count: recipients.length,
+      flash_count: Number(total && total.n) || 0 });
+  } catch (error) {
+    // 候補検索や通知保存が失敗した場合、0人の処理済み記録だけを戻して安全に再試行できるようにする。
+    try {
+      await env.DB.prepare(`DELETE FROM post_flashes
+        WHERE post_id=? AND user_id=? AND recipient_count=0`).bind(postId, me.id).run();
+    } catch (_) { /* 元のエラーを優先する */ }
+    throw error;
+  }
 }
 
 const SOCIAL_CURSOR_MAX = "9007199254740991:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
@@ -2488,7 +2607,8 @@ async function geocode(request, env) {
 }
 
 // 回帰テスト用。HTTP経路は上のdefault exportだけが公開する。
-export { friendRequest, geocode };
+// 実運用と同じSQL経路をローカル統合テストから直接検証する。
+export { friendRequest, geocode, putLike, deleteLike, listComments, createComment, flashPost };
 
 async function reverseGeocode(request, env) {
   if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);

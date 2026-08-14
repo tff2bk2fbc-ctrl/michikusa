@@ -193,6 +193,26 @@ test("一括追加は0枚を成功表示せず、候補ファイルの再読込�
   assert.match(postSource, /photoForLocalStorage\(p\.photo\|\|''\)/);
   assert.match(postSource, /if\(!done\)/);
   assert.doesNotMatch(postSource, /setTip\(done\+'枚を '\+donePlaces\+'か所に置きました'\);/);
+  assert.match(postSource, /putSpotWithStorageRecovery\(rec\)/);
+  assert.match(postSource, /compactSyncedPhotos/);
+});
+
+test("端末保存はIndexedDBトランザクション確定後だけ成功になる", () => {
+  const core = readFileSync(new URL("../public/core.js", import.meta.url), "utf8");
+  const start = core.indexOf("function dbPut");
+  const end = core.indexOf("function dbFailureReason", start);
+  const put = core.slice(start, end);
+  assert.match(put, /transaction\.oncomplete/);
+  assert.match(put, /transaction\.onabort=fail/);
+  assert.doesNotMatch(put, /\.onsuccess=function\(\)\{r\(true\)/);
+});
+
+test("サーバー保存済み写真だけ端末サムネイルへ整理する", () => {
+  const sync = readFileSync(new URL("../public/sync.js", import.meta.url), "utf8");
+  assert.match(sync, /rec\.photo_synced!==1/);
+  assert.match(sync, /!rec\.server_photo_id/);
+  assert.match(sync, /rec\.photo=thumb;rec\.photo_is_thumb=1/);
+  assert.match(sync, /if\(rec\.photo&&!rec\.photo_synced\)/);
 });
 
 test("写真候補はランダム化し、原寸Blobをデッキ内へ溜めない", () => {

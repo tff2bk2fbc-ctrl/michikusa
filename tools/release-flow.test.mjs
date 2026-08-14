@@ -45,6 +45,8 @@ test('release UI uses authenticated social routes and persisted actions', async 
   assert.match(release, /client_operation_id:nid\(\)/);
   assert.match(release, /data-like/);
   assert.match(release, /data-comments/);
+  assert.match(release, /data-flash/);
+  assert.match(release, /encodeURIComponent\(p\.id\)\+'\/flash/);
 });
 
 test('PDF map header and iPhone viewport rules stay fixed', async () => {

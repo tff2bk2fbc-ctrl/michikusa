@@ -11,6 +11,6 @@
     "wikimedia:analyze": "node tools/wikimedia/analyze.mjs",
     "wikimedia:build": "node tools/wikimedia/build.mjs",
     "address:test": "node --test tools/address-db/build.test.mjs",
-    "check": "node --check src/index.js && node --check public/core.js && node --check public/map.js && node --check public/place.js && node --check public/native.js && node --check public/post.js && node --check public/sync.js && node --check public/release.js && node --check public/ui.js && node --test tools/address-db/build.test.mjs tools/admin-boundary/build.test.mjs tools/photo-flow.test.mjs tools/release-flow.test.mjs tools/security-flow.test.mjs tools/social-schema.test.mjs"
+    "check": "node --check src/index.js && node --check public/core.js && node --check public/map.js && node --check public/place.js && node --check public/native.js && node --check public/post.js && node --check public/sync.js && node --check public/release.js && node --check public/ui.js && node --test tools/address-db/build.test.mjs tools/admin-boundary/build.test.mjs tools/photo-flow.test.mjs tools/release-flow.test.mjs tools/security-flow.test.mjs tools/social-actions.test.mjs tools/social-schema.test.mjs"
   }
 }

@@ -86,6 +86,31 @@ function prepareSpotThumbs(){
     .slice(-3).forEach(ensureLocalThumb);
 }
 
+/*
+ * サーバー保存が確定した写真は、端末内に同じ高解像度JPEGを残し続けない。
+ * 地図用サムネイルだけをIndexedDBへ残し、全画面表示は認証済みの
+ * /api/photo/:id/view から取得する。未同期の原本は絶対に縮小・削除しない。
+ */
+async function compactSyncedPhoto(rec){
+  if(!rec||rec.photo_synced!==1||!rec.server_photo_id||!rec.photo||rec.photo_is_thumb)return false;
+  var thumb=rec.photo_thumb||await resize(rec.photo,512,.82);
+  if(!thumb)return false;
+  rec.photo=thumb;rec.photo_is_thumb=1;
+  delete rec.photo_thumb;delete rec.thumb_building;
+  return dbPut('spots',rec);
+}
+async function compactSyncedPhotos(limit){
+  var candidates=spots.filter(function(rec){
+    return rec&&rec.owner_scope===activeSpotScope&&rec.photo_synced===1&&
+      rec.server_photo_id&&rec.photo&&!rec.photo_is_thumb;
+  });
+  if(limit>0)candidates=candidates.slice(0,limit);
+  var done=0;
+  for(var i=0;i<candidates.length;i++)if(await compactSyncedPhoto(candidates[i]))done++;
+  return done;
+}
+window.compactSyncedPhotos=compactSyncedPhotos;
+
 /* 1件をサーバーへ送る */
 async function pushOne(rec){
   try{
@@ -109,7 +134,7 @@ async function pushOne(rec){
       rec.visibility=j.visibility;
       await dbPut('spots',rec);
     }
-    if(rec.photo){
+    if(rec.photo&&!rec.photo_synced){
       rec.server_photo_id=rec.server_photo_id||nid();
       await dbPut('spots',rec);
       var uploaded=await uploadPhoto(auth,rec.server_id,rec.server_photo_id,rec.photo);
@@ -134,7 +159,9 @@ async function pushOne(rec){
       }
     }
     rec.synced=1;
-    await dbPut('spots',rec);
+    // 先に同期済み状態を確定し、その後に端末原本を安全に小さくする。
+    if(!(await dbPut('spots',rec)))return false;
+    await compactSyncedPhoto(rec);
     return true;
   }catch(e){ return false; }
 }
@@ -491,6 +518,8 @@ window.initAuth=function(){
         var profile=await loadMe(auth);
         if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
         meP=profile;
+        // 旧版が残した同期済み原本を先に整理し、新しい写真を書ける容量を戻す。
+        await compactSyncedPhotos();
         if(typeof setMapAudience==='function')setMapAudience('public',true);
         await migrateOwnedLegacy(auth);
         await offerLegacySpots(u,auth);
