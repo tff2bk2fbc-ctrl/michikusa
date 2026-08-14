@@ -89,3 +89,13 @@
 - 未検証のまま公開状態に残った投稿: 0件
 
 この確認後にコードをcommit / pushし、Cloudflareの自動デプロイ後に公開ヘルスチェックを行う。
+
+## 2026-08-15 反映確認hotfix
+
+GitHubとCloudflareの配信ファイルは一致していたが、新規ブラウザで外部CDNのMapLibre読込が失敗し、`maplibregl is not defined` から地図初期化が停止することを確認した。後続処理でも未生成の `map` を直接参照していたため、更新済み画面が正常に見えない状態だった。
+
+- MapLibre 4.7.1をWorkerで固定URLから取得し、同一オリジンのversioned URLとして配信
+- JS/CSSのSRIハッシュを維持し、端末のIPを外部CDNへ直接送らない構成へ変更
+- 地図生成前の参照を `window.__michikusaMap` の存在確認付きへ変更
+- frontendを `v99`、Service Worker cacheを `spota-v25`、APIを `api-37` へ更新
+- 自動テスト29件、SRI実測、ローカルWorker実画面、コンソールエラー0を確認

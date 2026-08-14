@@ -271,7 +271,8 @@ if(location.search.indexOf('diag=1')>=0) setTimeout(showDiag,1500);
   var ok=await openDB();
   if(ok) await activateSpotScope(null);
   mark('記録を読んだ');
-  if(map.getSource&&map.getSource('mine'))render(true);
+  var liveMap=window.__michikusaMap;
+  if(liveMap&&liveMap.getSource&&liveMap.getSource('mine'))render(true);
   preload();                      // 部品はいちばん最後でいい
  }catch(e){showErr('[init] '+dump(e));}
 })();

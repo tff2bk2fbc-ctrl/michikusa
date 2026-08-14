@@ -21,12 +21,26 @@
 const HP = "https://webservice.recruit.co.jp/hotpepper/gourmet/v1/";
 const JWKS = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const POSTAL_CODE_API = "https://jp-postal-code-api.ttskch.com/api/v1/";
+const MAPLIBRE_VENDOR = {
+  "/vendor/maplibre-gl-4.7.1.min.js": {
+    url: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.js",
+    type: "application/javascript; charset=utf-8"
+  },
+  "/vendor/maplibre-gl-4.7.1.min.css": {
+    url: "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.min.css",
+    type: "text/css; charset=utf-8"
+  }
+};
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const p = url.pathname;
     const respond = (response) => cors(response, request);
+
+    // WebViewから外部CDNへ直接取りに行くと、通信制限や一時障害で地図全体が
+    // 起動しなくなる。固定版をWorker経由の同一オリジンで配信する。
+    if (MAPLIBRE_VENDOR[p]) return secure(await mapLibreVendor(p));
 
     // 静的ファイル。HTMLだけは毎回確認させる
     // （Safariが強くキャッシュするため、更新が反映されない事故を防ぐ）
@@ -59,7 +73,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-36"
+          build: "api-37"
         }));
       }
       if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));
@@ -2287,6 +2301,29 @@ function secure(res) {
   h.set("Permissions-Policy", "camera=(self), geolocation=(self), microphone=()");
   h.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
+}
+
+async function mapLibreVendor(path) {
+  const asset = MAPLIBRE_VENDOR[path];
+  if (!asset) return new Response("Not found", { status: 404 });
+  try {
+    const upstream = await fetch(asset.url, {
+      cf: { cacheEverything: true, cacheTtl: 31536000 }
+    });
+    if (!upstream.ok) throw new Error("upstream " + upstream.status);
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        "Content-Type": asset.type,
+        "Cache-Control": "public, max-age=31536000, immutable"
+      }
+    });
+  } catch (_) {
+    return new Response("Map library unavailable", {
+      status: 503,
+      headers: { "Cache-Control": "no-store" }
+    });
+  }
 }
 
 

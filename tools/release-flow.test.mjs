@@ -67,3 +67,18 @@ test('profile post response contains authorized thumbnail identifiers', async ()
   assert.doesNotMatch(profile, /if\(!c\)continue/);
   assert.match(profile, /profile\.id===me\.id\|\|profile\.profile_public/);
 });
+
+test('map library is delivered from the same origin and startup guards the map instance', async () => {
+  const html = await read('public/index.html');
+  const core = await read('public/core.js');
+  const ui = await read('public/ui.js');
+  const worker = await read('src/index.js');
+  const route = worker.indexOf('if (MAPLIBRE_VENDOR[p])');
+  const assets = worker.indexOf('if (!p.startsWith("/api/"))');
+  assert.match(html, /\/vendor\/maplibre-gl-4\.7\.1\.min\.js/);
+  assert.match(html, /\/vendor\/maplibre-gl-4\.7\.1\.min\.css/);
+  assert.doesNotMatch(html, /cdnjs\.cloudflare\.com\/ajax\/libs\/maplibre-gl/);
+  assert.ok(route >= 0 && route < assets, 'vendor route must run before static assets');
+  assert.match(core, /liveMap=window\.__michikusaMap/);
+  assert.match(ui, /liveMap=window\.__michikusaMap/);
+});

@@ -118,7 +118,8 @@ async function activateSpotScope(user){
   if(typeof closeSheet==='function')closeSheet();
   if(typeof closeViewer==='function')closeViewer();
   var inbox=document.getElementById('inbox');if(inbox)inbox.remove();
-  if(typeof render==='function'&&map&&map.getSource&&map.getSource('mine'))render(true);
+  var liveMap=window.__michikusaMap;
+  if(typeof render==='function'&&liveMap&&liveMap.getSource&&liveMap.getSource('mine'))render(true);
   await openDB();
   var all=await dbAll('spots');
   var tombstones={};(await dbAll('deleted')).forEach(function(t){
@@ -129,7 +130,8 @@ async function activateSpotScope(user){
     return valid(p)&&p.owner_scope===next&&!tombstones[p.server_id];
   });
   if(typeof others!=='undefined')others={};
-  if(typeof render==='function'&&map&&map.getSource&&map.getSource('mine'))render(true);
+  liveMap=window.__michikusaMap;
+  if(typeof render==='function'&&liveMap&&liveMap.getSource&&liveMap.getSource('mine'))render(true);
   if(typeof prepareSpotThumbs==='function')setTimeout(prepareSpotThumbs,0);
   return spots;
 }
