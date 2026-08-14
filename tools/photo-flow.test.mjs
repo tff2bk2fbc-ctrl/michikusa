@@ -5,6 +5,7 @@ import vm from "node:vm";
 
 const source = readFileSync(new URL("../public/native.js", import.meta.url), "utf8");
 const postSource = readFileSync(new URL("../public/post.js", import.meta.url), "utf8");
+const mapSource = readFileSync(new URL("../public/map.js", import.meta.url), "utf8");
 const workerSource = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
 const staticHeaders = readFileSync(new URL("../public/_headers", import.meta.url), "utf8");
 
@@ -119,4 +120,15 @@ test("Capacitor画像URLをCSPが遮断しない", () => {
 test("一括取込でネイティブEXIFを保持する", () => {
   assert.match(postSource, /__spotaExif/);
   assert.match(postSource, /gpsFromNativeExif\(f\.__spotaExif\)/);
+});
+
+test("地図初期化はnative.jsの変数を読込前に直接参照しない", () => {
+  assert.doesNotMatch(mapSource, /if\s*\(\s*!locDone/);
+  assert.match(mapSource, /window\.__michikusaMapReady=true/);
+  assert.match(mapSource, /typeof window\.requestInitialHome==='function'/);
+});
+
+test("native.jsは地図の準備完了前後どちらでも現在地取得を開始できる", () => {
+  assert.match(source, /window\.requestInitialHome=requestInitialHome/);
+  assert.match(source, /if\(window\.__michikusaMapReady\)requestInitialHome\(\)/);
 });

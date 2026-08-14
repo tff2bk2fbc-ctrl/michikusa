@@ -149,6 +149,16 @@ async function goHome(quiet){
   setTimeout(function(){ autoLoad(true); },900);
 }
 
+/* 地図のstyleとnative.jsは通信状況によって完了順が入れ替わる。
+   どちらが先でも、両方が揃った時点で初回の現在地取得を一度だけ始める。 */
+function requestInitialHome(){
+  if(locDone||window.__homed)return;
+  window.__homed=1;
+  goHome(false);
+}
+window.requestInitialHome=requestInitialHome;
+if(window.__michikusaMapReady)requestInitialHome();
+
 /* ============================================================
    写真 / 現在地 / 昼夜
    ============================================================ */

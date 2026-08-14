@@ -269,6 +269,12 @@ function afterStyle(){
   render(true);
   hideSplash();
 
+  /* map.jsの通信が速いと、後ろにあるnative.jsより先にここへ来る。
+     別ファイルの変数を直接読むと未定義になるため、双方が準備できた時点で
+     window上の関数を呼ぶ。native.jsが後なら、そちらがこのフラグを読む。 */
+  window.__michikusaMapReady=true;
+  if(typeof window.requestInitialHome==='function')window.requestInitialHome();
+
   /* 絵は少し遅れて揃うことがある。
      揃ってからもう一度見て、記号を割り当て直す */
   setTimeout(function(){
@@ -280,8 +286,9 @@ function afterStyle(){
 
   /* 現在地が取れなくても、いま見えている辺りは必ず読む。
      ここを現在地まかせにすると、位置を断った人が空の地図を見ることになる */
-  setTimeout(function(){ autoLoad(true); },1400);
-  if(!locDone && !window.__homed){ window.__homed=1; goHome(false); }
+  setTimeout(function(){
+    if(typeof window.autoLoad==='function')window.autoLoad(true);
+  },1400);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
 
