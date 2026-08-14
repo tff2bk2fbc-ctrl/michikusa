@@ -18,7 +18,7 @@ function nodeStub() {
   };
 }
 
-function loadNative(cameraResult) {
+function loadNative(cameraResult, modernCamera) {
   const nodes = new Map();
   const placements = [];
   let cameraOptions = null;
@@ -27,7 +27,7 @@ function loadNative(cameraResult) {
       Capacitor: {
         isNativePlatform: () => true,
         Plugins: {
-          Camera: {
+          Camera: modernCamera || {
             getPhoto: async (options) => {
               cameraOptions = options;
               return cameraResult;
@@ -51,6 +51,7 @@ function loadNative(cameraResult) {
     setTimeout,
     clearTimeout,
     FileReader: class {},
+    fetch,
   };
   vm.createContext(context);
   vm.runInContext(source, context);
@@ -114,9 +115,54 @@ test("ライブラリ選択後に写真追加フローへ進む", async () => {
   assert.equal(context.placements[0].options.manualPhotoLocation, true);
 });
 
+test("Capacitor 8の現行ライブラリAPIから新規写真を追加できる", async () => {
+  let options;
+  const context = loadNative(null, {
+    takePhoto: async () => { throw new Error("unused"); },
+    chooseFromGallery: async (received) => {
+      options = received;
+      return { results: [{
+        dataUrl: "data:image/jpeg;base64,MODERN",
+        metadata: { creationDate: "2026-08-15T10:00:00Z", exif: {} },
+      }] };
+    },
+  });
+
+  await context.nodes.get("btn-lib").onclick();
+  assert.equal(options.allowMultipleSelection, false);
+  assert.equal(options.targetWidth, 4096);
+  assert.equal(options.targetHeight, 4096);
+  assert.equal(options.includeMetadata, true);
+  assert.equal(context.placements.length, 1);
+  assert.equal(context.placements[0].options.photo, "data:image/jpeg;base64,MODERN");
+  assert.equal(context.placements[0].options.date, "2026-08-15");
+});
+
+test("現行APIが失敗した端末では互換APIへ一度だけ退避する", async () => {
+  let legacyOptions;
+  const context = loadNative(null, {
+    takePhoto: async () => { throw new Error("unused"); },
+    chooseFromGallery: async () => { throw new Error("bridge unavailable"); },
+    getPhoto: async (received) => {
+      legacyOptions = received;
+      return { dataUrl: "data:image/jpeg;base64,FALLBACK", exif: {} };
+    },
+  });
+
+  await context.nodes.get("btn-lib").onclick();
+  assert.equal(legacyOptions.source, "PHOTOS");
+  assert.equal(context.placements[0].options.photo, "data:image/jpeg;base64,FALLBACK");
+});
+
+test("追加シート内の撮影とライブラリもネイティブ経路を使う", () => {
+  assert.match(postSource, /chooseSinglePhoto\(true\)/);
+  assert.match(postSource, /chooseSinglePhoto\(false\)/);
+});
+
 test("Capacitor画像URLをCSPが遮断しない", () => {
   assert.match(workerSource, /connect-src 'self' capacitor:/);
   assert.match(staticHeaders, /connect-src 'self' capacitor:/);
+  assert.match(source, /sourceUrl\.origin!==location\.origin/);
 });
 
 test("一括取込でネイティブEXIFを保持する", () => {

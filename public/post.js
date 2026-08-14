@@ -397,8 +397,16 @@ function openAdd(p){
 
   s.querySelector('#ng').onclick=function(){closeSheet();finishManualPhotoImport();};
   var p1=s.querySelector('#p1'), p2=s.querySelector('#p2');
-  if(p1) p1.onclick=function(){ closeSheet(); document.getElementById('in-cam').click(); };
-  if(p2) p2.onclick=function(){ closeSheet(); document.getElementById('in-lib').click(); };
+  if(p1) p1.onclick=function(){
+    closeSheet();
+    if(typeof chooseSinglePhoto==='function')chooseSinglePhoto(true);
+    else document.getElementById('in-cam').click();
+  };
+  if(p2) p2.onclick=function(){
+    closeSheet();
+    if(typeof chooseSinglePhoto==='function')chooseSinglePhoto(false);
+    else document.getElementById('in-lib').click();
+  };
 
   /* 一緒にいた人を選ぶ */
   var tb=s.querySelector('#tag-btn'), tc=s.querySelector('#tag-cnt');

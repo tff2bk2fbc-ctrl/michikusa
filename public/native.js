@@ -14,6 +14,38 @@ function plugin(name){
 }
 
 /** 写真を1枚。撮るか、選ぶか */
+function blobToPhotoDataUrl(blob){
+  return new Promise(function(resolve,reject){
+    var reader=new FileReader();
+    reader.onload=function(){resolve(typeof reader.result==='string'?reader.result:'');};
+    reader.onerror=function(){reject(reader.error||new Error('photo read failed'));};
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function mediaPhotoDataUrl(photo){
+  if(!photo)return '';
+  if(photo.dataUrl)return photo.dataUrl;
+  if(photo.base64String)return 'data:image/jpeg;base64,'+photo.base64String;
+  var source=photo.webPath||nativePhotoUrl({path:photo.uri||photo.path});
+  if(!source)return '';
+  var sourceUrl=new URL(source,location.href);
+  // 写真プラグインが作ったアプリ内URLだけを読む。外部URLへ写真取得を広げない。
+  if(sourceUrl.origin!==location.origin)throw new Error('photo source origin');
+  var response=await fetch(sourceUrl.href);
+  if(!response.ok)throw new Error('photo file '+response.status);
+  return blobToPhotoDataUrl(await response.blob());
+}
+
+function mediaPhotoExif(photo){
+  var meta=photo&&photo.metadata||{};
+  var exif=meta.exif!=null?meta.exif:(photo&&photo.exif);
+  try{if(typeof exif==='string')exif=JSON.parse(exif);}catch(e){exif={};}
+  if(!exif||typeof exif!=='object')exif={};
+  if(meta.creationDate&&!exif.CreateDate)exif.CreateDate=meta.creationDate;
+  return exif;
+}
+
 async function pickPhoto(fromCamera){
   var Camera=plugin('Camera');
   if(!isApp||!Camera){
@@ -21,6 +53,27 @@ async function pickPhoto(fromCamera){
     return null;
   }
   try{
+    // Capacitor 8.1以降の現行APIを優先する。旧getPhotoは残っているが非推奨で、
+    // 選択元ごとに返却形式が変わるため、アップデート後に新規追加だけ止まり得る。
+    if(Camera.takePhoto&&Camera.chooseFromGallery){
+      try{
+        var media=fromCamera
+          ? await Camera.takePhoto({quality:96,targetWidth:4096,targetHeight:4096,
+              correctOrientation:true,encodingType:0,editable:'no',saveToGallery:false,
+              includeMetadata:true})
+          : ((await Camera.chooseFromGallery({mediaType:0,allowMultipleSelection:false,
+              limit:1,quality:96,targetWidth:4096,targetHeight:4096,
+              correctOrientation:true,editable:'no',includeMetadata:true})).results||[])[0];
+        var mediaUrl=await mediaPhotoDataUrl(media);
+        if(mediaUrl)return {dataUrl:mediaUrl,file:null,exif:mediaPhotoExif(media)};
+        throw new Error('empty photo result');
+      }catch(modernError){
+        // 選択キャンセルでは別の選択画面を重ねない。それ以外は、移行途中の端末でも
+        // 追加を止めないよう、プラグインに残る互換APIへ一度だけ退避する。
+        if(/cancel/i.test(String(modernError&&modernError.message||modernError))||!Camera.getPhoto)
+          throw modernError;
+      }
+    }
     var r=await Camera.getPhoto({
       quality:96,
       // 48MP写真をdata URLのままWebViewへ展開するとメモリを圧迫する。
@@ -45,6 +98,17 @@ async function pickPhoto(fromCamera){
     return null;
   }
 }
+
+/** どの画面から開いても、写真選択後は同じ追加フローへ進める。 */
+async function chooseSinglePhoto(fromCamera){
+  setTip(fromCamera?'カメラを開いています…':'写真を開いています…');
+  var picked=await pickPhoto(fromCamera);
+  if(!picked)return false;
+  setTip('写真の位置情報を確認しています…');
+  await afterPhoto(picked.dataUrl,picked.file,picked.exif);
+  return true;
+}
+window.chooseSinglePhoto=chooseSinglePhoto;
 
 /** まとめて選ぶ */
 async function pickPhotos(){
@@ -191,12 +255,10 @@ try{
    写真 / 現在地 / 昼夜
    ============================================================ */
 document.getElementById('btn-cam').onclick=async function(){
-  var picked=await pickPhoto(true);
-  if(picked){setTip('写真の位置情報を確認しています…');afterPhoto(picked.dataUrl,picked.file,picked.exif);}
+  await chooseSinglePhoto(true);
 };
 document.getElementById('btn-lib').onclick=async function(){
-  var picked=await pickPhoto(false);
-  if(picked){setTip('写真の位置情報を確認しています…');afterPhoto(picked.dataUrl,picked.file,picked.exif);}
+  await chooseSinglePhoto(false);
 };
 
 function validPhotoGps(g){
@@ -242,7 +304,7 @@ function dateFromNativeExif(exif){
   try{
     if(typeof exif==='string')exif=JSON.parse(exif);
     var raw=exif.DateTimeOriginal||exif.DateTimeDigitized||exif.CreateDate||'';
-    var m=String(raw).match(/^(\d{4}):?(\d{2}):?(\d{2})/);
+    var m=String(raw).match(/^(\d{4})[:-]?(\d{2})[:-]?(\d{2})/);
     return m?m[1]+'-'+m[2]+'-'+m[3]:null;
   }catch(e){return null;}
 }
