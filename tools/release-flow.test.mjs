@@ -132,14 +132,31 @@ test('profile sheet follows the PDF dismissal gesture and the home nav stays at 
   const html = await read('public/index.html');
   const release = await read('public/release.js');
   const css = await read('public/app.css');
-  for (const id of ['btn-loc','btn-bulk','btn-cam','btn-lib','btn-me'])
+  for (const id of ['map-locate','btn-timeline','btn-bulk','btn-cam','btn-lib','btn-me'])
     assert.match(html, new RegExp(`id="${id}"`));
+  assert.doesNotMatch(html, /id="btn-loc"/);
   assert.doesNotMatch(html, /id="btn-social"/);
+  assert.match(release, /bindTimelineRefresh/);
+  assert.match(release, /pointermove/);
   assert.match(release, /function bindProfileDismiss/);
   assert.match(release, /panel\.offsetHeight\*\.30\|\|vy>900/);
   assert.match(release, /cancelAnimationFrame\(raf\)/);
   assert.match(css, /\.profile-panel/);
   assert.match(css, /touch-action:none/);
+  assert.match(css, /\.timeline-refresh-hint/);
+});
+
+test('map controls follow the requested audience icon, transparent place marker, and silent loading', async () => {
+  const core = await read('public/core.js');
+  const data = await read('public/data.js');
+  const native = await read('public/native.js');
+  const css = await read('public/app.css');
+  assert.match(core, /viewingPublic\s*\?\s*'<svg/);
+  assert.match(core, /自分の地図へ切り替える/);
+  assert.match(native, /getElementById\('map-locate'\)/);
+  assert.doesNotMatch(native, /getElementById\('btn-loc'\)/);
+  assert.doesNotMatch(data, /件 読み込みました/);
+  assert.match(css, /\.drop \.im\{[^}]*background:transparent!important/);
 });
 
 test('profile post response contains authorized thumbnail identifiers', async () => {

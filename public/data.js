@@ -28,7 +28,7 @@ async function autoLoad(force){
     loadLog.ours+=mine;
 
     var t=mine;
-    if(t){ render(true); setTip('この辺りを '+t+' 件 読み込みました'); }
+    if(t){ render(true); }
     else if(force){ setTip('この辺りには見つかりませんでした'); }
   }catch(e){ loadLog.err=String(e&&e.message||e); }
   finally{ busy=false; }

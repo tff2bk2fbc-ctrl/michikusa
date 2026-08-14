@@ -238,16 +238,63 @@ async function sharePost(post){
     else if(navigator.clipboard){await navigator.clipboard.writeText(url);setTip('共有リンクをコピーしました');}
   }catch(e){setTip(e.message||'共有できませんでした');}
 }
+function bindTimelineRefresh(screen,host,query,mode){
+  var hint=host.querySelector('.timeline-refresh-hint');
+  if(!hint)return;
+  screen.__timelineRefreshState={host:host,query:query||'',mode:mode||'recommended'};
+  if(screen.__timelineRefreshBound)return;
+  screen.__timelineRefreshBound=true;
+  var tracking=false,startY=0,pull=0,pointer=null;
+  function paint(value,ready){
+    pull=Math.max(0,Math.min(96,value));
+    hint=screen.__timelineRefreshState.host.querySelector('.timeline-refresh-hint')||hint;
+    hint.style.setProperty('--pull',pull+'px');
+    hint.classList.toggle('pulling',pull>4);
+    hint.classList.toggle('ready',!!ready);
+    hint.setAttribute('aria-hidden',String(pull<=4));
+  }
+  function reset(){tracking=false;pointer=null;paint(0,false);}
+  function down(e){
+    if(!e.isPrimary||screen.__timelineRefreshBusy||screen.scrollTop>1||e.clientX<24)return;
+    if(e.pointerType==='mouse'&&e.button!==0)return;
+    tracking=true;pointer=e.pointerId;startY=e.clientY;pull=0;
+    try{screen.setPointerCapture(pointer);}catch(err){}
+  }
+  function move(e){
+    if(!tracking||e.pointerId!==pointer)return;
+    var dy=e.clientY-startY;
+    if(dy<=0||screen.scrollTop>1){reset();return;}
+    var distance=Math.min(96,dy*.58);
+    paint(distance,distance>=64);
+    if(distance>8)e.preventDefault();
+  }
+  function up(e){
+    if(!tracking||e.pointerId!==pointer)return;
+    var ready=pull>=64,state=screen.__timelineRefreshState;
+    reset();
+    if(ready&&!screen.__timelineRefreshBusy&&state){
+      screen.__timelineRefreshBusy=true;
+      renderTimeline(screen,state.host,state.query,state.mode,0).finally(function(){screen.__timelineRefreshBusy=false;});
+    }
+  }
+  screen.addEventListener('pointerdown',down);
+  screen.addEventListener('pointermove',move,{passive:false});
+  screen.addEventListener('pointerup',up);
+  screen.addEventListener('pointercancel',reset);
+  screen.addEventListener('lostpointercapture',function(){if(tracking)reset();});
+}
 async function renderTimeline(screen,host,query,mode,restoreY){
   var generation=beginSocialRender(screen);
   mode=mode||'recommended';
-  host.innerHTML='<form class="timeline-search" id="timeline-search"><span aria-hidden="true">⌕</span>'+
+  host.innerHTML='<div class="timeline-refresh-hint" aria-hidden="true"><span aria-hidden="true">↻</span></div>'+
+    '<form class="timeline-search" id="timeline-search"><span aria-hidden="true">⌕</span>'+
       '<input id="timeline-q" value="'+esc(query||'')+'" placeholder="場所・ことば・#タグ" enterkeyhint="search" autocomplete="off">'+
       '<button type="submit">探す</button></form>'+
     '<div class="feed-modes" role="tablist" aria-label="タイムラインの種類">'+
       '<button type="button" data-feed-mode="recommended" class="'+(mode==='recommended'?'on':'')+'" role="tab" aria-selected="'+String(mode==='recommended')+'">おすすめ</button>'+
       '<button type="button" data-feed-mode="following" class="'+(mode==='following'?'on':'')+'" role="tab" aria-selected="'+String(mode==='following')+'">フォロー中</button></div>'+
     '<div class="timeline-status" aria-live="polite">写真を読み込んでいます…</div>';
+  bindTimelineRefresh(screen,host,query,mode);
   Array.prototype.forEach.call(host.querySelectorAll('[data-feed-mode]'),function(b){b.onclick=function(){renderTimeline(screen,host,query,b.dataset.feedMode);};});
   host.querySelector('#timeline-search').onsubmit=function(e){e.preventDefault();renderTimeline(screen,host,host.querySelector('#timeline-q').value.trim(),mode);};
   if(!fbUser){host.querySelector('.timeline-status').innerHTML='<b>ログインするとタイムラインを見られます</b><span>公開された写真と、フレンドの写真が表示されます。</span><button class="release-main" id="timeline-login" type="button">ログインする</button>';host.querySelector('#timeline-login').onclick=function(){closeReleaseScreen();document.getElementById('btn-me').click();};return;}
@@ -392,6 +439,7 @@ async function openPublicProfile(handle){
   refreshMapAudienceUI();
   var notifications=document.getElementById('btn-notifications');if(notifications)notifications.onclick=function(){openSocialHub('notifications');};
   var messages=document.getElementById('btn-messages');if(messages)messages.onclick=function(){openSocialHub('messages');};
+  var timelineButton=document.getElementById('btn-timeline');if(timelineButton)timelineButton.onclick=function(){openSocialHub('timeline');};
   var bulk=document.getElementById('btn-bulk');if(bulk)bulk.onclick=function(){openMemoryHub();};
   var library=document.getElementById('btn-lib');if(library)library.onclick=function(){
     if(typeof chooseMemoryDeckPhotos==='function')chooseMemoryDeckPhotos();else chooseAlbumPhotos();

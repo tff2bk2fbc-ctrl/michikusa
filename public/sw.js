@@ -1,7 +1,7 @@
 /* 一度読んだものを端末に残しておく仕組み。
    次に開くときは、待たずにそこから出す。
    同時に裏で新しいものを取りに行き、次回はそれを使う。 */
-const CACHE='spota-v27';
+const CACHE='spota-v28';
 
 self.addEventListener('install', function(){ self.skipWaiting(); });
 self.addEventListener('message', function(e){

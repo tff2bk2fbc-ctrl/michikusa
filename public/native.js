@@ -323,7 +323,7 @@ function shrink(file,cb){
   r.readAsDataURL(file);
 }
 
-document.getElementById('btn-loc').onclick=async function(){
+document.getElementById('map-locate').onclick=async function(){
   var btn=this;
   setTip('現在地を取得しています…');
   var p=await whereAmI();

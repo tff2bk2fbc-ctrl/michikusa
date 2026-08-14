@@ -72,10 +72,14 @@ function visibleOtherSpots(){
 function refreshMapAudienceUI(){
   var button=document.getElementById('btn-map-scope');if(!button)return;
   var viewingPublic=mapAudience==='public';
+  var icon=viewingPublic
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.7"/><path d="M4.8 20c.6-3.4 3.2-5.5 7.2-5.5s6.6 2.1 7.2 5.5"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.8 12h16.4M12 3.5c2.1 2.3 3.2 5.2 3.2 8.5S14.1 18.2 12 20.5M12 3.5C9.9 5.8 8.8 8.7 8.8 12s1.1 6.2 3.2 8.5"/></svg>';
   button.dataset.scope=mapAudience;
   button.classList.toggle('public-map',viewingPublic);
   button.setAttribute('aria-pressed',String(viewingPublic));
   button.setAttribute('aria-label',viewingPublic?'自分の地図へ切り替える':'みんなの地図へ切り替える');
+  button.innerHTML=icon;
 }
 function setMapAudience(mode,quiet){
   if(mode!=='mine'&&mode!=='public')return;
