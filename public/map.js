@@ -382,10 +382,9 @@ function pickIcon(cat){
 }
 
 function fcOf(list,mine){
-  var big=map.getZoom()>=PHOTO_ZOOM;
   return {type:'FeatureCollection',features:list.filter(valid)
-    // 自分の記録だけは写真で出すので、そのときは記号を出さない
-    .filter(function(p){ return !(big&&mine&&p.photo); })
+    // 写真アイコンの生成中も通常ピンを残す。先に消すと、ズーム境界や
+    // 画像の再読込時に思い出そのものが地図から消えたように見える。
     .map(function(p){
       return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
         properties:{rid:String(p.id||p.server_id||p.spot||''),lat:p.lat,lng:p.lng,
@@ -414,7 +413,12 @@ function addPlaceLayers(){
   map.addSource('spot',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('frnd',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('mine',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addSource('photo',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
+  map.addSource('photo',{
+    type:'geojson',
+    data:{type:'FeatureCollection',features:[]},
+    // 画面上で近い写真は、場所名や座標の丸め値ではなく実際の描画距離でまとめる。
+    cluster:true,clusterRadius:48,clusterMaxZoom:22,maxzoom:24
+  });
 
   // まだ思い出のない場所。
   // 地図が元から描いている店（薄い丸に絵）と、大きさも濃さも揃える
@@ -475,8 +479,26 @@ function addPlaceLayers(){
     'text-color':night?'#FFFFFF':'#000000',
     'text-halo-color':PAL().halo,'text-halo-width':1.8}});
 
-  // 写真の丸。地図の中に描くので、ズームしてもずれない
-  map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,layout:{
+  // 写真同士が重なる場所。件数を一つの数字で示し、押すと中身へ寄る。
+  map.addLayer({id:'photo-cluster',type:'circle',source:'photo',minzoom:10,
+    filter:['has','point_count'],paint:{
+      'circle-radius':['step',['get','point_count'],18,10,21,30,25],
+      'circle-color':night?'#F4F4F5':'#111111',
+      'circle-stroke-color':night?'#171719':'#FFFFFF',
+      'circle-stroke-width':2.5,
+      'circle-opacity':0.96
+    }});
+  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'photo',minzoom:10,
+    filter:['has','point_count'],layout:{
+      'text-field':['get','point_count_abbreviated'],
+      'text-size':['step',['get','point_count'],12,10,13,30,14],
+      'text-allow-overlap':true
+    },paint:{'text-color':night?'#111111':'#FFFFFF'}});
+
+  // 写真の丸。地図の中に描くので、ズームしてもずれない。
+  // クラスタに入っておらず、画像の準備が終わった写真だけを描く。
+  map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,
+    filter:['all',['!',['has','point_count']],['==',['get','ready'],1]],layout:{
     'icon-image':['get','icon'],
     /* 76px で出したいので、128 で描いたものを縮める。
        画面の細かさに合わせて2倍で登録しているぶん、値は半分になる */
@@ -599,47 +621,40 @@ function makeRoundIcon(url,mine,key,count){
 }
 
 function photoKey(p,mine){
-  // 名前と座標から、重ならない名前をつくる
-  return 'ph_'+(mine?'m':'o')+'_'+
-    String(p.n||'').replace(/[^A-Za-z0-9]/g,'').slice(0,12)+'_'+
-    p.lat.toFixed(5)+'_'+p.lng.toFixed(5);
+  // 同じ場所・同じ名前でも別の写真なら別アイコンにする。
+  var id=String(p.id||p.server_id||p.server_photo_id||p.spot||'')
+    .replace(/[^A-Za-z0-9_-]/g,'').slice(0,64);
+  if(!id)id=p.lat.toFixed(6)+'_'+p.lng.toFixed(6)+'_'+String(p.d||'');
+  return 'ph_'+(mine?'m':'o')+'_'+id.replace(/[^A-Za-z0-9_-]/g,'_');
 }
 
 function photoFeatures(){
   var out=[];
-  if(map.getZoom()<PHOTO_ZOOM)return out;
   var b=map.getBounds(), c=map.getCenter(), list=[];
 
   // 自分の地図では本人の記録を、みんなの地図では公開された記録だけを出す。
   // 店の宣材写真ではなく、利用者本人の写真だけを地図上のアルバムとして扱う。
   visibleOwnSpots().filter(valid).forEach(function(s){
-    if(b.contains([s.lng,s.lat])&&s.photo)list.push({p:s,mine:true,img:s.photo});
+    if(b.contains([s.lng,s.lat])&&(s.photo||s.server_photo_id))
+      list.push({p:s,mine:true,img:s.photo||''});
   });
   visibleOtherSpots().forEach(function(o){
-    if(valid(o)&&b.contains([o.lng,o.lat])&&o.photo)list.push({p:o,mine:false,img:o.photo});
+    if(valid(o)&&b.contains([o.lng,o.lat])&&(o.photo||o.server_photo_id))
+      list.push({p:o,mine:false,img:o.photo||''});
   });
 
   list.sort(function(a,x){
     if(a.mine!==x.mine)return a.mine?-1:1;
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
   });
-  list=list.slice(0,30);
-
-  var counts={};
-  list.forEach(function(o){
-    var group=(o.mine?'m':'o')+'|'+String(o.p.n||'')+'|'+o.p.lat.toFixed(3)+'|'+o.p.lng.toFixed(3);
-    counts[group]=(counts[group]||0)+1;o.group=group;
-  });
-  var emitted={};
+  list=list.slice(0,80);
 
   list.forEach(function(o){
-    if(emitted[o.group])return;emitted[o.group]=1;
-    var count=counts[o.group]||1;
-    var key=photoKey(o.p,o.mine)+'_'+count;
-    if(!madeIcons[key]){ makeRoundIcon(o.img,o.mine,key,count); return; }
+    var key=photoKey(o.p,o.mine),ready=madeIcons[key]?1:0;
+    if(o.img&&!ready)makeRoundIcon(o.img,o.mine,key,1);
     out.push({type:'Feature',geometry:{type:'Point',coordinates:[o.p.lng,o.p.lat]},
       properties:{rid:String(o.p.id||o.p.server_id||o.p.spot||''),lat:o.p.lat,lng:o.p.lng,
-        n:o.p.n,mine:o.mine?1:0,icon:key,count:count}});
+        n:o.p.n,mine:o.mine?1:0,icon:key,ready:ready}});
   });
   return out;
 }

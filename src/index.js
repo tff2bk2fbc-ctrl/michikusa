@@ -58,7 +58,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-39"
+          build: "api-40"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
@@ -212,7 +212,7 @@ export default {
   async scheduled(event, env, ctx) {
     // 公開遅延が満了した投稿は15分ごとに通知へ反映する。
     // 容量整理は従来どおり03:17 JST（18:17 UTC）だけ実行する。
-    const work = [announceReadyPosts(env)];
+    const work = [retryErroredPhotoModeration(env), announceReadyPosts(env)];
     if (event.cron === "17 18 * * *") {
       work.push(cleanupTransientConfig(env), cleanupDeletedPhotos(env));
     }
@@ -1043,8 +1043,9 @@ async function putPhoto(url, request, env, me) {
   let moderation = "not-required";
   if (own.visibility !== "private" && (kind === "view" || kind === "thumb")) {
     moderation = await moderateUploadedPhoto(env, me, bytes);
-    if (moderation !== "ok") {
-      // 判定不能も公開しない。画像自体は本人の非公開記録として保存できる。
+    if (moderation === "bad") {
+      // 不適切判定だけは非公開へ倒す。一時的なAPI障害は確認待ちとして保持し、
+      // 写真を他人へ返さないままCronで再判定する。
       await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
         .bind(postId, me.id).run();
     }
@@ -1100,8 +1101,8 @@ async function putPhoto(url, request, env, me) {
        WHERE id=? AND user_id=? AND post_id=?
     `).bind(photoId, me.id, postId).run();
   }
-  if (own.visibility !== "private" && (kind === "view" || kind === "thumb") && moderation !== "ok") {
-    // 並行PATCHとの競合後も、判定不能な画像を公開状態に残さない。
+  if (own.visibility !== "private" && (kind === "view" || kind === "thumb") && moderation === "bad") {
+    // 並行PATCHとの競合後も、不適切判定の画像を公開状態に残さない。
     await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
       .bind(postId, me.id).run();
   }
@@ -2844,6 +2845,58 @@ async function moderateUploadedPhoto(env, me, bytes) {
   const result = await callVision(key, img);
   await putModerationCache(env, me.id, img, result);
   return result.state;
+}
+
+/**
+ * Visionの一時障害でerrorになった写真を、最大6回だけ再確認する。
+ * error中の画像はgetPhotoが所有者以外へ返さないため、再試行中もfail closed。
+ */
+async function retryErroredPhotoModeration(env) {
+  const rows = await env.DB.prepare(`
+    SELECT ph.id,ph.post_id,ph.user_id,ph.key_view,ph.key_thumb,
+           ph.moderation_view_state,ph.moderation_thumb_state
+      FROM photos ph JOIN posts p ON p.id=ph.post_id
+     WHERE ph.moderation_state='error' AND p.deleted_at IS NULL
+       AND p.visibility<>'private'
+     ORDER BY ph.created_at LIMIT 5
+  `).all();
+  for (const ph of (rows.results || [])) {
+    const retryKey = "photo_moderation_retry_" + ph.id;
+    if (!(await atomicLimit(env, retryKey, 6, 1))) continue;
+    try {
+      const states = {
+        view: ph.moderation_view_state,
+        thumb: ph.moderation_thumb_state
+      };
+      for (const variant of ["view", "thumb"]) {
+        if (states[variant] === "ok" || states[variant] === "bad") continue;
+        const key = ph[`key_${variant}`];
+        const object = key ? await env.PHOTOS.get(key) : null;
+        if (!object) { states[variant] = "error"; continue; }
+        const bytes = await object.arrayBuffer();
+        if (!bytes.byteLength || bytes.byteLength > 10_000_000) {
+          states[variant] = "error"; continue;
+        }
+        states[variant] = await moderateUploadedPhoto(env, { id: ph.user_id }, bytes);
+      }
+      const overall = states.view === "ok" && states.thumb === "ok" ? "ok" :
+        (states.view === "bad" || states.thumb === "bad" ? "bad" : "error");
+      await env.DB.prepare(`UPDATE photos
+        SET moderation_view_state=?,moderation_thumb_state=?,moderation_state=?
+        WHERE id=? AND user_id=? AND post_id=?`
+      ).bind(states.view, states.thumb, overall, ph.id, ph.user_id, ph.post_id).run();
+      if (overall === "bad") {
+        await env.DB.prepare("UPDATE posts SET visibility='private' WHERE id=? AND user_id=?")
+          .bind(ph.post_id, ph.user_id).run();
+        await env.DB.prepare("DELETE FROM app_config WHERE k=?").bind(retryKey).run();
+      } else if (overall === "ok") {
+        await env.DB.prepare("DELETE FROM app_config WHERE k=?").bind(retryKey).run();
+        await announcePostIfReady(env, ph.post_id);
+      }
+    } catch (error) {
+      console.error("photo moderation retry error", safeLogError(error));
+    }
+  }
 }
 
 async function ensurePostPhotosModerated(env, me, postId) {

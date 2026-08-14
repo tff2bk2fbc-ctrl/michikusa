@@ -361,6 +361,19 @@ map.on('click',function(e){
     return null;
   }
 
+  var cluster=nearest(['photo-cluster','photo-cluster-count']);
+  if(cluster){
+    var source=map.getSource('photo');
+    var clusterId=Number(cluster.properties&&cluster.properties.cluster_id);
+    var center=cluster.geometry&&cluster.geometry.coordinates;
+    if(source&&isFinite(clusterId)&&center){
+      source.getClusterExpansionZoom(clusterId).then(function(zoom){
+        map.easeTo({center:center,zoom:Math.min(22,Math.max(map.getZoom()+1,zoom)),duration:420});
+      }).catch(function(){});
+    }
+    return;
+  }
+
   var f=nearest(['photo-ic','mine-ring','mine-ic']);
   if(f){
     var s=recordForFeature(visibleOwnSpots(),f);

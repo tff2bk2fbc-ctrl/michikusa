@@ -9,29 +9,38 @@
 /* 写真をサーバーへ。原本と表示用を別々に持つ */
 async function uploadPhoto(auth,postId,photoId,dataUrl){
   try{
-    var blob=await (await fetch(dataUrl)).blob();
-    var pid=photoId,moderationFailed=false;
+    var pid=photoId,moderationState='not-required';
     async function put(kind,body,type){
       var r=await apiAs(auth,'/api/photo?post_id='+encodeURIComponent(postId)+
         '&photo_id='+encodeURIComponent(pid)+'&kind='+kind,
         {method:'PUT',headers:{'Content-Type':type},body:body});
-      if(!r.ok)throw new Error('photo upload '+r.status);
       var j=await r.json().catch(function(){return {};});
-      if((kind==='view'||kind==='thumb')&&j.moderation&&j.moderation!=='ok'&&j.moderation!=='not-required')moderationFailed=true;
+      if(!r.ok)throw new Error(kind+' '+r.status+(j.error?' '+String(j.error).slice(0,80):''));
+      if(kind==='view'||kind==='thumb'){
+        if(j.moderation==='bad')moderationState='bad';
+        else if(j.moderation==='error'&&moderationState!=='bad')moderationState='error';
+        else if(j.moderation==='ok'&&moderationState==='not-required')moderationState='ok';
+      }
       return j;
     }
-    // 原本
-    await put('orig',blob,blob.type||'image/jpeg');
-    // 表示用（軽くしたもの）
-    var view=await resize(dataUrl,2560,.90);
+
+    // iPhoneの48MP原本やHEICをそのまま最初に送ると、25MB超過・形式不一致で
+    // サムネイルまで一件も保存されない。4096px/94%の高品質JPEGを保存版にし、
+    // EXIFもサーバーへ持ち込まない。端末内の元写真には手を加えない。
+    var archive=await resize(dataUrl,4096,.94);
+    if(!archive)throw new Error('archive resize failed');
+    var view=await resize(archive,2560,.90);
     if(!view)throw new Error('view resize failed');
-    var vb=await (await fetch(view)).blob();
-    await put('view',vb,'image/jpeg');
-    var th=await resize(dataUrl,512,.82);
+    var th=await resize(view,512,.82);
     if(!th)throw new Error('thumb resize failed');
     var tb=await (await fetch(th)).blob();
+    // まず地図表示に必要な小さい2種類を確実に作り、最後に高品質版を預ける。
     await put('thumb',tb,'image/jpeg');
-    return {ok:true,moderationFailed:moderationFailed};
+    var vb=await (await fetch(view)).blob();
+    await put('view',vb,'image/jpeg');
+    var ab=await (await fetch(archive)).blob();
+    await put('orig',ab,'image/jpeg');
+    return {ok:true,moderation:moderationState};
   }catch(e){
     // 同期ループ側で再試行できるよう、認証情報や画像本体は返さず理由だけ保持する。
     return {ok:false,error:e&&e.message?String(e.message):'photo upload failed'};
@@ -96,12 +105,23 @@ async function pushOne(rec){
       await dbPut('spots',rec);
       var uploaded=await uploadPhoto(auth,rec.server_id,rec.server_photo_id,rec.photo);
       if(!uploaded||uploaded.ok===false){
-        if(authIsCurrent(auth))setTip('写真をサーバーへ預けられませんでした。通信を確認してください');
+        rec.synced=0;rec.photo_synced=0;
+        rec.sync_error=String(uploaded&&uploaded.error||'photo upload failed').slice(0,120);
+        await dbPut('spots',rec);
+        if(authIsCurrent(auth))setTip('写真をサーバーへ預けられませんでした（'+rec.sync_error+'）');
         return false;
       }
-      if(rec.visibility!=='private'&&uploaded.moderationFailed){
+      rec.photo_synced=1;
+      delete rec.sync_error;
+      if(rec.visibility!=='private'&&uploaded.moderation==='bad'){
         rec.visibility='private';
-        if(authIsCurrent(auth))setTip('安全確認を完了できなかったため、自分だけの記録にしました');
+        delete rec.moderation_pending;
+        if(authIsCurrent(auth))setTip('安全確認で公開できない写真だったため、自分だけの記録にしました');
+      }else if(rec.visibility!=='private'&&uploaded.moderation==='error'){
+        rec.moderation_pending=1;
+        if(authIsCurrent(auth))setTip('写真は預けました。みんなへの表示は安全確認の完了後に始まります');
+      }else{
+        delete rec.moderation_pending;
       }
     }
     rec.synced=1;
@@ -122,7 +142,8 @@ async function syncUp(){
   var ok=0;
   for(var i=0;i<todo.length;i++){ if(await pushOne(todo[i]))ok++; }
   syncing=false;
-  setTip(ok?(ok+'件を預けました'):'預けられませんでした');
+  var pending=todo.filter(function(s){return s.moderation_pending;}).length;
+  setTip(ok?(pending?(ok+'件を預けました。公開は安全確認後に始まります'):(ok+'件を預けました')):'預けられませんでした');
   render(true);
   if(fbUser&&activeSpotScope!==startedScope)setTimeout(syncUp,0);
 }
@@ -145,7 +166,8 @@ function runPhotoRestore(){
       if(!r.ok)throw new Error('photo '+r.status);
       var data=await blobDataUrl(await r.blob());
       if(j.rec.owner_scope!==activeSpotScope)return;
-      j.rec.photo=data;j.rec.photo_is_thumb=1;j.rec.server_photo_id=j.id;delete j.rec.photo_restoring;
+      j.rec.photo=data;j.rec.photo_is_thumb=1;j.rec.server_photo_id=j.id;j.rec.photo_synced=1;
+      delete j.rec.photo_restoring;
       await dbPut('spots',j.rec);render(true);
     }catch(e){
       delete j.rec.photo_restoring;j.rec.photo_retry_at=Date.now()+10*60*1000;dbPut('spots',j.rec);
@@ -196,7 +218,8 @@ async function retryPendingDeletes(auth){
 async function syncOwnArchive(auth){
   if(!authIsCurrent(auth))return;
   var key='archive_cursor|'+auth.scope,initial='9007199254740991:zzzzzzzz';
-  var meta=await dbGet('meta',key),cursor=meta&&meta.v||initial,hasMore=false,failed=false,added=0,photoLoads=0;
+  var meta=await dbGet('meta',key),cursor=meta&&meta.v||initial,hasMore=false,failed=false,
+    added=0,photoLoads=0,missingUploads=0;
   for(var page=0;page<5&&authIsCurrent(auth);page++){
     var r=await apiAs(auth,'/api/posts/mine?cursor='+encodeURIComponent(cursor));
     if(!r.ok){failed=true;break;}
@@ -208,13 +231,24 @@ async function syncOwnArchive(auth){
       var p=j.posts[i];if(tombstones[p.id])continue;
       var existing=spots.filter(function(x){return x.server_id===p.id&&x.owner_scope===auth.scope;})[0];
       if(existing){
+        if(p.photo_id){
+          if(existing.server_photo_id!==p.photo_id||existing.photo_synced!==1||existing.sync_error){
+            existing.server_photo_id=p.photo_id;existing.photo_synced=1;delete existing.sync_error;
+            await dbPut('spots',existing);
+          }
+        }else if(existing.photo){
+          // 旧版で投稿だけ同期済みになった記録を、自動的に写真再送の対象へ戻す。
+          existing.synced=0;existing.photo_synced=0;existing.sync_error='server photo missing';
+          await dbPut('spots',existing);missingUploads++;
+        }
         if(!existing.photo&&p.photo_id&&photoLoads<3){queuePhotoRestore(existing,p.photo_id,auth);photoLoads++;}
         continue;
       }
       var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
         tag:p.tag||'',place:p.place_name||'',lat:p.lat,lng:p.lng,
         d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
-        photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null,owner_scope:auth.scope};
+        photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null,
+        photo_synced:p.photo_id?1:0,owner_scope:auth.scope};
       if(await dbPut('spots',rec)){
         if(authIsCurrent(auth))spots.push(rec);
         if(p.photo_id&&photoLoads<3){queuePhotoRestore(rec,p.photo_id,auth);photoLoads++;}
@@ -225,6 +259,7 @@ async function syncOwnArchive(auth){
     if(!hasMore)break;
   }
   if(added&&authIsCurrent(auth))render(true);
+  if(missingUploads&&authIsCurrent(auth))setTimeout(syncUp,500);
   if(failed)return;
   if(!hasMore){await dbPut('meta',{k:key,v:initial});return;}
   if(authIsCurrent(auth))setTimeout(function(){syncOwnArchive(auth);},1500);
@@ -247,18 +282,28 @@ async function syncDown(){
       if(t.owner_scope===auth.scope)tombstones[t.server_id]=1;
     });
     var mineIds={}; spots.forEach(function(s){ if(s.server_id)mineIds[s.server_id]=s; });
-    var added=0;
+    var added=0,missingUploads=0;
     (j.posts||[]).forEach(function(p){
       if(p.mine){
         if(tombstones[p.id])return;
         if(mineIds[p.id]){
-          if(!mineIds[p.id].photo&&p.photo_id)queuePhotoRestore(mineIds[p.id],p.photo_id,auth);
+          var local=mineIds[p.id];
+          if(p.photo_id){
+            if(local.server_photo_id!==p.photo_id||local.photo_synced!==1||local.sync_error){
+              local.server_photo_id=p.photo_id;local.photo_synced=1;delete local.sync_error;dbPut('spots',local);
+            }
+          }else if(local.photo){
+            local.synced=0;local.photo_synced=0;local.sync_error='server photo missing';
+            dbPut('spots',local);missingUploads++;
+          }
+          if(!local.photo&&p.photo_id)queuePhotoRestore(local,p.photo_id,auth);
           return;
         }
         var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
           tag:p.tag||'',place:p.place_name||'',lat:p.lat,lng:p.lng,
           d:p.taken_at?new Date(p.taken_at).toISOString().slice(0,10):'',
-          photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null};
+          photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null,
+          photo_synced:p.photo_id?1:0};
         rec.owner_scope=activeSpotScope;
         spots.push(rec); dbPut('spots',rec);if(p.photo_id)queuePhotoRestore(rec,p.photo_id,auth);added++;
       }else{
@@ -276,6 +321,7 @@ async function syncDown(){
       }
     });
     if(added)render(true);
+    if(missingUploads)setTimeout(syncUp,500);
     await syncDeletions(auth);
   }catch(e){}finally{
     fetching=false;

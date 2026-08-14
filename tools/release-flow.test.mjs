@@ -100,6 +100,26 @@ test('photo sync requires both derived variants before marking a record synced',
   assert.match(upload, /await put\('thumb'/);
 });
 
+test('photo sync creates bounded JPEG variants before the first server write', async () => {
+  const sync = await read('public/sync.js');
+  const start = sync.indexOf('async function uploadPhoto');
+  const end = sync.indexOf('function resize', start);
+  const upload = sync.slice(start, end);
+  assert.match(upload, /resize\(dataUrl,4096,\.94\)/);
+  assert.ok(upload.indexOf("await put('thumb'") < upload.indexOf("await put('view'"));
+  assert.ok(upload.indexOf("await put('view'") < upload.indexOf("await put('orig'"));
+  assert.doesNotMatch(upload, /await put\('orig',blob,blob\.type/);
+});
+
+test('legacy posts with a missing server photo are returned to the upload queue', async () => {
+  const sync = await read('public/sync.js');
+  assert.match(sync, /rec\.synced=0;rec\.photo_synced=0/);
+  assert.match(sync, /existing\.sync_error='server photo missing'/);
+  assert.match(sync, /local\.sync_error='server photo missing'/);
+  assert.match(sync, /if\(missingUploads.*setTimeout\(syncUp,500\)/);
+  assert.match(sync, /rec\.photo_synced=1/);
+});
+
 test('photo upload accepts chunked WebView requests and enforces the actual body size', async () => {
   const worker = await read('src/index.js');
   const start = worker.indexOf('async function putPhoto');
@@ -128,6 +148,34 @@ test('map click resolution uses a stable record identity instead of place name',
   assert.match(place, /function recordForFeature/);
   assert.match(place, /String\(x\.id\|\|x\.server_id\|\|x\.spot\|\|''\)===rid/);
   assert.doesNotMatch(place, /visibleOwnSpots\(\)\.filter\(function\(x\)\{return x\.n===f\.properties\.n;/);
+});
+
+test('map photos keep a fallback pin and use screen-distance clustering', async () => {
+  const map = await read('public/map.js');
+  const place = await read('public/place.js');
+  const featureStart = map.indexOf('function fcOf');
+  const featureEnd = map.indexOf('let lastSig', featureStart);
+  const normalFeatures = map.slice(featureStart, featureEnd);
+  assert.doesNotMatch(normalFeatures, /big&&mine&&p\.photo/);
+  assert.match(map, /addSource\('photo',\{[\s\S]*cluster:true,clusterRadius:48,clusterMaxZoom:22/);
+  assert.match(map, /id:'photo-cluster-count'/);
+  assert.match(map, /point_count_abbreviated/);
+  assert.match(map, /filter:\['all',\['!',\['has','point_count'\]\],\['==',\['get','ready'\],1\]\]/);
+  assert.doesNotMatch(map, /if\(map\.getZoom\(\)<PHOTO_ZOOM\)return out/);
+  assert.match(place, /getClusterExpansionZoom\(clusterId\)/);
+});
+
+test('temporary moderation failures stay hidden and are retried instead of changing audience', async () => {
+  const worker = await read('src/index.js');
+  const start = worker.indexOf('async function putPhoto');
+  const end = worker.indexOf('/** GET /api/photo/', start);
+  const upload = worker.slice(start, end);
+  assert.match(upload, /moderation === "bad"/);
+  assert.doesNotMatch(upload, /moderation !== "ok"/);
+  assert.match(worker, /async function retryErroredPhotoModeration/);
+  assert.match(worker, /ph\.moderation_state='error'/);
+  assert.match(worker, /photo_moderation_retry_/);
+  assert.match(worker, /retryErroredPhotoModeration\(env\)/);
 });
 
 test('external place providers and image proxy are not callable at runtime', async () => {

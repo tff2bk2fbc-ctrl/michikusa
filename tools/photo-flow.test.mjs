@@ -67,6 +67,8 @@ test("ネイティブ写真はdata URLで受け取りEXIFを保持する", async
 
   assert.equal(context.cameraOptions().resultType, "dataUrl");
   assert.equal(context.cameraOptions().source, "PHOTOS");
+  assert.equal(context.cameraOptions().width, 4096);
+  assert.equal(context.cameraOptions().height, 4096);
   assert.equal(result.dataUrl, "data:image/jpeg;base64,AA==");
   assert.deepEqual(result.exif, exif);
 });

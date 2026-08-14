@@ -22,7 +22,11 @@ async function pickPhoto(fromCamera){
   }
   try{
     var r=await Camera.getPhoto({
-      quality:100,
+      quality:96,
+      // 48MP写真をdata URLのままWebViewへ展開するとメモリを圧迫する。
+      // 長辺4096pxならRetina表示と拡大閲覧の品質を保ちながら安定して保存できる。
+      width:4096,
+      height:4096,
       allowEditing:false,
       // 画像本体は、iOS WebViewで最も安定して受け取れるdata URLを使う。
       // GPSは画像の再解析だけに頼らず、Camera pluginのexifから直接読む。
@@ -51,7 +55,7 @@ async function pickPhotos(){
   }
   try{
     // PHPickerで本人が許可した候補だけを扱う。大量原本を一度に保持しない。
-    var r=await Camera.pickImages({quality:100,limit:200});
+    var r=await Camera.pickImages({quality:96,width:4096,height:4096,limit:200});
     return (r&&r.photos)||[];
   }catch(e){ return null; }
 }
