@@ -1010,15 +1010,19 @@ async function putPhoto(url, request, env, me) {
     return json({ error: "対応していない画像形式です" }, 415);
   }
   const maxBytes = kind === "orig" ? 25_000_000 : kind === "view" ? 8_000_000 : 1_500_000;
-  const declared = Number(request.headers.get("Content-Length") || 0);
-  if (!Number.isSafeInteger(declared) || declared <= 0) {
-    return json({ error: "画像サイズを確認できません" }, 411);
+  // WKWebViewやHTTP/2のチャンク転送ではContent-Lengthが付かないことがある。
+  // ヘッダーを必須にすると、実データが正常な写真まで411で拒否してしまう。
+  // 上限の判定は必ず実際に読み取ったArrayBufferの長さを基準に行う。
+  const declaredHeader = request.headers.get("Content-Length");
+  const declared = declaredHeader == null ? null : Number(declaredHeader);
+  if (declared !== null && (!Number.isSafeInteger(declared) || declared < 0)) {
+    return json({ error: "画像サイズが不正です" }, 400);
   }
-  if (declared > maxBytes) return json({ error: "画像が大きすぎます" }, 413);
+  if (declared !== null && declared > maxBytes) return json({ error: "画像が大きすぎます" }, 413);
   if (!(await userLimit(env, me.id, "photo-requests-hour", hourKey(), 80))) {
     return json({ error: "画像の利用上限に達しました" }, 429);
   }
-  const bytes = await request.arrayBuffer();
+  const bytes = await readBodyLimited(request, maxBytes);
   if (!bytes.byteLength || bytes.byteLength > maxBytes) {
     return json({ error: "画像サイズが不正です" }, 413);
   }
@@ -2107,6 +2111,36 @@ function validImageBytes(buffer, contentType) {
     return b.length >= 12 && String.fromCharCode(...b.slice(4, 8)) === "ftyp";
   }
   return false;
+}
+
+/** Content-Lengthが無いチャンク転送でも、上限を越えてメモリへ溜めない。 */
+async function readBodyLimited(request, maxBytes) {
+  if (!request.body || typeof request.body.getReader !== "function") {
+    const bytes = await request.arrayBuffer();
+    return bytes.byteLength <= maxBytes ? bytes : new ArrayBuffer(0);
+  }
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      const value = part.value instanceof Uint8Array ? part.value : new Uint8Array(part.value || 0);
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try { await reader.cancel(); } catch (_) { /* 読み取り停止を優先 */ }
+        return new ArrayBuffer(0);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch (_) { /* 既に解放済み */ }
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+  return out.buffer;
 }
 
 /** Content-Length が無い場合も、実際に読んだUTF-8バイト数で制限する。 */

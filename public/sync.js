@@ -32,7 +32,10 @@ async function uploadPhoto(auth,postId,photoId,dataUrl){
     var tb=await (await fetch(th)).blob();
     await put('thumb',tb,'image/jpeg');
     return {ok:true,moderationFailed:moderationFailed};
-  }catch(e){ return false; }
+  }catch(e){
+    // 同期ループ側で再試行できるよう、認証情報や画像本体は返さず理由だけ保持する。
+    return {ok:false,error:e&&e.message?String(e.message):'photo upload failed'};
+  }
 }
 function resize(dataUrl,max,q){
   return new Promise(function(res){
@@ -92,7 +95,10 @@ async function pushOne(rec){
       rec.server_photo_id=rec.server_photo_id||nid();
       await dbPut('spots',rec);
       var uploaded=await uploadPhoto(auth,rec.server_id,rec.server_photo_id,rec.photo);
-      if(!uploaded)return false;
+      if(!uploaded||uploaded.ok===false){
+        if(authIsCurrent(auth))setTip('写真をサーバーへ預けられませんでした。通信を確認してください');
+        return false;
+      }
       if(rec.visibility!=='private'&&uploaded.moderationFailed){
         rec.visibility='private';
         if(authIsCurrent(auth))setTip('安全確認を完了できなかったため、自分だけの記録にしました');

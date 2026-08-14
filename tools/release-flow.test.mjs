@@ -100,6 +100,19 @@ test('photo sync requires both derived variants before marking a record synced',
   assert.match(upload, /await put\('thumb'/);
 });
 
+test('photo upload accepts chunked WebView requests and enforces the actual body size', async () => {
+  const worker = await read('src/index.js');
+  const start = worker.indexOf('async function putPhoto');
+  const end = worker.indexOf('/** GET /api/photo/', start);
+  const upload = worker.slice(start, end);
+  assert.match(upload, /const declaredHeader = request\.headers\.get\("Content-Length"\)/);
+  assert.doesNotMatch(upload, /画像サイズを確認できません.*411/);
+  assert.match(upload, /bytes\.byteLength > maxBytes/);
+  assert.match(upload, /readBodyLimited\(request, maxBytes\)/);
+  assert.match(upload, /validImageBytes\(bytes, ct\)/);
+  assert.match(worker, /async function readBodyLimited\(request, maxBytes\)/);
+});
+
 test('timeline is reachable without changing the fixed five-item home nav', async () => {
   const sync = await read('public/sync.js');
   const release = await read('public/release.js');
