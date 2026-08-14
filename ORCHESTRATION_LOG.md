@@ -210,3 +210,16 @@
 - Capacitorでは`dataUrl`だけでなくURIから元画像Blobを取得し、プラグインが返すEXIF GPSも補助的に読む方式へ変更した。ネイティブ側の変換でGPSが失われる可能性を下げた。
 - フロント版を`v92`、Service Worker cacheを`spota-v19`へ更新した。
 - `public/native.js`、`public/place.js`、`public/boot.js`の構文検査、`npm run check`（9件）、`git diff --check`が成功した。
+
+## 2026-08-14 写真追加の緊急回帰修正
+
+- 主担当に加え、回帰原因、写真追加の画面遷移、Capacitor 8 Camera互換性を3担当へ並行監査させた。各担当はコードを編集せず、主担当が指摘を再現して統合した。
+- 直前に変更した`resultType: uri`では、iOS WebViewが一時URIを`fetch`できない場合に例外を握り潰し、カメラ・ライブラリの両方が`null`で終了していた。動作実績のある`dataUrl`へ戻し、GPSはCamera pluginが別途返すEXIFから直接取得する方式にした。
+- 本番のContent Security Policyも`capacitor://`画像の読込を遮断していた。Worker応答と静的ヘッダーの`img-src`・`connect-src`へ`capacitor:`を追加し、一括取込のネイティブ画像URLも安全に読めるようにした。
+- GPSなしの`null`が`Number(null) === 0`により有効な座標`0,0`と誤判定される不具合を修正し、緯度・経度の存在確認後だけ数値変換するようにした。
+- ネイティブでは外部`exifr`の読込を待たずに次の画面へ進み、ブラウザでは待機を4秒で打ち切って手動位置選択へ進む。写真読込・権限エラーも無言で終了させない。
+- アルバム一括取込では、Capacitorが各写真について返したEXIFをFileへ保持し、変換後画像からEXIFが消えても撮影座標と撮影日を自動判定できるようにした。画像URL欠落・HTTP失敗も枚数として通知する。
+- GPSなしまたは写真の位置を使わない場合は、地図タップかドラッグで場所を選ぶ。ドラッグ用ピンのpointer eventを有効にした。
+- 単枚のライブラリ入力から`multiple`を外し、複数写真はアルバム機能へ分離した。
+- `tools/photo-flow.test.mjs`を追加し、Data URL受取、EXIF保持、カメラ・ライブラリから追加画面へ進むこと、GPSなし判定、Capacitor EXIF座標変換、CSP、一括取込のEXIF経路を自動検査する。全16テストが成功した。
+- フロント版を`v93`、Service Worker cacheを`spota-v20`、Worker API版を`api-34`へ更新した。

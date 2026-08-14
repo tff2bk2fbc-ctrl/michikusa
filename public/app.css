@@ -393,7 +393,7 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
   border-radius:50%;border:2px solid var(--btn);animation:ping 1.8s ease-out infinite}
 @keyframes ping{0%{transform:scale(1);opacity:.8}100%{transform:scale(3.4);opacity:0}}
 
-.drop{pointer-events:none}
+.drop{pointer-events:auto;touch-action:none}
 /* 置こうとしている場所の印。地図を隠さないよう、輪郭だけにする */
 .drop .im{width:16px;height:16px;border-radius:50%;background:transparent;
   border:2.5px solid var(--btn);box-shadow:none}

@@ -40,8 +40,8 @@ export default {
           "default-src 'self'",
           "script-src 'self' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com https://www.gstatic.com",
           "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-          "img-src 'self' data: blob: https:",
-          "connect-src 'self' https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems",
+          "img-src 'self' data: blob: capacitor: https:",
+          "connect-src 'self' capacitor: https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems",
           "font-src 'self' data: https:",
           "worker-src 'self' blob:",
           "frame-src https://*.firebaseapp.com https://accounts.google.com",
@@ -59,7 +59,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-33"
+          build: "api-34"
         }));
       }
       if (p === "/api/hotpepper") return respond(await hotpepper(url, request, env));

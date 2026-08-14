@@ -66,15 +66,22 @@ async function chooseAlbumPhotos(){
   if(got===null)return;              // ブラウザなら入力欄が開く
   if(!got.length){ setTip('選ばれませんでした'); return; }
   // Capacitorから来たものは、読み込んでからいつもの流れへ
-  var files=[];
+  var files=[],failed=0;
   for(var i=0;i<got.length;i++){
     try{
-      var r=await fetch(got[i].webPath||got[i].path);
+      var asset=typeof nativePhotoUrl==='function'?nativePhotoUrl(got[i]):
+        (got[i].webPath||got[i].path||'');
+      if(!asset)throw new Error('写真URLなし');
+      var r=await fetch(asset);
+      if(!r.ok)throw new Error('写真取得 '+r.status);
       var b=await r.blob();
-      files.push(new File([b],'p'+i+'.jpg',{type:b.type||'image/jpeg'}));
-    }catch(e){}
+      var f=new File([b],'p'+i+'.jpg',{type:b.type||'image/jpeg'});
+      if(got[i].exif)Object.defineProperty(f,'__spotaExif',{value:got[i].exif});
+      files.push(f);
+    }catch(e){failed++;}
   }
   if(!files.length){ setTip('写真を読めませんでした'); return; }
+  if(failed)setTip(failed+'枚を読み込めませんでした');
   handleBulk(files);
 }
 
@@ -98,8 +105,14 @@ document.getElementById('in-bulk').onchange=function(e){
 async function handleBulk(files){
   if(!files.length)return;
   setTip('準備しています…');
-  await need('exifr');
-  if(typeof exifr==='undefined'){ setTip('写真を読む部品がありません'); return; }
+  await Promise.race([
+    need('exifr'),
+    new Promise(function(resolve){setTimeout(function(){resolve(false);},4000);})
+  ]);
+  var hasNativeExif=files.some(function(f){return !!f.__spotaExif;});
+  if(typeof exifr==='undefined'&&!hasNativeExif){
+    setTip('写真の位置情報を読めません。通信を確認してください');return;
+  }
 
   var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
     '<div style="font-size:18px;font-weight:700;margin-bottom:6px">写真を読んでいます</div>'+
@@ -114,15 +127,24 @@ async function handleBulk(files){
     msg.textContent=(i+1)+' / '+files.length+' 枚を調べています…';
     var f=files[i];
     try{
-      var g=await exifr.gps(f).catch(function(){return null;});
+      var nativeGps=typeof gpsFromNativeExif==='function'?
+        gpsFromNativeExif(f.__spotaExif):null;
+      var g=nativeGps?{latitude:nativeGps.lat,longitude:nativeGps.lng}:null;
+      if(!g&&typeof exifr!=='undefined')
+        g=await exifr.gps(f).catch(function(){return null;});
       if(!g||g.latitude==null){ noGeo++; continue; }
-      var pp=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(function(){return null;});
-      var dt=pp&&(pp.DateTimeOriginal||pp.CreateDate);
-      var at=dt?new Date(dt).getTime():(f.lastModified||Date.now());
-      var fp=fingerprint(g.latitude,g.longitude,dt?at:null,f);
+      var nativeDate=typeof dateFromNativeExif==='function'?
+        dateFromNativeExif(f.__spotaExif):null;
+      var pp=null;
+      if(!nativeDate&&typeof exifr!=='undefined')
+        pp=await exifr.parse(f,{pick:['DateTimeOriginal','CreateDate']}).catch(function(){return null;});
+      var dt=nativeDate||(pp&&(pp.DateTimeOriginal||pp.CreateDate));
+      var parsed=dt?new Date(dt).getTime():NaN;
+      var at=isFinite(parsed)?parsed:(f.lastModified||Date.now());
+      var fp=fingerprint(g.latitude,g.longitude,isFinite(parsed)?at:null,f);
       if(await seenHas(fp)){ already++; continue; }   // もう入れたもの
       found.push({file:f,lat:g.latitude,lng:g.longitude,fp:fp,
-        d:dt?new Date(dt).toISOString().slice(0,10):'', at:at});
+        d:isFinite(parsed)?new Date(parsed).toISOString().slice(0,10):'', at:at});
     }catch(err){ noGeo++; }
   }
 

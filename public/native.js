@@ -24,33 +24,22 @@ async function pickPhoto(fromCamera){
     var r=await Camera.getPhoto({
       quality:100,
       allowEditing:false,
-      // dataUrlだけを返すと、ネイティブ側の変換でEXIFが落ちることがある。
-      // URIから元画像を読み、GPSを調べてから表示用のdata URLを作る。
-      resultType:'uri',
+      // 画像本体は、iOS WebViewで最も安定して受け取れるdata URLを使う。
+      // GPSは画像の再解析だけに頼らず、Camera pluginのexifから直接読む。
+      resultType:'dataUrl',
       source:fromCamera?'CAMERA':'PHOTOS',
       saveToGallery:false
     });
-    if(!r)return null;
-    var path=r.webPath||r.path||'';
-    if(path){
-      try{
-        var response=await fetch(path),blob=await response.blob();
-        var dataUrl=await blobToDataUrl(blob);
-        return dataUrl?{dataUrl:dataUrl,file:blob,exif:r.exif||null}:null;
-      }catch(e){}
-    }
-    if(r.dataUrl)return {dataUrl:r.dataUrl,file:null,exif:r.exif||null};
+    if(r&&r.dataUrl)return {dataUrl:r.dataUrl,file:null,exif:r.exif||{}};
+    setTip('写真を読み込めませんでした');
     return null;
-  }catch(e){ return null; }   // 途中でやめた場合もここに来る
-}
-
-function blobToDataUrl(blob){
-  return new Promise(function(resolve){
-    var r=new FileReader();
-    r.onload=function(){resolve(r.result||null);};
-    r.onerror=function(){resolve(null);};
-    r.readAsDataURL(blob);
-  });
+  }catch(e){
+    var message=String(e&&e.message||e||'');
+    if(/permission|denied/i.test(message))
+      setTip('設定でカメラ・写真の使用を許可してください');
+    else if(!/cancel/i.test(message))setTip('写真を開けませんでした。もう一度お試しください');
+    return null;
+  }
 }
 
 /** まとめて選ぶ */
@@ -64,6 +53,14 @@ async function pickPhotos(){
     var r=await Camera.pickImages({quality:100,limit:0});
     return (r&&r.photos)||[];
   }catch(e){ return null; }
+}
+
+function nativePhotoUrl(photo){
+  if(!photo)return '';
+  if(photo.webPath)return photo.webPath;
+  if(photo.path&&window.Capacitor&&typeof window.Capacitor.convertFileSrc==='function')
+    return window.Capacitor.convertFileSrc(photo.path);
+  return photo.path||'';
 }
 
 /** 現在地。アプリなら許可を先に尋ねる */
@@ -157,14 +154,15 @@ async function goHome(quiet){
    ============================================================ */
 document.getElementById('btn-cam').onclick=async function(){
   var picked=await pickPhoto(true);
-  if(picked) afterPhoto(picked.dataUrl,picked.file,picked.exif);
+  if(picked){setTip('写真の位置情報を確認しています…');afterPhoto(picked.dataUrl,picked.file,picked.exif);}
 };
 document.getElementById('btn-lib').onclick=async function(){
   var picked=await pickPhoto(false);
-  if(picked) afterPhoto(picked.dataUrl,picked.file,picked.exif);
+  if(picked){setTip('写真の位置情報を確認しています…');afterPhoto(picked.dataUrl,picked.file,picked.exif);}
 };
 
 function validPhotoGps(g){
+  if(!g||g.latitude==null||g.longitude==null)return false;
   var lat=Number(g&&g.latitude),lng=Number(g&&g.longitude);
   return isFinite(lat)&&isFinite(lng)&&lat>=-90&&lat<=90&&lng>=-180&&lng<=180;
 }
@@ -201,6 +199,16 @@ function gpsFromNativeExif(exif){
   }catch(e){return null;}
 }
 
+function dateFromNativeExif(exif){
+  if(!exif)return null;
+  try{
+    if(typeof exif==='string')exif=JSON.parse(exif);
+    var raw=exif.DateTimeOriginal||exif.DateTimeDigitized||exif.CreateDate||'';
+    var m=String(raw).match(/^(\d{4}):?(\d{2}):?(\d{2})/);
+    return m?m[1]+'-'+m[2]+'-'+m[3]:null;
+  }catch(e){return null;}
+}
+
 function startManualPhotoPlacement(dataUrl,date){
   var c=map.getCenter();
   startPlacing(c.lat,c.lng,{photo:dataUrl,date:date,manualPhotoLocation:true});
@@ -212,6 +220,7 @@ function askPhotoLocation(dataUrl,date,gps){
     startManualPhotoPlacement(dataUrl,date);
     return;
   }
+  var decided=false;
   var s=showSheet('<div class="grab"></div><div class="pad photo-location-choice">'+
     '<div class="photo-location-kicker">写真の位置情報</div>'+
     '<h2>撮影した場所を使いますか？</h2>'+
@@ -219,22 +228,33 @@ function askPhotoLocation(dataUrl,date,gps){
     '<button class="btn" id="photo-gps-yes">はい、写真の位置を使う</button>'+
     '<button class="btn g" id="photo-gps-no">いいえ、地図から選ぶ</button>'+
     '<button class="photo-location-cancel" id="photo-gps-cancel">キャンセル</button>'+
-    '</div>');
+    '</div>',function(){if(!decided)setTip('写真の追加をキャンセルしました');});
   s.querySelector('#photo-gps-yes').onclick=function(){
+    decided=true;
     closeSheet();
     startPlacing(gps.lat,gps.lng,{photo:dataUrl,date:date,photoGps:true});
   };
   s.querySelector('#photo-gps-no').onclick=function(){
+    decided=true;
     closeSheet();
     startManualPhotoPlacement(dataUrl,date);
   };
-  s.querySelector('#photo-gps-cancel').onclick=closeSheet;
+  s.querySelector('#photo-gps-cancel').onclick=function(){decided=true;closeSheet();setTip('写真の追加をキャンセルしました');};
 }
 
 /* 写真を受け取ったあとの流れ。EXIF GPSを確認してから位置を決める */
 async function afterPhoto(dataUrl,file,nativeExif){
-  var gps=gpsFromNativeExif(nativeExif),date=null;
-  await need('exifr');
+  var gps=gpsFromNativeExif(nativeExif),date=dateFromNativeExif(nativeExif);
+  // ネイティブではCamera pluginが元画像のEXIFを返す。
+  // 外部exifrの読込を待たず、カメラ・ライブラリ選択直後に次へ進む。
+  if(isApp&&nativeExif!=null){
+    askPhotoLocation(dataUrl,date,gps);
+    return;
+  }
+  await Promise.race([
+    need('exifr'),
+    new Promise(function(resolve){setTimeout(function(){resolve(false);},4000);})
+  ]);
   try{
     if(typeof exifr!=='undefined'){
       var target=file||dataUrl;
@@ -253,7 +273,10 @@ async function afterPhoto(dataUrl,file,nativeExif){
   document.getElementById(id).onchange=async function(e){
     var f=e.target.files[0]; if(!f)return; e.target.value='';
     setTip('写真を読み込んでいます…');
-    shrink(f,function(url){ if(url) afterPhoto(url,f); });
+    shrink(f,function(url){
+      if(url)afterPhoto(url,f);
+      else setTip('写真を読み込めませんでした。形式や容量を確認してください');
+    });
   };
 });
 
