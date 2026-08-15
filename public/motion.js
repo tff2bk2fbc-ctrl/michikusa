@@ -146,22 +146,14 @@
     if(!node)return;
     var nextValue=String(value);
     var spans=node.querySelectorAll('span');
-    var current=spans.length?spans[spans.length-1]:null;
+    var current=spans.length?spans[0]:null;
     if(!current){
       current=document.createElement('span');current.textContent=node.textContent||'0';
       node.textContent='';node.appendChild(current);
     }
     if(current.textContent===nextValue)return;
     Array.prototype.forEach.call(spans,function(span){if(span!==current)span.remove();});
-    clearTimeout(node.__spotaRollTimer);
-    current.style.transition='none';current.style.transform='translateY(0)';void current.offsetWidth;current.style.transition='';
-    var before=Number(current.textContent)||0,after=Number(value)||0,up=after>before;
-    var next=document.createElement('span');next.textContent=nextValue;
-    next.style.transform='translateY('+(up?18:-18)+'px)';node.appendChild(next);
-    requestAnimationFrame(function(){
-      current.style.transform='translateY('+(up?-18:18)+'px)';next.style.transform='translateY(0)';
-    });
-    node.__spotaRollTimer=setTimeout(function(){if(current.isConnected)current.remove();},420);
+    current.textContent=nextValue;
   }
 
   function restartClass(node,name,duration){

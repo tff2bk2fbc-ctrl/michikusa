@@ -5,11 +5,79 @@
    下へ払うと閉じる。
    ============================================================ */
 let viewerEl=null;
+let viewerOpenSerial=0;
+let viewerPending=null;
+const PHOTO_VIEW_TIMEOUT_MS=20000;
+
+function finishPendingViewer(pending){
+  if(!pending||pending.done)return;
+  pending.done=true;
+  clearTimeout(pending.timer);
+  if(pending.waitId&&window.SpotaMotion)window.SpotaMotion.endWait(pending.waitId);
+  pending.waitId=0;
+  if(viewerPending===pending)viewerPending=null;
+}
+function cancelPendingViewer(){
+  var pending=viewerPending;
+  if(!pending)return;
+  viewerPending=null;pending.cancelled=true;
+  if(pending.controller&&!pending.controller.signal.aborted)pending.controller.abort();
+  finishPendingViewer(pending);
+}
+function pendingViewerIsCurrent(pending,auth){
+  return !!(pending&&!pending.cancelled&&viewerPending===pending&&
+    pending.serial===viewerOpenSerial&&typeof authIsCurrent==='function'&&authIsCurrent(auth));
+}
 
 function openViewer(list, idx, who, place, cap, when, tags, photoIds){
   closeViewer();
   idx=idx||0;
   var previousFocus=document.activeElement;
+  var serial=++viewerOpenSerial;
+  var photoId=photoIds&&photoIds[idx];
+
+  // サーバー写真は高解像度版が実際に取れてから詳細を開く。
+  // 400ms以上かかった時だけ、承認済みの待機カメラが地図の中央に現れる。
+  if(photoId&&fbUser){
+    var waitId=window.SpotaMotion?window.SpotaMotion.beginWait('写真を読み込んでいます'):0;
+    var controller=new AbortController();
+    var pending={serial:serial,controller:controller,waitId:waitId,timer:0,auth:null,done:false,cancelled:false};
+    viewerPending=pending;
+    pending.timer=setTimeout(function(){
+      if(viewerPending!==pending)return;
+      pending.cancelled=true;viewerPending=null;
+      if(!controller.signal.aborted)controller.abort();
+      finishPendingViewer(pending);
+    },PHOTO_VIEW_TIMEOUT_MS);
+    captureAuth().then(function(auth){
+      pending.auth=auth;
+      if(!pendingViewerIsCurrent(pending,auth))throw Object.assign(new Error('stale viewer'),{name:'AbortError'});
+      return apiAs(auth,'/api/photo/'+encodeURIComponent(photoId)+'/view',{signal:controller.signal}).then(function(r){
+        if(!r.ok)throw new Error('view '+r.status);
+        return r.blob().then(function(blob){
+          if(!pendingViewerIsCurrent(pending,auth))throw Object.assign(new Error('stale viewer'),{name:'AbortError'});
+          return {auth:auth,url:URL.createObjectURL(blob)};
+        });
+      });
+    }).then(function(preloaded){
+      if(!pendingViewerIsCurrent(pending,preloaded.auth)){
+        URL.revokeObjectURL(preloaded.url);finishPendingViewer(pending);return;
+      }
+      finishPendingViewer(pending);
+      openViewerReady(list,idx,who,place,cap,when,tags,photoIds,previousFocus,preloaded.auth,preloaded.url);
+    }).catch(function(e){
+      var mayFallback=e&&e.name!=='AbortError'&&pendingViewerIsCurrent(pending,pending.auth);
+      finishPendingViewer(pending);
+      if(mayFallback)openViewerReady(list,idx,who,place,cap,when,tags,photoIds,previousFocus,null,null);
+    });
+    return;
+  }
+  openViewerReady(list,idx,who,place,cap,when,tags,photoIds,previousFocus,null,null);
+}
+
+function openViewerReady(list, idx, who, place, cap, when, tags, photoIds, previousFocus, initialAuth, initialUrl){
+  list=(list||[]).slice();
+  if(initialUrl)list[idx]=initialUrl;
   var v=el('<div class="viewer" role="dialog" aria-modal="true" aria-label="写真を見る">'+
     '<div class="vw-bar">'+
       '<div class="av"'+(list[0]?' style="background-image:url('+
@@ -27,7 +95,7 @@ function openViewer(list, idx, who, place, cap, when, tags, photoIds){
     '<div class="vw-meta">'+esc(when||'')+(place?('　'+esc(place)):'')+'</div>'+
   '</div>');
   document.body.appendChild(v);
-  v.__previousFocus=previousFocus;v.__blobUrls=[];
+  v.__previousFocus=previousFocus;v.__blobUrls=initialUrl?[initialUrl]:[];v.__viewControllers=[];
   v.__inert=[];Array.prototype.forEach.call(document.body.children,function(node){
     if(node!==v&&node.id!=='spota-wait'&&node.id!=='spota-wait-status'&&!node.inert){node.inert=true;v.__inert.push(node);}
   });
@@ -51,25 +119,31 @@ function openViewer(list, idx, who, place, cap, when, tags, photoIds){
     if(e.key==='Tab'){e.preventDefault();v.querySelector('.x').focus();}
   };
 
-  var viewAuth=null,viewLoaded={};
+  var viewAuth=initialAuth||null,viewLoaded={};
+  if(initialUrl)viewLoaded[idx]=1;
   function loadAround(center){
     if(!viewAuth)return;
     [center-1,center,center+1].forEach(function(i){
       var id=photoIds&&photoIds[i];if(!id||viewLoaded[i])return;viewLoaded[i]=1;
       var waitId=i===center&&window.SpotaMotion?window.SpotaMotion.beginWait('写真を読み込んでいます'):0;
-      apiAs(viewAuth,'/api/photo/'+encodeURIComponent(id)+'/view').then(function(r){
+      var controller=new AbortController();v.__viewControllers.push(controller);
+      apiAs(viewAuth,'/api/photo/'+encodeURIComponent(id)+'/view',{signal:controller.signal}).then(function(r){
         if(!r.ok)throw new Error('view '+r.status);return r.blob();
       }).then(function(blob){
-        if(viewerEl!==v)return;
+        if(viewerEl!==v||!authIsCurrent(viewAuth))return;
         var u=URL.createObjectURL(blob),im=track.children[i];
         if(!im){URL.revokeObjectURL(u);return;}
         v.__blobUrls.push(u);im.src=u;
-      }).catch(function(){delete viewLoaded[i];}).finally(function(){if(waitId)window.SpotaMotion.endWait(waitId);});
+      }).catch(function(e){if(!e||e.name!=='AbortError')delete viewLoaded[i];}).finally(function(){
+        v.__viewControllers=v.__viewControllers.filter(function(item){return item!==controller;});
+        if(waitId)window.SpotaMotion.endWait(waitId);
+      });
     });
   }
-  if(photoIds&&photoIds.length&&fbUser){
+  if(viewAuth)loadAround(idx);
+  else if(photoIds&&photoIds.length&&fbUser){
     captureAuth().then(function(auth){
-      if(viewerEl!==v)return;viewAuth=auth;loadAround(idx);
+      if(viewerEl!==v||!authIsCurrent(auth))return;viewAuth=auth;loadAround(idx);
     }).catch(function(){});
   }
 
@@ -94,8 +168,12 @@ function openViewer(list, idx, who, place, cap, when, tags, photoIds){
   },{passive:true});
 }
 function closeViewer(){
+  viewerOpenSerial++;
+  cancelPendingViewer();
   if(!viewerEl)return;
   var v=viewerEl; viewerEl=null;
+  (v.__viewControllers||[]).forEach(function(controller){if(!controller.signal.aborted)controller.abort();});
+  v.__viewControllers=[];
   (v.__blobUrls||[]).forEach(function(u){URL.revokeObjectURL(u);});
   (v.__inert||[]).forEach(function(node){node.inert=false;});
   if(v.__previousFocus&&v.__previousFocus.isConnected)v.__previousFocus.focus();
@@ -367,7 +445,7 @@ map.on('click',function(e){
 
   var cluster=nearest(['photo-cluster','photo-cluster-count']);
   if(cluster){
-    var source=map.getSource('photo');
+    var source=map.getSource('spota-photo');
     var clusterId=Number(cluster.properties&&cluster.properties.cluster_id);
     var center=cluster.geometry&&cluster.geometry.coordinates;
     if(source&&isFinite(clusterId)&&center){
@@ -378,10 +456,12 @@ map.on('click',function(e){
     return;
   }
 
-  var f=nearest(['photo-ic','photo-pending','photo-pending-count','mine-ring','mine-ic']);
+  var f=nearest(['photo-ic','photo-same-cluster','photo-same-cluster-count','photo-pending','mine-ring','mine-ic']);
   if(f){
     var s=recordForFeature(visibleOwnSpots(),f);
     if(s){ openPlace(s,true); return; }
+    var publicPhoto=recordForFeature(visibleOtherSpots(),f);
+    if(publicPhoto){openPlace(publicPhoto,false);return;}
   }
 
   f=nearest(['frnd-ring','frnd-ic']);

@@ -183,6 +183,13 @@ function retint(st){
 // 現在の権限確認が終わる前は日本全体の中立表示だけを使う。
 try{localStorage.removeItem('spota_last_location');}catch(e){}
 var initialMapView={center:[138.2529,36.2048],zoom:4.6};
+var initialMapWaitId=window.SpotaMotion?window.SpotaMotion.beginWait('地図を読み込んでいます'):0;
+var initialMapWaitTimer=setTimeout(finishInitialMapLoad,20000);
+function finishInitialMapLoad(){
+  clearTimeout(initialMapWaitTimer);
+  if(initialMapWaitId&&window.SpotaMotion)window.SpotaMotion.endWait(initialMapWaitId);
+  initialMapWaitId=0;
+}
 const map=new maplibregl.Map({
   container:'map',
   /* 以前は「元の色で読む → 色を変えて差し替える」の2段階だった。
@@ -221,15 +228,15 @@ window.__michikusaMap=map;
     window.__tStyle=Math.round(performance.now()-t0);
     mark('見た目を取得');
     map.setStyle(retint(baseStyle),{diff:false});
-    map.once('styledata',function(){ afterStyle(); });
-  }catch(e){ showErr('[style] '+dump(e)); hideSplash(); }
+    map.once('style.load',function(){ setTimeout(afterStyle,0); });
+  }catch(e){ showErr('[style] '+dump(e)); hideSplash(); finishInitialMapLoad(); }
 })();
 /* 最初のタイルだけではまだ地図は未完成。afterStyle後に起動画面を引く。 */
 function applyTint(){
   try{
     if(!baseStyle)return;
     map.setStyle(retint(baseStyle),{diff:false});
-    map.once('styledata',function(){ afterStyle(); });
+    map.once('style.load',function(){ setTimeout(afterStyle,0); });
   }catch(e){ showErr('[applyTint] '+dump(e)); }
 }
 /* 3Dの建物。起動時に描くと重いので、あとから足す */
@@ -274,6 +281,12 @@ function afterStyle(){
   addPlaceLayers();
   render(true);
   hideSplash();
+  // 背景タイルと写真レイヤーまで描画し終えた時点を、地図ロードの完了とする。
+  // 400ms未満なら SpotaMotion 側が待機カメラを一度も表示しない。
+  if(initialMapWaitId){
+    if(map.loaded())finishInitialMapLoad();
+    else map.once('idle',finishInitialMapLoad);
+  }
 
   /* map.jsの通信が速いと、後ろにあるnative.jsより先にここへ来る。
      別ファイルの変数を直接読むと未定義になるため、双方が準備できた時点で
@@ -389,7 +402,7 @@ function fcOf(list,mine){
       return {type:'Feature',geometry:{type:'Point',coordinates:[p.lng,p.lat]},
         properties:{rid:String(p.id||p.server_id||p.spot||''),lat:p.lat,lng:p.lng,
         n:p.n,c:p.c||'景',icon:pickIcon(p.c||'景'),mine:mine?1:0,
-        hot:p.hot?1:0, spot:p.spot||0}};
+        hot:p.hot?1:0,spot:p.spot||0,has_photo:(p.photo||p.server_photo_id)?1:0}};
     })};
 }
 
@@ -413,11 +426,11 @@ function addPlaceLayers(){
   map.addSource('spot',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('frnd',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
   map.addSource('mine',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
-  map.addSource('photo',{
+  map.addSource('spota-photo',{
     type:'geojson',
     data:{type:'FeatureCollection',features:[]},
     // 画面上で近い写真は、場所名や座標の丸め値ではなく実際の描画距離でまとめる。
-    cluster:true,clusterRadius:48,clusterMaxZoom:24,maxzoom:24,
+    cluster:true,clusterRadius:48,clusterMaxZoom:23,maxzoom:24,
     // 同一座標にまとめた写真数も、画面距離クラスターの件数へ加算する。
     clusterProperties:{photo_count:['+',['get','photo_count']]}
   });
@@ -452,11 +465,11 @@ function addPlaceLayers(){
     'icon-opacity':.8}});
 
   // フレンドの思い出
-  map.addLayer({id:'frnd-ring',type:'circle',source:'frnd',paint:{
+  map.addLayer({id:'frnd-ring',type:'circle',source:'frnd',filter:['!=',['get','has_photo'],1],paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],12,4,15,6.5,18,9],
     'circle-color':'#1E88E5',
     'circle-stroke-color':night?'#000000':'#FFFFFF','circle-stroke-width':2.2}});
-  map.addLayer({id:'frnd-ic',type:'symbol',source:'frnd',minzoom:14,layout:{
+  map.addLayer({id:'frnd-ic',type:'symbol',source:'frnd',minzoom:14,filter:['!=',['get','has_photo'],1],layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],14,.8,17,1.05],
     'icon-allow-overlap':true,'icon-optional':true,'icon-offset':[0,-24],
@@ -467,11 +480,11 @@ function addPlaceLayers(){
     'text-halo-color':night?'#000000':'#FFFFFF','text-halo-width':1.7}});
 
   // 自分の思い出がある場所
-  map.addLayer({id:'mine-ring',type:'circle',source:'mine',paint:{
+  map.addLayer({id:'mine-ring',type:'circle',source:'mine',filter:['!=',['get','has_photo'],1],paint:{
     'circle-radius':['interpolate',['linear'],['zoom'],12,5,15,8,18,11],
     'circle-color':night?'#FAFAFA':'#111111',
     'circle-stroke-color':PAL().halo,'circle-stroke-width':2.4}});
-  map.addLayer({id:'mine-ic',type:'symbol',source:'mine',minzoom:13.5,layout:{
+  map.addLayer({id:'mine-ic',type:'symbol',source:'mine',minzoom:13.5,filter:['!=',['get','has_photo'],1],layout:{
     'icon-image':['get','icon'],
     'icon-size':['interpolate',['linear'],['zoom'],13.5,.85,17,1.15],
     'icon-allow-overlap':true,'icon-optional':true,'icon-offset':[0,-26],
@@ -482,45 +495,50 @@ function addPlaceLayers(){
     'text-halo-color':PAL().halo,'text-halo-width':1.8}});
 
   // 写真同士が重なる場所。件数を一つの数字で示し、押すと中身へ寄る。
-  map.addLayer({id:'photo-cluster',type:'circle',source:'photo',minzoom:4,
+  map.addLayer({id:'photo-cluster',type:'circle',source:'spota-photo',minzoom:4,
     filter:['has','point_count'],paint:{
-      'circle-radius':['step',['get','photo_count'],18,10,21,30,25],
-      'circle-color':night?'#F4F4F5':'#111111',
-      'circle-stroke-color':night?'#171719':'#FFFFFF',
-      'circle-stroke-width':2.5,
-      'circle-opacity':0.96
+      'circle-radius':23,
+      'circle-color':'#111111',
+      'circle-stroke-color':'#FFFFFF',
+      'circle-stroke-width':3,
+      'circle-opacity':1
     }});
-  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'photo',minzoom:4,
+  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'spota-photo',minzoom:4,
     filter:['has','point_count'],layout:{
-      'text-field':['get','photo_count'],
-      'text-size':['step',['get','photo_count'],12,10,13,30,14],
+      'text-field':['to-string',['get','photo_count']],
+      'text-font':['Noto Sans Bold'],'text-size':14,
       'text-allow-overlap':true
-    },paint:{'text-color':night?'#111111':'#FFFFFF'}});
+    },paint:{'text-color':'#FFFFFF'}});
+
+  // 最大ズームでも同じ座標に重なる写真は、サムネイルを重ねず46pxの数字へまとめる。
+  map.addLayer({id:'photo-same-cluster',type:'circle',source:'spota-photo',minzoom:4,
+    filter:['all',['!',['has','point_count']],['>', ['get','photo_count'],1]],paint:{
+      'circle-radius':23,'circle-color':'#111111','circle-stroke-color':'#FFFFFF',
+      'circle-stroke-width':3,'circle-opacity':1
+    }});
+  map.addLayer({id:'photo-same-cluster-count',type:'symbol',source:'spota-photo',minzoom:4,
+    filter:['all',['!',['has','point_count']],['>', ['get','photo_count'],1]],layout:{
+      'text-field':['to-string',['get','photo_count']],'text-font':['Noto Sans Bold'],
+      'text-size':14,'text-allow-overlap':true
+    },paint:{'text-color':'#FFFFFF'}});
 
   // 写真本体の読込中でも、地図から記録そのものを消さない。
-  map.addLayer({id:'photo-pending',type:'circle',source:'photo',minzoom:4,
-    filter:['all',['!',['has','point_count']],['==',['get','ready'],0]],paint:{
-      'circle-radius':['case',['>', ['get','photo_count'],1],16,5],
+  map.addLayer({id:'photo-pending',type:'circle',source:'spota-photo',minzoom:4,
+    filter:['all',['!',['has','point_count']],['==',['get','ready'],0],['==',['get','photo_count'],1]],paint:{
+      'circle-radius':5,
       'circle-color':night?'#F4F4F5':'#111111',
       'circle-stroke-color':night?'#171719':'#FFFFFF','circle-stroke-width':2
     }});
-  map.addLayer({id:'photo-pending-count',type:'symbol',source:'photo',minzoom:4,
-    filter:['all',['!',['has','point_count']],['==',['get','ready'],0],['>', ['get','photo_count'],1]],layout:{
-      'text-field':['get','photo_count'],'text-size':12,'text-allow-overlap':true
-    },paint:{'text-color':night?'#111111':'#FFFFFF'}});
 
   // 写真の丸。地図の中に描くので、ズームしてもずれない。
   // クラスタに入っておらず、画像の準備が終わった写真だけを描く。
-  map.addLayer({id:'photo-ic',type:'symbol',source:'photo',minzoom:PHOTO_ZOOM,
-    filter:['all',['!',['has','point_count']],['==',['get','ready'],1]],layout:{
+  map.addLayer({id:'photo-ic',type:'symbol',source:'spota-photo',minzoom:PHOTO_ZOOM,
+    filter:['all',['!',['has','point_count']],['==',['get','ready'],1],['==',['get','photo_count'],1]],layout:{
     'icon-image':['get','icon'],
-    /* 76px で出したいので、128 で描いたものを縮める。
-       画面の細かさに合わせて2倍で登録しているぶん、値は半分になる */
-    'icon-size':['interpolate',['linear'],['zoom'],
-       PHOTO_ZOOM,['case',['==',['get','mine'],1],0.59,0.52],
-       19,        ['case',['==',['get','mine'],1],0.76,0.66]],
+    // プレビューと同じ54×62px。画像側を2倍で登録して高密度画面でもぼかさない。
+    'icon-size':1,
     'icon-allow-overlap':true,'icon-anchor':'bottom','icon-offset':[0,4],
-    'text-field':['get','n'],'text-size':11,'text-offset':[0,0.6],'text-anchor':'top',
+    'text-field':['get','n'],'text-font':['Noto Sans Regular'],'text-size':11,'text-offset':[0,0.6],'text-anchor':'top',
     'text-optional':true,'text-max-width':8
   },paint:{
     'text-color':PAL().text,
@@ -579,37 +597,32 @@ function makeRoundIcon(url,mine,key,count){
 
   im.onload=function(){
     try{
-      /* 形は地図の見た目によらず同じ。
-         角をわずかに落とした四角。尖りは出さない */
-      var S=128, ring=5, r=S*0.13;
-      var H=S;
+      /* 承認済みプレビューの写真ピンを2倍で描く。
+         表示寸法54×62px、写真48px、白枠3px、角丸15px、下の白い尾10px。 */
+      var S=108,H=124,photo=96,ring=6,r=30,ox=6;
       var cv=document.createElement('canvas');
       cv.width=S; cv.height=H;
       var x=cv.getContext('2d',{willReadFrequently:true});
-
-      var frame = mine ? (night?'#FAFAFA':'#111111') : (night?'#101010':'#FFFFFF');
       var s=Math.min(im.width,im.height);
 
-      // 枠
-      x.fillStyle=frame;
-      roundRect(x, 0, 0, S, S, r);
+      // 写真の後ろにある白い尾。
+      x.save();x.translate(50,96);x.rotate(Math.PI/4);
+      x.shadowColor='rgba(29,35,29,.15)';x.shadowBlur=16;x.shadowOffsetX=8;x.shadowOffsetY=8;
+      x.fillStyle='#FFFFFF';x.fillRect(-10,-10,20,20);x.restore();
+
+      // 白枠と、プレビューと同じ控えめな影。
+      x.save();x.shadowColor='rgba(29,35,29,.28)';x.shadowBlur=32;x.shadowOffsetY=12;
+      x.fillStyle='#FFFFFF';
+      roundRect(x, ox, 0, photo, photo, r);
       x.fill();
+      x.restore();
 
       // 中に写真
       x.save();
-      roundRect(x, ring, ring, S-ring*2, S-ring*2, Math.max(0, r-ring*0.6));
+      roundRect(x, ox+ring, ring, photo-ring*2, photo-ring*2, r-ring);
       x.clip();
-      x.drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,ring,ring,S-ring*2,S-ring*2);
+      x.drawImage(im,(im.width-s)/2,(im.height-s)/2,s,s,ox+ring,ring,photo-ring*2,photo-ring*2);
       x.restore();
-
-      if(count>1){
-        var badge=25,bx=S-badge-3,by=3;
-        x.fillStyle=mine?(night?'#F2F2F4':'#111111'):(night?'#F2F2F4':'#FFFFFF');
-        x.beginPath();x.arc(bx+badge/2,by+badge/2,badge/2,0,Math.PI*2);x.fill();
-        x.fillStyle=mine?(night?'#111111':'#FFFFFF'):(night?'#111111':'#111111');
-        x.font='700 '+(count>99?'11px':'15px')+' -apple-system,system-ui,sans-serif';x.textAlign='center';x.textBaseline='middle';
-        x.fillText(count>99?'99+':String(count),bx+badge/2,by+badge/2+.5);
-      }
 
       var dat=x.getImageData(0,0,S,H);
       if(map.hasImage(key))map.removeImage(key);
@@ -683,6 +696,6 @@ function photoFeatures(){
   return out;
 }
 function refreshPhotoSource(){
-  if(map.getSource('photo'))
-    map.getSource('photo').setData({type:'FeatureCollection',features:photoFeatures()});
+  if(map.getSource('spota-photo'))
+    map.getSource('spota-photo').setData({type:'FeatureCollection',features:photoFeatures()});
 }

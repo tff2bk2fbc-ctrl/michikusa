@@ -470,9 +470,9 @@ body.placing .map-locate{display:none}
 .timeline-follow.on .follow-check{transform:rotate(-45deg) scale(1)}
 .timeline-follow.follow-confirm .follow-check{animation:followCheck .4s cubic-bezier(.34,1.56,.64,1) .12s forwards}
 @keyframes followCheck{from{transform:rotate(-45deg) scale(0)}to{transform:rotate(-45deg) scale(1)}}
-.timeline-photo{position:relative;display:block;width:100%;padding:0;background:var(--chip);aspect-ratio:4/5;overflow:hidden}
+.timeline-photo{position:relative;display:block;width:100%;padding:0;background:var(--chip);aspect-ratio:4/5;overflow:hidden;border-radius:24px}
 .timeline-photo img{width:100%;height:100%;display:block;object-fit:cover;opacity:0;transition:opacity .2s}.timeline-photo img.loaded{opacity:1}
-.timeline-like-heart{position:absolute;left:50%;top:50%;z-index:2;color:#fff;font-size:76px;line-height:1;
+.timeline-like-heart{position:absolute;left:50%;top:50%;z-index:2;width:90px;height:90px;display:grid;place-items:center;color:#fff;font-size:76px;line-height:1;
   opacity:0;transform:translate(-50%,-50%) scale(.3);text-shadow:0 6px 18px rgba(0,0,0,.28);pointer-events:none}
 .timeline-like-particles{position:absolute;inset:0;z-index:2;pointer-events:none}
 .timeline-like-particles i{position:absolute;left:50%;top:50%;width:7px;height:7px;border-radius:50%;background:#fff;opacity:0}
@@ -486,14 +486,17 @@ body.placing .map-locate{display:none}
 .timeline-copy p{margin-top:7px;font-size:13.5px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
 .timeline-actions{display:flex;align-items:center;gap:5px;margin-top:12px;border-top:1px solid var(--line);padding-top:7px}
 .timeline-actions button{min-width:48px;min-height:44px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--dim)}
+.timeline-actions button[data-like]{min-width:54px;min-height:48px;gap:7px}
 .timeline-actions button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
 .timeline-actions button b{position:relative;width:34px;height:18px;overflow:hidden;font-size:11px;line-height:18px;text-align:left;font-variant-numeric:tabular-nums}
-.timeline-actions button b span{position:absolute;inset:0 auto auto 0;display:block;transition:transform .4s cubic-bezier(.34,1.56,.64,1)}
+.timeline-actions button b span{position:absolute;inset:0 auto auto 0;display:block}
 .timeline-actions button.on{color:var(--ink)}.timeline-actions button[data-like].on{color:#C2554A}.timeline-actions button.on svg{fill:currentColor}
 .timeline-actions button.flash svg{animation:likeFlash .8s cubic-bezier(.34,1.56,.64,1)}
+.timeline-actions button.flash b{animation:timelineCountRoll .4s cubic-bezier(.22,.61,.36,1)}
 .timeline-actions button[data-flash].on svg{fill:currentColor;stroke:currentColor}
 .timeline-actions button.flash-burst svg{animation:flashBurst .5s cubic-bezier(.18,.88,.24,1)}
-@keyframes likeFlash{0%{transform:scale(1)}22%{transform:scale(.7)}55%{transform:scale(1.3)}100%{transform:scale(1)}}
+@keyframes likeFlash{0%,100%{transform:scale(1)}28%{transform:scale(.7)}58%{transform:scale(1.3)}}
+@keyframes timelineCountRoll{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
 @keyframes flashBurst{0%{transform:scale(.72) rotate(-8deg);opacity:.3}50%{transform:scale(1.45) rotate(5deg)}100%{transform:scale(1);opacity:1}}
 .feed-more{display:block;width:calc(100% - 32px);min-height:48px;margin:18px 16px;border:1px solid var(--line);font-size:13px;font-weight:700}
 

@@ -454,8 +454,6 @@ async function handleBulk(files){
       btn.disabled=false;btn.textContent='地図に置く場所を選んでください';
       setTip('「入れる」を1か所以上選んでください');return;
     }
-    var waitId=window.SpotaMotion?window.SpotaMotion.beginWait('写真を地図へ保存しています'):0;
-    try{
     var done=0, donePlaces=0, readFailed=0, saveFailed=0,readError='',landingRec=null;
     for(var i=0;i<use.length;i++){
       var g=use[i];
@@ -504,7 +502,6 @@ async function handleBulk(files){
     if(manual.length)startManualPhotoImports(manual);
     else if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
     if(landingRec&&window.SpotaMotion)window.SpotaMotion.photoLanding(landingRec.photo,landingRec.lng,landingRec.lat);
-    }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
   };
 }
 
@@ -619,8 +616,6 @@ function openAdd(p){
   ok.onclick=async function(){
     if(activeSpotScope!==sheetScope){closeSheet();setTip('アカウントが変わったため保存を中止しました');return;}
     ok.disabled=true;ok.textContent='保存しています…';
-    var waitId=window.SpotaMotion?window.SpotaMotion.beginWait('写真を地図へ保存しています'):0;
-    try{
     var localPhoto=await photoForLocalStorage(p.photo||'');
     var rec={id:nid(),n:(nm?nm.value.trim():p.known)||p.place||'この場所',
       c:cat,lat:p.lat,lng:p.lng,place:p.place||'',
@@ -645,7 +640,6 @@ function openAdd(p){
       }
       if(o)render(true);
     });
-    }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
   };
   if(!p.known&&!p.photo&&nm) setTimeout(function(){nm.focus();},340);
 }

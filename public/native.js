@@ -233,17 +233,20 @@ function showMe(lat,lng,acc){
   meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
   if(window.SpotaMotion)window.SpotaMotion.pulseLocation(d);
 }
-async function goHome(quiet){
-  var p=await whereAmI();
-  if(!p){
-    if(!quiet) setTip('現在地を使えません。設定から許可してください');
-    autoLoad(true);                 // 位置が取れなくても、いま見えている辺りは読む
-    return;
-  }
-  locDone=true;
-  map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.4,duration:900});
-  showMe(p.lat,p.lng,p.acc);
-  setTimeout(function(){ autoLoad(true); },900);
+async function goHome(quiet,initial){
+  var waitId=initial&&window.SpotaMotion?window.SpotaMotion.beginWait('現在地を取得しています'):0;
+  try{
+    var p=await whereAmI();
+    if(!p){
+      if(!quiet) setTip('現在地を使えません。設定から許可してください');
+      autoLoad(true);                 // 位置が取れなくても、いま見えている辺りは読む
+      return;
+    }
+    locDone=true;
+    map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.4,duration:900});
+    showMe(p.lat,p.lng,p.acc);
+    setTimeout(function(){ autoLoad(true); },900);
+  }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
 }
 
 /* 地図のstyleとnative.jsは通信状況によって完了順が入れ替わる。
@@ -251,7 +254,7 @@ async function goHome(quiet){
 function requestInitialHome(){
   if(locDone||window.__homed)return;
   window.__homed=1;
-  goHome(false);
+  goHome(false,true);
 }
 window.requestInitialHome=requestInitialHome;
 if(window.__michikusaMapReady)requestInitialHome();
@@ -413,16 +416,13 @@ function shrink(file,cb){
 }
 
 document.getElementById('map-locate').onclick=async function(){
-  var btn=this,waitId=window.SpotaMotion?window.SpotaMotion.beginWait('現在地を取得しています'):0;
   setTip('現在地を取得しています…');
-  try{
-    var p=await whereAmI();
-    if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
-    locDone=true;
-    map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
-    showMe(p.lat,p.lng,p.acc);
-    setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
-  }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
+  var p=await whereAmI();
+  if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
+  locDone=true;
+  map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
+  showMe(p.lat,p.lng,p.acc);
+  setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
 };
 
 window.setColorMode=function(mode){

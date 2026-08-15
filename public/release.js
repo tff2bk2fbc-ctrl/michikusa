@@ -214,21 +214,9 @@ function renderAlbumHome(screen,host){
 }
 
 /* ---------- タイムライン / 通知 / チャット ---------- */
-function socialWaitLabel(path){
-  if(path==='/api/feed'||path.indexOf('/api/posts?')===0)return '写真を読み込んでいます';
-  if(path.indexOf('/comments')>=0)return 'コメントを読み込んでいます';
-  if(path.indexOf('/notifications')===0)return '通知を読み込んでいます';
-  if(path.indexOf('/conversations')===0)return 'メッセージを読み込んでいます';
-  return '読み込んでいます';
-}
 async function socialJson(path,options,showWait){
-  var method=String(options&&options.method||'GET').toUpperCase();
-  var shouldWait=showWait!==false&&(method==='GET'||path==='/api/feed');
-  var waitId=shouldWait&&window.SpotaMotion?window.SpotaMotion.beginWait(socialWaitLabel(path)):0;
-  try{
-    var r=await api(path,options),j=await r.json().catch(function(){return {};});
-    if(!r.ok)throw new Error(j.error||'読み込めませんでした');return j;
-  }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
+  var r=await api(path,options),j=await r.json().catch(function(){return {};});
+  if(!r.ok)throw new Error(j.error||'読み込めませんでした');return j;
 }
 function beginSocialRender(screen){screen.__socialGeneration=(screen.__socialGeneration||0)+1;return screen.__socialGeneration;}
 function socialRenderAlive(screen,host,generation){return releaseScreen===screen&&screen.isConnected&&host.isConnected&&screen.__socialGeneration===generation;}
