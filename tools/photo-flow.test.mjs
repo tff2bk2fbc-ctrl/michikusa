@@ -47,7 +47,17 @@ function loadNative(cameraResult, modernCamera) {
     navigator: {},
     map: { getCenter: () => ({ lat: 35, lng: 139 }) },
     startPlacing(lat, lng, options) { placements.push({ lat, lng, options }); },
+    showSheet() {
+      return { querySelector(selector) {
+        const id = String(selector).replace(/^#/, "");
+        if (!nodes.has(id)) nodes.set(id, nodeStub());
+        return nodes.get(id);
+      } };
+    },
+    closeSheet() {},
     setTip() {},
+    need: async () => true,
+    exifr: { gps: async () => null, parse: async () => null },
     setTimeout,
     clearTimeout,
     FileReader: class {},
@@ -115,6 +125,19 @@ test("ライブラリ選択後に写真追加フローへ進む", async () => {
   assert.equal(context.placements[0].options.manualPhotoLocation, true);
 });
 
+test("ネイティブmetadataが空でも画像本体の隠れたGPSを再解析する", async () => {
+  const context = loadNative({ dataUrl: "data:image/jpeg;base64,HIDDEN", exif: {} });
+  context.exifr.gps = async () => ({ latitude: 35.6586, longitude: 139.7454 });
+  await context.nodes.get("btn-lib").onclick();
+  assert.equal(context.placements.length, 0, "GPS確認シートの選択前には配置しない");
+  const yes = context.nodes.get("photo-gps-yes");
+  assert.ok(yes && typeof yes.onclick === "function");
+  yes.onclick();
+  assert.equal(context.placements[0].lat, 35.6586);
+  assert.equal(context.placements[0].lng, 139.7454);
+  assert.equal(context.placements[0].options.photoGps, true);
+});
+
 test("Capacitor 8の現行ライブラリAPIから新規写真を追加できる", async () => {
   let options;
   const context = loadNative(null, {
@@ -169,6 +192,13 @@ test("一括取込でネイティブEXIFを保持する", () => {
   assert.match(postSource, /__spotaExif/);
   assert.match(postSource, /candidateExif\(source\)/);
   assert.match(postSource, /gpsFromNativeExif\(nativeExif\)/);
+});
+
+test("複数選択APIがdata URLを返す端末でも0枚にしない", () => {
+  assert.match(postSource, /dataUrl:photo\.dataUrl\|\|''/);
+  assert.match(postSource, /c\.asset\|\|c\.dataUrl/);
+  assert.match(postSource, /if\(candidate\.dataUrl\)/);
+  assert.match(postSource, /new File\(\[bytes\]/);
 });
 
 test("一括取込もCapacitor 8の現行複数選択APIを使う", async () => {
@@ -230,12 +260,54 @@ test("サーバー保存済み写真だけ端末サムネイルへ整理する",
   assert.match(sync, /if\(rec\.photo&&!rec\.photo_synced\)/);
 });
 
-test("写真候補はランダム化し、原寸Blobをデッキ内へ溜めない", () => {
+test("自分の地図は3枚目より後のサーバー写真も復元キューへ入れる", () => {
+  const sync = readFileSync(new URL("../public/sync.js", import.meta.url), "utf8");
+  assert.doesNotMatch(sync, /photoLoads<3/);
+  assert.match(sync, /restoreQueue\.length>=40/);
+  assert.match(sync, /while\(restoring<2&&restoreQueue\.length\)/);
+});
+
+test("スワイプは日次候補だけに使い、意図的な選択は直接追加する", () => {
   assert.match(postSource, /secureShuffle\(candidates\)/);
   assert.match(postSource, /右へ使う・左へ使わない/);
   assert.match(postSource, /if\(use\)kept\.push\(candidate\)/);
   assert.doesNotMatch(postSource, /kept\.push\(await chosenCandidateFile/);
   assert.match(postSource, /releaseScreen!==screen/);
+  assert.match(postSource, /function chooseAlbumPhotos\(\)[\s\S]*handleBulk\(candidates\)/);
+  assert.match(postSource, /getElementById\('in-bulk'\)[\s\S]*handleBulk\(files\.map/);
+  assert.match(postSource, /openMemoryDeck\(\[\{asset:candidate\.dataUrl[\s\S]*daily:true/);
+  assert.match(postSource, /if\(!use\)discardDaily\(Daily,item\)/);
+  assert.match(postSource, /onClose:function\(finished\)\{if\(!finished\)discardDaily\(Daily,candidate\)/);
+  assert.match(postSource, /await Daily\.photo\(\{id:item\.dailyId\}\)/);
+});
+
+test("1日1枚は明示同意後のみ有効になり、不使用で送信しない", () => {
+  assert.match(postSource, /status=await Daily\.requestAuthorization\(\)/);
+  assert.match(postSource, /localStorage\.setItem\(DAILY_ENABLED,'1'\)/);
+  const decisionStart = postSource.indexOf('onDecision:function');
+  const keepStart = postSource.indexOf('onKeep:async function', decisionStart);
+  assert.ok(decisionStart > 0 && keepStart > decisionStart);
+  assert.doesNotMatch(postSource.slice(decisionStart, keepStart), /api\(|fetch\(|Daily\.photo/);
+  assert.doesNotMatch(postSource, /randomCandidate\(\{exclude:/);
+  assert.doesNotMatch(postSource, /function dailySeen|function rememberDaily/);
+});
+
+test("日次写真の準備失敗は2時間後へ再予約し、読めない候補はnative側で飛ばす", () => {
+  const plugin = readFileSync(new URL("../native/ios/DailyPhotoPlugin.swift", import.meta.url), "utf8");
+  assert.match(postSource, /function retryDaily\(plan\)[\s\S]*2\*60\*60\*1000[\s\S]*scheduleDailyCheck\(\)/);
+  assert.match(postSource, /Daily\.photo\([\s\S]{0,500}catch\(e\)\{retryDaily\(plan\)/);
+  assert.match(plugin, /skipUnavailableCandidateLocked\(assetIdentifier:/);
+  assert.match(plugin, /rememberAssetLocked\(assetIdentifier\)/);
+  assert.match(plugin, /skipUnavailableCandidateLocked\(assetIdentifier: chosen\.localIdentifier, token: token\)/);
+});
+
+test("小規模ライブラリを一巡した翌日は直近1枚を避けて新しい候補巡回を始める", () => {
+  const plugin = readFileSync(new URL("../native/ios/DailyPhotoPlugin.swift", import.meta.url), "utf8");
+  assert.match(plugin, /if chosen == nil, visibleCount > 0/);
+  assert.match(plugin, /retainedRecentAsset = visibleCount > 1 \? seenOrder\.first : nil/);
+  assert.match(plugin, /asset\.localIdentifier != retainedRecentAsset/);
+  assert.match(plugin, /resetSeenCycle = chosen != nil/);
+  assert.match(plugin, /defaults\.set\(retainedRecentAsset\.map \{ \[\$0\] \} \?\? \[\], forKey: StateKey\.seen\)/);
 });
 
 test("地図初期化はnative.jsの変数を読込前に直接参照しない", () => {

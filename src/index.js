@@ -58,7 +58,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-41"
+          build: "api-43"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
@@ -918,7 +918,7 @@ async function listFeed(url, env, me) {
                 ELSE u.public_precision END AS prec
       FROM posts p JOIN users u ON u.id=p.user_id
      WHERE p.deleted_at IS NULL AND p.publish_at<=?2
-       AND (p.visibility='public' OR
+       AND (p.user_id=?1 OR p.visibility='public' OR
             (p.visibility='friends' AND p.user_id IN (SELECT uid FROM friend)))
        AND (p.created_at<?3 OR (p.created_at=?3 AND p.id<?4))
        AND (?5='' OR (?6=1 AND EXISTS(SELECT 1 FROM post_hashtags h
@@ -1030,7 +1030,7 @@ async function putPhoto(url, request, env, me) {
     return json({ error: "画像の利用上限に達しました" }, 429);
   }
   const bytes = await readBodyLimited(request, maxBytes);
-  if (!bytes.byteLength || bytes.byteLength > maxBytes) {
+  if (!bytes || !bytes.byteLength || bytes.byteLength > maxBytes) {
     return json({ error: "画像サイズが不正です" }, 413);
   }
   if (!validImageBytes(bytes, ct)) {
@@ -1369,6 +1369,17 @@ async function putLike(postId, env, me) {
     return json({ error: "操作回数が多すぎます" }, 429);
   const post = await viewablePost(env, me, postId);
   if (!post) return json({ error: "見つかりません" }, 404);
+  const existing = await env.DB.prepare(
+    "SELECT 1 FROM post_likes WHERE post_id=? AND user_id=?"
+  ).bind(postId, me.id).first();
+  if (existing) {
+    const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_likes WHERE post_id=?")
+      .bind(postId).first();
+    return json({ ok: true, liked: true, count: Number(count && count.n) || 0, replayed: true });
+  }
+  if (!(await userLimit(env, me.id, "likes-day", dayKey(), 200, 1)) ||
+      !(await atomicLimit(env, "likes_global_day_" + dayKey(), 200_000, 1)))
+    return json({ error: "今日のいいね操作が上限です" }, 429);
   const result = await env.DB.prepare(
     "INSERT OR IGNORE INTO post_likes (post_id,user_id,created_at) VALUES (?,?,?)"
   ).bind(postId, me.id, Date.now()).run();
@@ -1388,11 +1399,14 @@ async function deleteLike(postId, env, me) {
     return json({ error: "操作回数が多すぎます" }, 429);
   const post = await viewablePost(env, me, postId);
   if (!post) return json({ error: "見つかりません" }, 404);
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM post_likes WHERE post_id=? AND user_id=?").bind(postId, me.id),
-    env.DB.prepare("DELETE FROM notifications WHERE user_id=(SELECT user_id FROM posts WHERE id=?) AND dedupe_key=?")
-      .bind(postId, `like:${postId}:${me.id}`)
-  ]);
+  const existing = await env.DB.prepare(
+    "SELECT 1 FROM post_likes WHERE post_id=? AND user_id=?"
+  ).bind(postId, me.id).first();
+  if (existing && (!(await userLimit(env, me.id, "likes-day", dayKey(), 200, 1)) ||
+      !(await atomicLimit(env, "likes_global_day_" + dayKey(), 200_000, 1))))
+    return json({ error: "今日のいいね操作が上限です" }, 429);
+  await env.DB.prepare("DELETE FROM post_likes WHERE post_id=? AND user_id=?").bind(postId, me.id).run();
+  // 通知のdedupe行は残し、解除→再いいねで同じ通知とpushを再生成させない。
   const count = await env.DB.prepare("SELECT COUNT(*) AS n FROM post_likes WHERE post_id=?")
     .bind(postId).first();
   return json({ ok: true, liked: false, count: Number(count && count.n) || 0 });
@@ -2237,7 +2251,7 @@ function validImageBytes(buffer, contentType) {
 async function readBodyLimited(request, maxBytes) {
   if (!request.body || typeof request.body.getReader !== "function") {
     const bytes = await request.arrayBuffer();
-    return bytes.byteLength <= maxBytes ? bytes : new ArrayBuffer(0);
+    return bytes.byteLength <= maxBytes ? bytes : null;
   }
   const reader = request.body.getReader();
   const chunks = [];
@@ -2250,7 +2264,7 @@ async function readBodyLimited(request, maxBytes) {
       total += value.byteLength;
       if (total > maxBytes) {
         try { await reader.cancel(); } catch (_) { /* 読み取り停止を優先 */ }
-        return new ArrayBuffer(0);
+        return null;
       }
       chunks.push(value);
     }
@@ -2265,13 +2279,16 @@ async function readBodyLimited(request, maxBytes) {
 
 /** Content-Length が無い場合も、実際に読んだUTF-8バイト数で制限する。 */
 async function limitedJson(request, maxBytes) {
-  const declared = Number(request.headers.get("Content-Length") || 0);
-  if (declared > maxBytes) return { error: json({ error: "入力が大きすぎます" }, 413) };
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+  const declaredHeader = request.headers.get("Content-Length");
+  const declared = declaredHeader == null ? null : Number(declaredHeader);
+  if (declared !== null && (!Number.isSafeInteger(declared) || declared < 0))
+    return { error: json({ error: "入力サイズが不正です" }, 400) };
+  if (declared !== null && declared > maxBytes)
     return { error: json({ error: "入力が大きすぎます" }, 413) };
-  }
+  const bytes = await readBodyLimited(request, maxBytes);
+  if (bytes === null) return { error: json({ error: "入力が大きすぎます" }, 413) };
   try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const value = JSON.parse(text);
     if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("object required");
     return { value };
@@ -2367,7 +2384,9 @@ async function cleanupTransientConfig(env) {
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'friend_request_global_day_%' AND k<>?")
       .bind("friend_request_global_day_" + today),
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'friend_accept_global_day_%' AND k<>?")
-      .bind("friend_accept_global_day_" + today)
+      .bind("friend_accept_global_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'likes_global_day_%' AND k<>?")
+      .bind("likes_global_day_" + today)
   ];
   for (const statement of statements) await statement.run();
 }

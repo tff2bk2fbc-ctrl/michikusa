@@ -164,5 +164,11 @@ test("いいね・コメント・Flashが実際のSQLite制約下で保存・再
   const unliked = await deleteLike("post-action-1", env, actor);
   assert.deepEqual(await unliked.json(), { ok: true, liked: false, count: 0 });
   assert.equal(env.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM post_likes").get().n, 0);
+  const reliked = await putLike("post-action-1", env, actor);
+  assert.equal(reliked.status, 200);
+  assert.equal(env.DB.sqlite.prepare("SELECT COUNT(*) AS n FROM post_likes").get().n, 1);
+  assert.equal(env.DB.sqlite.prepare(
+    "SELECT COUNT(*) AS n FROM notifications WHERE kind='like'"
+  ).get().n, 1, "unlike and re-like must not regenerate a notification");
   env.DB.sqlite.close();
 });

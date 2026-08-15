@@ -148,6 +148,10 @@ function dbGet(s,k){return new Promise(function(r){if(!db)return r(null);
 /* 端末データはログイン中のアカウントだけを表示・同期する。 */
 async function activateSpotScope(user){
   var seq=++spotScopeSwitch, next=spotScope(user);
+  if(next!==activeSpotScope){
+    if(typeof window.clearSharedPhotoCache==='function')window.clearSharedPhotoCache();
+    if(typeof window.invalidatePhotoRestoreQueue==='function')window.invalidatePhotoRestoreQueue();
+  }
   activeSpotScope=next;
   spots=[];
   if(typeof others!=='undefined')others={};

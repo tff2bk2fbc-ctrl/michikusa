@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import worker, { friendRequest, geocode } from "../src/index.js";
 
@@ -112,4 +113,28 @@ test("cached geocode responses still pass through the client burst limiter", asy
     if (previousCaches === undefined) delete globalThis.caches;
     else globalThis.caches = previousCaches;
   }
+});
+
+test("chunked JSON is stopped at the byte limit before full body expansion", async () => {
+  const chunks = Array.from({ length: 6 }, () => new Uint8Array(900).fill(0x61));
+  const stream = new ReadableStream({
+    pull(controller) {
+      const next = chunks.shift();
+      if (next) controller.enqueue(next);
+      else controller.close();
+    }
+  });
+  const request = new Request("https://spota.test/api/geocode", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: stream, duplex: "half"
+  });
+  const response = await geocode(request, {
+    GEOCODE_RATE_LIMITER: { limit: async () => ({ success: true }) }
+  });
+  assert.equal(response.status, 413);
+
+  const source = readFileSync(new URL("../src/index.js", import.meta.url), "utf8");
+  const start = source.indexOf("async function limitedJson");
+  const end = source.indexOf("function hourKey", start);
+  assert.doesNotMatch(source.slice(start, end), /request\.text\(\)/);
+  assert.match(source.slice(start, end), /readBodyLimited\(request, maxBytes\)/);
 });

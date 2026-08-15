@@ -104,6 +104,13 @@ function secureShuffle(list){
 async function chosenCandidateFile(candidate,index){
   if(candidate instanceof Blob)return candidate;
   if(candidate.file)return candidate.file;
+  if(candidate.dataUrl){
+    var match=/^data:(image\/[A-Za-z0-9.+-]+);base64,(.*)$/i.exec(candidate.dataUrl);
+    if(!match)throw new Error('写真データが不正です');
+    var raw=atob(match[2]),bytes=new Uint8Array(raw.length);for(var n=0;n<raw.length;n++)bytes[n]=raw.charCodeAt(n);
+    var direct=new File([bytes],'memory-'+index+'.jpg',{type:match[1]});
+    if(candidate.exif)Object.defineProperty(direct,'__spotaExif',{value:candidate.exif});candidate.file=direct;return direct;
+  }
   if(!candidate.asset)throw new Error('写真参照なし');
   var assetUrl=new URL(candidate.asset,location.href);
   // ネイティブプラグインがアプリ内へ渡した写真だけを読む。外部URLは許可しない。
@@ -119,12 +126,13 @@ async function chosenCandidateFile(candidate,index){
   return f;
 }
 function candidateExif(candidate){return candidate&&candidate.exif||(candidate&&candidate.file&&candidate.file.__spotaExif)||candidate&&candidate.__spotaExif||null;}
-function openMemoryDeck(candidates){
-  candidates=secureShuffle(candidates).slice(0,200);if(!candidates.length){setTip('選ばれませんでした');return;}
-  var screen=makeReleaseScreen('写真を選ぶ'),body=screen.querySelector('.release-body');screen.classList.add('memory-deck-screen');
+function openMemoryDeck(candidates,options){
+  options=options||{};
+  candidates=(options.daily?candidates.slice(0,1):secureShuffle(candidates).slice(0,200));if(!candidates.length){setTip('選ばれませんでした');return;}
+  var screen=makeReleaseScreen(options.daily?'今日の1枚':'写真を選ぶ'),body=screen.querySelector('.release-body');screen.classList.add('memory-deck-screen');
   body.innerHTML='<section class="memory-deck"><header><p><b id="deck-step">1</b> / '+candidates.length+'</p><span>右へ使う・左へ使わない</span></header><div class="memory-stage"><div class="memory-card" id="memory-card"><img id="memory-card-img" alt="選択する写真"><span class="memory-choice no">使わない</span><span class="memory-choice yes">使う</span></div></div><div class="memory-deck-actions"><button type="button" id="memory-no">使わない</button><button type="button" id="memory-yes">使う</button></div><div class="sr-only" id="memory-live" aria-live="polite"></div></section>';
-  var card=body.querySelector('#memory-card'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true;
-  screen.__onClose=function(){alive=false;if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}};
+  var card=body.querySelector('#memory-card'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true,finishing=false;
+  screen.__onClose=function(){alive=false;if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}if(options.onClose)options.onClose(finishing);};
   function preview(){
     if(!alive||releaseScreen!==screen||!screen.isConnected)return;
     if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}
@@ -137,12 +145,14 @@ function openMemoryDeck(candidates){
     var candidate=candidates[at++];
     // デッキ中は原寸Blobを保持せず参照だけを残す。採用後の解析時に1枚ずつ読む。
     if(use)kept.push(candidate);
+    if(options.onDecision)options.onDecision(use,candidate);
     setTimeout(function(){if(!alive||releaseScreen!==screen)return;busy=false;preview();},220);
   }
   function finish(){
     if(!alive||releaseScreen!==screen||!screen.isConnected)return;
-    if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}alive=false;screen.__onClose=null;closeReleaseScreen();
-    if(!kept.length){setTip('使う写真は選ばれませんでした');return;}
+    if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}finishing=true;alive=false;closeReleaseScreen();
+    if(!kept.length){setTip(options.daily?'今日の候補は使いません':'使う写真は選ばれませんでした');return;}
+    if(options.onKeep){options.onKeep(kept[0]);return;}
     setTip(kept.length+'枚を確認します');handleBulk(kept);
   }
   var dragging=false,locked=false,pointer=0,sx=0,lastX=0,lastT=0,vx=0;
@@ -152,17 +162,90 @@ function openMemoryDeck(candidates){
   card.onpointerup=release;card.onpointercancel=function(){if(dragging){dragging=false;card.style.transition='transform .25s';card.style.transform='';card.classList.remove('choose-yes','choose-no');}};
   body.querySelector('#memory-no').onclick=function(){decide(false,-1);};body.querySelector('#memory-yes').onclick=function(){decide(true,1);};preview();
 }
-async function chooseMemoryDeckPhotos(){
+
+/* ============================================================
+   1日1枚の思い出候補
+
+   写真は、利用者がアルバム画面から明示的に有効化した後だけ読む。
+   候補のプレビュと選択結果は端末内だけで扱い、「使う」後にのみ既存の追加フローへ進む。
+   ============================================================ */
+var DAILY_ENABLED='spota_daily_photo_enabled',DAILY_PLAN='spota_daily_photo_plan',
+  DAILY_SEEN_LEGACY='spota_daily_photo_seen',dailyOpening=false,dailyTimer=0;
+function localDay(now){
+  var d=now||new Date(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
+  return d.getFullYear()+'-'+m+'-'+day;
+}
+function dailyEnabled(){try{return localStorage.getItem(DAILY_ENABLED)==='1';}catch(e){return false;}}
+function dailyPlan(){try{return JSON.parse(localStorage.getItem(DAILY_PLAN)||'null');}catch(e){return null;}}
+function randomMinute(){var a=new Uint32Array(1);crypto.getRandomValues(a);return 9*60+(a[0]%(12*60));}
+function ensureDailyPlan(){
+  var today=localDay(),plan=dailyPlan();if(plan&&plan.day===today)return plan;
+  var parts=today.split('-').map(Number),minute=randomMinute(),due=new Date(parts[0],parts[1]-1,parts[2],Math.floor(minute/60),minute%60,0,0).getTime();
+  plan={day:today,due:due,done:false};try{localStorage.setItem(DAILY_PLAN,JSON.stringify(plan));}catch(e){}return plan;
+}
+function saveDailyPlan(plan){try{localStorage.setItem(DAILY_PLAN,JSON.stringify(plan));}catch(e){}}
+function retryDaily(plan){
+  plan=plan||ensureDailyPlan();plan.done=false;plan.due=Date.now()+2*60*60*1000;saveDailyPlan(plan);
+  dailyOpening=false;scheduleDailyCheck();
+}
+function finishDaily(){var plan=ensureDailyPlan();plan.done=true;saveDailyPlan(plan);dailyOpening=false;clearTimeout(dailyTimer);}
+function discardDaily(Daily,item){
+  finishDaily();
+  if(Daily&&item&&item.dailyId&&typeof Daily.discard==='function')
+    Promise.resolve(Daily.discard({id:item.dailyId})).catch(function(){});
+}
+function scheduleDailyCheck(){
+  clearTimeout(dailyTimer);if(!dailyEnabled())return;var plan=ensureDailyPlan(),wait=Math.max(0,Number(plan.due)-Date.now());
+  if(plan.done)return;dailyTimer=setTimeout(function(){maybeShowDailyPhoto();},Math.min(wait,15*60*1000));
+}
+async function maybeShowDailyPhoto(force){
+  if(!dailyEnabled()||dailyOpening||!isApp||document.hidden)return scheduleDailyCheck();
+  var plan=ensureDailyPlan();if(plan.done)return;if(!force&&Date.now()<Number(plan.due))return scheduleDailyCheck();
+  if(typeof releaseScreen!=='undefined'&&releaseScreen||placing){dailyTimer=setTimeout(function(){maybeShowDailyPhoto();},10*60*1000);return;}
+  var Daily=plugin('DailyPhoto');if(!Daily)return;
+  dailyOpening=true;
+  try{
+    var permission=await Daily.authorizationStatus();
+    if(!permission||['granted','limited'].indexOf(permission.status)<0){dailyOpening=false;if(permission&&permission.status==='denied'){try{localStorage.removeItem(DAILY_ENABLED);}catch(e){}}return;}
+    var result=await Daily.randomCandidate(),candidate=result&&result.candidate;
+    if(!candidate||!candidate.dataUrl){plan.done=true;saveDailyPlan(plan);dailyOpening=false;return;}
+    openMemoryDeck([{asset:candidate.dataUrl,exif:candidate.exif||{},dailyId:candidate.id}],{
+      daily:true,
+      onClose:function(finished){if(!finished)discardDaily(Daily,candidate);},
+      onDecision:function(use,item){if(!use)discardDaily(Daily,item);},
+      onKeep:async function(item){
+        try{
+          setTip('写真を準備しています…');var full=await Daily.photo({id:item.dailyId}),photo=full&&full.photo;
+          if(!photo||!photo.dataUrl)throw new Error('empty photo');finishDaily();await afterPhoto(photo.dataUrl,null,photo.exif||item.exif||{});
+        }catch(e){retryDaily(plan);setTip('写真を読めませんでした。2時間後にもう一度試します');}
+      }
+    });
+  }catch(e){retryDaily(plan);}
+}
+async function setDailyPhotoEnabled(enable){
+  var Daily=plugin('DailyPhoto');if(!isApp||!Daily){setTip('1日1枚の候補はiPhoneアプリで使えます');return false;}
+  if(!enable){try{localStorage.removeItem(DAILY_ENABLED);localStorage.removeItem(DAILY_PLAN);localStorage.removeItem(DAILY_SEEN_LEGACY);}catch(e){}clearTimeout(dailyTimer);return true;}
+  var status=await Daily.authorizationStatus();
+  if(status.status==='prompt')status=await Daily.requestAuthorization();
+  if(['granted','limited'].indexOf(status.status)<0){setTip('設定で写真の使用を許可してください');return false;}
+  try{localStorage.setItem(DAILY_ENABLED,'1');localStorage.removeItem(DAILY_PLAN);localStorage.removeItem(DAILY_SEEN_LEGACY);}catch(e){}ensureDailyPlan();scheduleDailyCheck();setTip('1日1枚の思い出候補をはじめました');return true;
+}
+window.dailyEnabled=dailyEnabled;window.setDailyPhotoEnabled=setDailyPhotoEnabled;window.maybeShowDailyPhoto=maybeShowDailyPhoto;
+document.addEventListener('visibilitychange',function(){if(!document.hidden)maybeShowDailyPhoto();});
+window.addEventListener('focus',function(){maybeShowDailyPhoto();});
+setTimeout(scheduleDailyCheck,1800);
+
+async function chooseAlbumPhotos(){
   var got=await pickPhotos();
   if(got===null)return;              // ブラウザなら入力欄が開く
   if(!got.length){ setTip('選ばれませんでした'); return; }
   var candidates=got.map(function(photo){return {
     asset:typeof nativePhotoUrl==='function'?nativePhotoUrl(photo):(photo.webPath||photo.uri||photo.path||''),
+    dataUrl:photo.dataUrl||'',
     exif:typeof mediaPhotoExif==='function'?mediaPhotoExif(photo):(photo.exif||{}),nativeAsset:true
-  };}).filter(function(c){return !!c.asset;});
-  if(!candidates.length){setTip('写真を読めませんでした');return;}openMemoryDeck(candidates);
+  };}).filter(function(c){return !!(c.asset||c.dataUrl);});
+  if(!candidates.length){setTip('写真を読めませんでした');return;}handleBulk(candidates);
 }
-function chooseAlbumPhotos(){return chooseMemoryDeckPhotos();}
 
 document.getElementById('btn-bulk').onclick=function(){
   var s=showSheet('<div class="grab"></div><div class="pad" style="padding-top:18px">'+
@@ -178,7 +261,7 @@ document.getElementById('btn-bulk').onclick=function(){
 document.getElementById('in-bulk').onchange=function(e){
   var files=Array.prototype.slice.call(e.target.files||[]);
   e.target.value='';
-  openMemoryDeck(files.map(function(file){return {file:file};}));
+  handleBulk(files.map(function(file){return {file:file};}));
 };
 
 var manualPhotoImports=[],manualPhotoImportActive=false;

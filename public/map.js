@@ -417,7 +417,9 @@ function addPlaceLayers(){
     type:'geojson',
     data:{type:'FeatureCollection',features:[]},
     // 画面上で近い写真は、場所名や座標の丸め値ではなく実際の描画距離でまとめる。
-    cluster:true,clusterRadius:48,clusterMaxZoom:22,maxzoom:24
+    cluster:true,clusterRadius:48,clusterMaxZoom:24,maxzoom:24,
+    // 同一座標にまとめた写真数も、画面距離クラスターの件数へ加算する。
+    clusterProperties:{photo_count:['+',['get','photo_count']]}
   });
 
   // まだ思い出のない場所。
@@ -480,19 +482,31 @@ function addPlaceLayers(){
     'text-halo-color':PAL().halo,'text-halo-width':1.8}});
 
   // 写真同士が重なる場所。件数を一つの数字で示し、押すと中身へ寄る。
-  map.addLayer({id:'photo-cluster',type:'circle',source:'photo',minzoom:10,
+  map.addLayer({id:'photo-cluster',type:'circle',source:'photo',minzoom:4,
     filter:['has','point_count'],paint:{
-      'circle-radius':['step',['get','point_count'],18,10,21,30,25],
+      'circle-radius':['step',['get','photo_count'],18,10,21,30,25],
       'circle-color':night?'#F4F4F5':'#111111',
       'circle-stroke-color':night?'#171719':'#FFFFFF',
       'circle-stroke-width':2.5,
       'circle-opacity':0.96
     }});
-  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'photo',minzoom:10,
+  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'photo',minzoom:4,
     filter:['has','point_count'],layout:{
-      'text-field':['get','point_count_abbreviated'],
-      'text-size':['step',['get','point_count'],12,10,13,30,14],
+      'text-field':['get','photo_count'],
+      'text-size':['step',['get','photo_count'],12,10,13,30,14],
       'text-allow-overlap':true
+    },paint:{'text-color':night?'#111111':'#FFFFFF'}});
+
+  // 写真本体の読込中でも、地図から記録そのものを消さない。
+  map.addLayer({id:'photo-pending',type:'circle',source:'photo',minzoom:4,
+    filter:['all',['!',['has','point_count']],['==',['get','ready'],0]],paint:{
+      'circle-radius':['case',['>', ['get','photo_count'],1],16,5],
+      'circle-color':night?'#F4F4F5':'#111111',
+      'circle-stroke-color':night?'#171719':'#FFFFFF','circle-stroke-width':2
+    }});
+  map.addLayer({id:'photo-pending-count',type:'symbol',source:'photo',minzoom:4,
+    filter:['all',['!',['has','point_count']],['==',['get','ready'],0],['>', ['get','photo_count'],1]],layout:{
+      'text-field':['get','photo_count'],'text-size':12,'text-allow-overlap':true
     },paint:{'text-color':night?'#111111':'#FFFFFF'}});
 
   // 写真の丸。地図の中に描くので、ズームしてもずれない。
@@ -526,7 +540,7 @@ function addPlaceLayers(){
    そこで写真を丸く切り抜いた画像を作り、地図に登録して使う。
    地図の記号と同じ扱いになるので、ずれようがない。
    ============================================================ */
-const PHOTO_ZOOM=16.2;         // これ以上寄ったら写真にする
+const PHOTO_ZOOM=12;           // 通常の市街地ズームから写真を確認できる
 const madeIcons={};            // 作った画像の名前
 const makingIcons={};          // 作っている途中のもの
 
@@ -593,8 +607,8 @@ function makeRoundIcon(url,mine,key,count){
         x.fillStyle=mine?(night?'#F2F2F4':'#111111'):(night?'#F2F2F4':'#FFFFFF');
         x.beginPath();x.arc(bx+badge/2,by+badge/2,badge/2,0,Math.PI*2);x.fill();
         x.fillStyle=mine?(night?'#111111':'#FFFFFF'):(night?'#111111':'#111111');
-        x.font='700 15px -apple-system,system-ui,sans-serif';x.textAlign='center';x.textBaseline='middle';
-        x.fillText(String(Math.min(count,99)),bx+badge/2,by+badge/2+.5);
+        x.font='700 '+(count>99?'11px':'15px')+' -apple-system,system-ui,sans-serif';x.textAlign='center';x.textBaseline='middle';
+        x.fillText(count>99?'99+':String(count),bx+badge/2,by+badge/2+.5);
       }
 
       var dat=x.getImageData(0,0,S,H);
@@ -630,7 +644,7 @@ function photoKey(p,mine){
 
 function photoFeatures(){
   var out=[];
-  var b=map.getBounds(), c=map.getCenter(), list=[];
+  var b=map.getBounds(), c=map.getCenter(), list=[],groups={};
 
   // 自分の地図では本人の記録を、みんなの地図では公開された記録だけを出す。
   // 店の宣材写真ではなく、利用者本人の写真だけを地図上のアルバムとして扱う。
@@ -643,6 +657,16 @@ function photoFeatures(){
       list.push({p:o,mine:false,img:o.photo||''});
   });
 
+  // 約1m以内の同一地点は先に一つに束ねる。MapLibreの最大ズームでも
+  // サムネイル同士を重ねず、右上の数字を残すため。
+  list.forEach(function(item){
+    var groupKey=Math.round(item.p.lat*1e5)+'_'+Math.round(item.p.lng*1e5);
+    (groups[groupKey]||(groups[groupKey]=[])).push(item);
+  });
+  list=Object.keys(groups).map(function(k){
+    var items=groups[k],preview=items.find(function(item){return !!item.img;})||items[0];
+    return {items:items,p:preview.p,mine:preview.mine,img:preview.img};
+  });
   list.sort(function(a,x){
     if(a.mine!==x.mine)return a.mine?-1:1;
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
@@ -650,11 +674,11 @@ function photoFeatures(){
   list=list.slice(0,80);
 
   list.forEach(function(o){
-    var key=photoKey(o.p,o.mine),ready=madeIcons[key]?1:0;
-    if(o.img&&!ready)makeRoundIcon(o.img,o.mine,key,1);
+    var count=o.items.length,key=photoKey(o.p,o.mine)+'_c'+count,ready=madeIcons[key]?1:0;
+    if(o.img&&!ready)makeRoundIcon(o.img,o.mine,key,count);
     out.push({type:'Feature',geometry:{type:'Point',coordinates:[o.p.lng,o.p.lat]},
       properties:{rid:String(o.p.id||o.p.server_id||o.p.spot||''),lat:o.p.lat,lng:o.p.lng,
-        n:o.p.n,mine:o.mine?1:0,icon:key,ready:ready}});
+        n:o.p.n,mine:o.mine?1:0,icon:key,ready:ready,photo_count:count}});
   });
   return out;
 }

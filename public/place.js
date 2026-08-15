@@ -370,13 +370,13 @@ map.on('click',function(e){
     var center=cluster.geometry&&cluster.geometry.coordinates;
     if(source&&isFinite(clusterId)&&center){
       source.getClusterExpansionZoom(clusterId).then(function(zoom){
-        map.easeTo({center:center,zoom:Math.min(22,Math.max(map.getZoom()+1,zoom)),duration:420});
+        map.easeTo({center:center,zoom:Math.min(24,Math.max(map.getZoom()+1,zoom)),duration:420});
       }).catch(function(){});
     }
     return;
   }
 
-  var f=nearest(['photo-ic','mine-ring','mine-ic']);
+  var f=nearest(['photo-ic','photo-pending','photo-pending-count','mine-ring','mine-ic']);
   if(f){
     var s=recordForFeature(visibleOwnSpots(),f);
     if(s){ openPlace(s,true); return; }

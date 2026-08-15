@@ -10,7 +10,7 @@
    ============================================================ */
 
 var releaseScreen=null;
-var sharedPhotoQueue=[],sharedPhotoBusy=0,sharedPhotoCache={},sharedPhotoOrder=[],sharedPhotoRecords={};
+var sharedPhotoQueue=[],sharedPhotoBusy=0,sharedPhotoCache={},sharedPhotoOrder=[],sharedPhotoRecords={},sharedPhotoGeneration=0;
 
 function releaseDate(value){
   if(!value)return '';
@@ -128,7 +128,7 @@ function queueSharedPhoto(rec,auth){
     return;
   }
   if(rec.photo_loading)return;
-  rec.photo_loading=1;sharedPhotoQueue.push({rec:rec,auth:auth,id:id});runSharedPhotoQueue();
+  rec.photo_loading=1;sharedPhotoQueue.push({rec:rec,auth:auth,id:id,generation:sharedPhotoGeneration});runSharedPhotoQueue();
 }
 function runSharedPhotoQueue(){
   while(sharedPhotoBusy<2&&sharedPhotoQueue.length){
@@ -138,7 +138,7 @@ function runSharedPhotoQueue(){
         var r=await apiAs(item.auth,'/api/photo/'+encodeURIComponent(item.id)+'/thumb');
         if(!r.ok)throw new Error('photo '+r.status);
         var u=URL.createObjectURL(await r.blob());
-        if(!authIsCurrent(item.auth)){URL.revokeObjectURL(u);return;}
+        if(item.generation!==sharedPhotoGeneration||!authIsCurrent(item.auth)){URL.revokeObjectURL(u);return;}
         sharedPhotoCache[item.id]=u;sharedPhotoOrder.push(item.id);item.rec.photo=u;
         (sharedPhotoRecords[item.id]||(sharedPhotoRecords[item.id]=[])).push(item.rec);
         while(sharedPhotoOrder.length>24){
@@ -151,7 +151,18 @@ function runSharedPhotoQueue(){
     })(job);
   }
 }
+function clearSharedPhotoCache(){
+  sharedPhotoGeneration++;
+  sharedPhotoQueue.forEach(function(item){delete item.rec.photo_loading;});sharedPhotoQueue=[];
+  Object.keys(sharedPhotoCache).forEach(function(id){
+    var url=sharedPhotoCache[id];
+    (sharedPhotoRecords[id]||[]).forEach(function(rec){if(rec.photo===url)delete rec.photo;delete rec.photo_loading;});
+    if(url)URL.revokeObjectURL(url);
+  });
+  sharedPhotoCache={};sharedPhotoOrder=[];sharedPhotoRecords={};
+}
 window.queueSharedPhoto=queueSharedPhoto;
+window.clearSharedPhotoCache=clearSharedPhotoCache;
 
 /* ---------- アルバム ---------- */
 function albumMonthLabel(key){
@@ -166,6 +177,8 @@ function renderAlbumHome(screen,host){
   host.innerHTML='<section class="memory-intro"><p class="release-kicker">自分の地図</p>'+
     '<h1>思い出を、場所と時間で。</h1><p>写真は自分の地図に必ず残り、公開を選んだものだけがみんなの地図にも現れます。</p>'+
     '<button class="release-main" id="album-import" type="button">写真からアルバムを作る</button></section>'+
+    '<section class="daily-view"><div><p class="release-kicker">1日1枚</p><b>今日の思い出</b><span>'+(dailyEnabled()?'毎日ランダムな時間に、端末内で候補を選びます':'許可した写真から1枚だけ候補にします')+'</span></div>'+
+      '<button type="button" id="daily-toggle">'+(dailyEnabled()?'停止':'はじめる')+'</button></section>'+
     (keys.length?keys.map(function(key){
       return '<section class="album-section"><div class="album-heading"><h2>'+albumMonthLabel(key)+'</h2><span>'+groups[key].length+'枚</span></div>'+
         '<div class="album-grid">'+groups[key].map(function(p,i){
@@ -174,6 +187,7 @@ function renderAlbumHome(screen,host){
         }).join('')+'</div></section>';
     }).join(''):'<div class="release-empty"><b>まだ写真がありません</b><span>写真を選ぶと、撮影場所と日付から最初のアルバムを作れます。</span></div>');
   host.querySelector('#album-import').onclick=function(){closeReleaseScreen();chooseAlbumPhotos();};
+  host.querySelector('#daily-toggle').onclick=async function(){var button=this;button.disabled=true;var changed=await setDailyPhotoEnabled(!dailyEnabled());if(changed)renderAlbumHome(screen,host);else button.disabled=false;};
   Array.prototype.forEach.call(host.querySelectorAll('[data-album]'),function(button){
     button.onclick=function(){
       var list=groups[button.dataset.album]||[],idx=Number(button.dataset.index)||0,p=list[idx]||{};
@@ -455,7 +469,7 @@ async function openPublicProfile(handle){
   var timelineButton=document.getElementById('btn-timeline');if(timelineButton)timelineButton.onclick=function(){openSocialHub('timeline');};
   var bulk=document.getElementById('btn-bulk');if(bulk)bulk.onclick=function(){openMemoryHub();};
   var library=document.getElementById('btn-lib');if(library)library.onclick=function(){
-    if(typeof chooseMemoryDeckPhotos==='function')chooseMemoryDeckPhotos();else chooseAlbumPhotos();
+    chooseSinglePhoto(false);
   };
   var me=document.getElementById('btn-me');if(me){
     var prior=me.onclick;

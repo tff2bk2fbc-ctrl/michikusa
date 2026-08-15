@@ -186,28 +186,50 @@ async function syncUp(){
 
 /* サーバーから取り込む。他人のぶんも含む */
 let fetching=false;
-var restoreQueue=[], restoring=0;
+var restoreQueue=[], restoring=0,restoreGeneration=0,restoreControllers=[];
 function blobDataUrl(blob){return new Promise(function(resolve,reject){
   var rd=new FileReader();rd.onload=function(){resolve(rd.result);};rd.onerror=reject;rd.readAsDataURL(blob);
 });}
+function invalidatePhotoRestoreQueue(){
+  restoreGeneration++;
+  restoreQueue.splice(0).forEach(function(job){delete job.rec.photo_restoring;});
+  restoreControllers.splice(0).forEach(function(entry){
+    delete entry.job.rec.photo_restoring;try{entry.controller.abort();}catch(e){}
+  });
+}
+window.invalidatePhotoRestoreQueue=invalidatePhotoRestoreQueue;
 function queuePhotoRestore(rec,photoId,auth){
-  if(!photoId||rec.photo||rec.photo_restoring||(rec.photo_retry_at||0)>Date.now())return;
-  rec.photo_restoring=1;restoreQueue.push({rec:rec,id:photoId,auth:auth});runPhotoRestore();
+  // 同時通信は2本のまま、待ち行列だけを一画面分まで許可する。
+  // 以前の「最初の3枚」上限で、4枚目以降が地図から消える問題を防ぐ。
+  if(!photoId||rec.photo||rec.photo_restoring||(rec.photo_retry_at||0)>Date.now()||restoreQueue.length>=40)return;
+  if(!authIsCurrent(auth)||rec.owner_scope!==auth.scope)return;
+  rec.photo_restoring=1;restoreQueue.push({rec:rec,id:photoId,auth:auth,scope:auth.scope,generation:restoreGeneration});runPhotoRestore();
 }
 function runPhotoRestore(){
   while(restoring<2&&restoreQueue.length){
-    var job=restoreQueue.shift();restoring++;
-    (async function(j){try{
-      var r=await apiAs(j.auth,'/api/photo/'+encodeURIComponent(j.id)+'/thumb');
+    var job=restoreQueue.shift();
+    if(job.generation!==restoreGeneration||job.scope!==activeSpotScope||!authIsCurrent(job.auth)){
+      delete job.rec.photo_restoring;continue;
+    }
+    var controller=new AbortController(),entry={controller:controller,job:job};restoreControllers.push(entry);restoring++;
+    (async function(j,abortController,restoreEntry){try{
+      if(j.generation!==restoreGeneration||j.scope!==activeSpotScope||!authIsCurrent(j.auth))return;
+      var r=await apiAs(j.auth,'/api/photo/'+encodeURIComponent(j.id)+'/thumb',{signal:abortController.signal});
       if(!r.ok)throw new Error('photo '+r.status);
       var data=await blobDataUrl(await r.blob());
-      if(j.rec.owner_scope!==activeSpotScope)return;
+      if(j.generation!==restoreGeneration||j.scope!==activeSpotScope||!authIsCurrent(j.auth)||j.rec.owner_scope!==j.scope)return;
       j.rec.photo=data;j.rec.photo_is_thumb=1;j.rec.server_photo_id=j.id;j.rec.photo_synced=1;
       delete j.rec.photo_restoring;
       await dbPut('spots',j.rec);render(true);
     }catch(e){
-      delete j.rec.photo_restoring;j.rec.photo_retry_at=Date.now()+10*60*1000;dbPut('spots',j.rec);
-    }finally{restoring--;runPhotoRestore();}})(job);
+      delete j.rec.photo_restoring;
+      if(j.generation===restoreGeneration&&j.scope===activeSpotScope&&authIsCurrent(j.auth)&&e&&e.name!=='AbortError'){
+        j.rec.photo_retry_at=Date.now()+10*60*1000;dbPut('spots',j.rec);
+      }
+    }finally{
+      var at=restoreControllers.indexOf(restoreEntry);if(at>=0)restoreControllers.splice(at,1);
+      restoring--;runPhotoRestore();
+    }})(job,controller,entry);
   }
 }
 async function syncDeletions(auth){
@@ -255,7 +277,7 @@ async function syncOwnArchive(auth){
   if(!authIsCurrent(auth))return;
   var key='archive_cursor|'+auth.scope,initial='9007199254740991:zzzzzzzz';
   var meta=await dbGet('meta',key),cursor=meta&&meta.v||initial,hasMore=false,failed=false,
-    added=0,photoLoads=0,missingUploads=0;
+    added=0,missingUploads=0;
   for(var page=0;page<5&&authIsCurrent(auth);page++){
     var r=await apiAs(auth,'/api/posts/mine?cursor='+encodeURIComponent(cursor));
     if(!r.ok){failed=true;break;}
@@ -277,7 +299,7 @@ async function syncOwnArchive(auth){
           existing.synced=0;existing.photo_synced=0;existing.sync_error='server photo missing';
           await dbPut('spots',existing);missingUploads++;
         }
-        if(!existing.photo&&p.photo_id&&photoLoads<3){queuePhotoRestore(existing,p.photo_id,auth);photoLoads++;}
+        if(!existing.photo&&p.photo_id)queuePhotoRestore(existing,p.photo_id,auth);
         continue;
       }
       var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
@@ -287,7 +309,7 @@ async function syncOwnArchive(auth){
         photo_synced:p.photo_id?1:0,owner_scope:auth.scope};
       if(await dbPut('spots',rec)){
         if(authIsCurrent(auth))spots.push(rec);
-        if(p.photo_id&&photoLoads<3){queuePhotoRestore(rec,p.photo_id,auth);photoLoads++;}
+        if(p.photo_id)queuePhotoRestore(rec,p.photo_id,auth);
         added++;
       }
     }

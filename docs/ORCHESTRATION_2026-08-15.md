@@ -46,3 +46,50 @@
 - Secret値、Authorization、写真、正確な座標を監査ログへ載せない。
 - 監査中にcommit・push・本番deployを行わない。
 - どちらかのセキュリティ担当がBLOCKなら、修正後に両方を再監査する。
+
+## 追加オーケストレーション: 写真地図・1日1枚・ソーシャル操作
+
+### 固定した要件
+
+- EXIF位置情報がnative metadataに無い場合も、画像本体を再解析する。
+- カメラ、写真ボタン、アルバムから利用者が意図して追加した写真は、スワイプを挟まず追加する。
+- スワイプは、明示同意後に端末内で1日1回選ばれるランダム候補だけに使う。
+- 地図はズーム12以降で写真サムネイルを表示し、近接写真と完全同地点は件数でまとめる。
+- いいね、コメント、Flashを認証済みAPIとD1へ接続する。
+- iPhone/iPadを縦画面に固定する。
+- セキュリティ部と独立受入QAの両方が許可するまでcommit・pushしない。
+
+### 担当と停止判断
+
+| 担当 | 役割 | 検出した停止事項 | 解決 |
+|---|---|---|---|
+| 主担当 Codex | 実装、統合、Cloudflare・iOS検証 | — | 指摘ごとに修正し、最新版をXcodeの実際の梱包先まで同期 |
+| Carson / セキュリティ部 | 認証境界、PhotoKit、画像通信、API、秘密値 | 旧Bearerを持つ写真復元キュー、JSON body上限、共有blob cache、like濫用 | scope/generation検査、AbortController、stream byte上限、cache破棄、日次・全体上限と通知dedupe |
+| Kierkegaard / 受入QA | ユーザー操作、日次候補、地図表示、GitHub再現性、実機収録 | 日次失敗再予約漏れ、iCloud-only候補停滞、seen枯渇、installer依存、Xcode梱包先不一致 | 2時間再予約、候補skip、巡回再開、gem不要installer、正しいCapacitor copyへ修正 |
+| Raman / ソーシャル監査 | いいね、コメント、FlashのUI/API/D1接続 | 自分の投稿から操作へ到達しにくい | ownerの投稿を認可条件付きfeedへ含め、SQLite実保存テストを追加 |
+
+### 最終実装
+
+- 日次候補のPhotoKit asset IDはJavaScriptへ渡さず、native側の匿名UUID tokenで一回だけ引き換える。
+- 候補プレビューはiCloud通信を禁止し、「使う」の後だけ原寸取得を許可する。
+- 読めない候補は端末内履歴へ移して2時間後に別候補を試す。小規模ライブラリを一巡した翌日は、直近1枚を避けて新しい巡回を開始する。
+- アカウント切替時は写真復元キューを破棄し、通信中の旧アカウント取得を中止する。
+- 地図用写真は同時2通信、待機40件を上限とし、全件を順次復元する。
+- サムネイルの準備前は代替ピンを残し、準備後は円形写真を表示する。重なりは総写真数の数字で表示する。
+- WorkerのJSON読込はstream中にbyte上限を適用し、過大bodyを展開前に413で停止する。
+- likeの状態変更は利用者日次200回・全体日次200,000回を上限とし、unlike/re-likeで通知を再生成しない。
+- GitHubのnative overlayにSwift 3ファイル、SceneDelegate、gem不要の冪等installer、手順書を含めた。
+
+### 最終検証
+
+- 自動テスト: 70 / 70 合格。
+- `git diff --check`: 合格。
+- Cloudflare Workers dry-run: 33 assets、162.13 KiB、全D1/R2/Rate Limiter binding解決。
+- installer: 未適用プロジェクトへ適用後、2回目を実行しても重複なし。pbxprojとplistの構文検査合格。
+- Web 9資産: repository、native root public、`ios/App/App/public`、build成果物まで一致。
+- Swift 3資産: repositoryとXcode配置が一致。
+- iOS Simulator: build、install、launch成功。
+- 接続iPhone: signed build、install、`com.damo.michikusa` launch成功。
+- 縦画面設定と写真利用目的のplist表示を確認。
+- セキュリティ部: Critical 0 / High 0 / Medium 0、push許可。
+- 独立受入QA: blocker 0、push許可。

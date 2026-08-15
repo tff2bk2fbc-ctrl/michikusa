@@ -333,7 +333,7 @@ function dateFromNativeExif(exif){
 function startManualPhotoPlacement(dataUrl,date){
   var c=map.getCenter();
   startPlacing(c.lat,c.lng,{photo:dataUrl,date:date,manualPhotoLocation:true});
-  setTip('写真の場所を地図で選んでください');
+  setTip('写真から位置情報を取得できませんでした。場所を地図で選んでください');
 }
 
 function askPhotoLocation(dataUrl,date,gps){
@@ -366,9 +366,9 @@ function askPhotoLocation(dataUrl,date,gps){
 /* 写真を受け取ったあとの流れ。EXIF GPSを確認してから位置を決める */
 async function afterPhoto(dataUrl,file,nativeExif){
   var gps=gpsFromNativeExif(nativeExif),date=dateFromNativeExif(nativeExif);
-  // ネイティブではCamera pluginが元画像のEXIFを返す。
-  // 外部exifrの読込を待たず、カメラ・ライブラリ選択直後に次へ進む。
-  if(isApp&&nativeExif!=null){
+  // ネイティブが有効なGPSを返した場合だけ即時判定する。
+  // metadataが空の場合は「GPSなし」と断定せず、JPEG本体のEXIFを再解析する。
+  if(gps){
     askPhotoLocation(dataUrl,date,gps);
     return;
   }

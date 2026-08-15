@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('../', import.meta.url);
 const read = name => readFile(new URL(name, root), 'utf8');
 
-test('feed stays behind authentication and excludes private posts', async () => {
+test('feed stays behind authentication and only exposes another user\'s allowed posts', async () => {
   const source = await read('src/index.js');
   const auth = source.indexOf('const me = await authenticate(request, env)');
   const route = source.indexOf('p === "/api/feed"');
@@ -16,6 +16,7 @@ test('feed stays behind authentication and excludes private posts', async () => 
   assert.match(feed, /p\.visibility='public'/);
   assert.match(feed, /p\.visibility='friends'/);
   assert.doesNotMatch(feed, /p\.visibility='private'/);
+  assert.match(feed, /p\.user_id=\?1 OR p\.visibility='public'/);
   assert.match(feed, /const c=await coordsFor\(env,r\)/);
   assert.match(feed, /NOT EXISTS \(\s*SELECT 1 FROM blocks/);
 });
@@ -176,12 +177,72 @@ test('map photos keep a fallback pin and use screen-distance clustering', async 
   const featureEnd = map.indexOf('let lastSig', featureStart);
   const normalFeatures = map.slice(featureStart, featureEnd);
   assert.doesNotMatch(normalFeatures, /big&&mine&&p\.photo/);
-  assert.match(map, /addSource\('photo',\{[\s\S]*cluster:true,clusterRadius:48,clusterMaxZoom:22/);
+  assert.match(map, /addSource\('photo',\{[\s\S]*cluster:true,clusterRadius:48,clusterMaxZoom:24/);
+  assert.match(map, /clusterProperties:\{photo_count:/);
   assert.match(map, /id:'photo-cluster-count'/);
-  assert.match(map, /point_count_abbreviated/);
+  assert.match(map, /'text-field':\['get','photo_count'\]/);
+  assert.match(map, /const PHOTO_ZOOM=12/);
+  assert.match(map, /id:'photo-pending'/);
+  assert.match(map, /photoKey\(o\.p,o\.mine\)\+'_c'\+count/);
+  assert.match(map, /items\.find\(function\(item\)\{return !!item\.img;\}\)\|\|items\[0\]/);
+  assert.match(map, /photo_count:count/);
   assert.match(map, /filter:\['all',\['!',\['has','point_count'\]\],\['==',\['get','ready'\],1\]\]/);
   assert.doesNotMatch(map, /if\(map\.getZoom\(\)<PHOTO_ZOOM\)return out/);
   assert.match(place, /getClusterExpansionZoom\(clusterId\)/);
+  assert.match(place, /photo-pending/);
+});
+
+test('daily PhotoKit bridge keeps candidates local until the user accepts', async () => {
+  const plugin = await read('native/ios/DailyPhotoPlugin.swift');
+  const release = await read('public/release.js');
+  assert.match(plugin, /PHPhotoLibrary\.requestAuthorization/);
+  assert.match(plugin, /status == \.authorized \|\| status == \.limited/);
+  assert.match(plugin, /!asset\.isHidden/);
+  assert.match(plugin, /Int\.random\(in: 0\.\.<eligibleCount\)/);
+  assert.match(plugin, /longestSide: 1400/);
+  assert.match(plugin, /longestSide: 4096/);
+  assert.match(plugin, /payload\["id"\] = token/);
+  assert.doesNotMatch(plugin, /\["id"\]\s*=\s*asset\.localIdentifier/);
+  assert.match(plugin, /defaults\.string\(forKey: StateKey\.token\) == token/);
+  assert.match(plugin, /networkAllowed: false/);
+  assert.match(plugin, /networkAllowed: true/);
+  assert.match(plugin, /name: "discard"/);
+  assert.match(plugin, /Array\(seen\.prefix\(30\)\)/);
+  assert.doesNotMatch(plugin, /URLSession|URLRequest|https?:\/\//);
+  assert.match(release, /id="daily-toggle"/);
+});
+
+test('iOS native overlay is reproducible from the GitHub checkout', async () => {
+  const scene = await read('native/ios/SceneDelegate.swift');
+  const installer = await read('native/ios/apply-to-capacitor.sh');
+  assert.match(scene, /rootViewController = SpotaBridgeViewController\(\)/);
+  assert.match(installer, /DailyPhotoPlugin\.swift/);
+  assert.match(installer, /SpotaBridgeViewController\.swift/);
+  assert.match(installer, /UIInterfaceOrientationPortrait/);
+  assert.match(installer, /PBXSourcesBuildPhase/);
+  assert.match(installer, /File\.write\(path, text\)/);
+  assert.doesNotMatch(installer, /require ['"]xcodeproj['"]/);
+});
+
+test('photo restore jobs are invalidated across authentication boundaries', async () => {
+  const core = await read('public/core.js');
+  const sync = await read('public/sync.js');
+  assert.match(core, /next!==activeSpotScope[\s\S]{0,220}invalidatePhotoRestoreQueue/);
+  assert.match(sync, /function invalidatePhotoRestoreQueue\(\)/);
+  assert.match(sync, /restoreGeneration\+\+/);
+  assert.match(sync, /controller\.abort\(\)/);
+  assert.match(sync, /signal:abortController\.signal/);
+  assert.match(sync, /!authIsCurrent\(j\.auth\)/);
+});
+
+test('shared photo object URLs are cleared across account boundaries', async () => {
+  const core = await read('public/core.js');
+  const release = await read('public/release.js');
+  assert.match(core, /next!==activeSpotScope[\s\S]{0,100}clearSharedPhotoCache/);
+  assert.match(release, /function clearSharedPhotoCache\(\)/);
+  assert.match(release, /sharedPhotoGeneration\+\+/);
+  assert.match(release, /URL\.revokeObjectURL\(url\)/);
+  assert.match(release, /item\.generation!==sharedPhotoGeneration/);
 });
 
 test('temporary moderation failures stay hidden and are retried instead of changing audience', async () => {
