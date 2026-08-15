@@ -27,7 +27,7 @@ function closeReleaseScreen(after){
   if(!releaseScreen)return;
   var screen=releaseScreen;releaseScreen=null;
   var dispose=screen.__onClose;screen.__onClose=null;if(dispose)dispose();
-  (screen.__urls||[]).forEach(function(u){URL.revokeObjectURL(u);});
+  resetReleasePhotos(screen);
   (screen.__inert||[]).forEach(function(node){node.inert=false;});
   if(screen.classList.contains('profile-screen')){
     var closingPanel=screen.querySelector('.profile-panel');if(closingPanel)closingPanel.style.transition='transform .32s cubic-bezier(.2,.72,.2,1)';
@@ -93,7 +93,8 @@ function makeReleaseScreen(label,options){
       '<div class="release-bar-title">'+esc(label)+'</div>'+(profile?'<button class="release-back profile-close" type="button" aria-label="プロフィールを閉じる">×</button>':'<span class="release-bar-space"></span>')+'</header>';
   var screen=el('<section class="release-screen'+(profile?' profile-screen':'')+'" role="dialog" aria-modal="true" aria-label="'+esc(label)+'">'+
     (profile?'<div class="profile-panel"><div class="profile-drag-zone" aria-hidden="true"><i></i></div>'+bar+'<main class="release-body"></main></div>':bar+'<main class="release-body"></main>')+'</section>');
-  screen.__urls=[];screen.__previousFocus=document.activeElement;screen.__inert=[];
+  screen.__urls=[];screen.__photoControllers=[];screen.__photoGeneration=0;
+  screen.__previousFocus=document.activeElement;screen.__inert=[];
   Array.prototype.forEach.call(document.body.children,function(node){
     if(node!==screen&&node.id!=='err'&&!node.inert){node.inert=true;screen.__inert.push(node);}
   });
@@ -107,15 +108,31 @@ function makeReleaseScreen(label,options){
   return screen;
 }
 
+function resetReleasePhotos(screen){
+  if(!screen)return 0;
+  screen.__photoGeneration=(screen.__photoGeneration||0)+1;
+  (screen.__photoControllers||[]).forEach(function(controller){try{controller.abort();}catch(e){}});
+  screen.__photoControllers=[];
+  (screen.__urls||[]).forEach(function(u){URL.revokeObjectURL(u);});
+  screen.__urls=[];
+  return screen.__photoGeneration;
+}
+
 async function putRemotePhoto(img,photoId,screen,kind){
   if(!img||!photoId||!screen||!screen.isConnected)return;
+  var generation=screen.__photoGeneration||0;
+  var controller=typeof AbortController!=='undefined'?new AbortController():null;
+  if(controller)(screen.__photoControllers||(screen.__photoControllers=[])).push(controller);
   try{
-    var r=await api('/api/photo/'+encodeURIComponent(photoId)+'/'+(kind||'thumb'));
+    var r=await api('/api/photo/'+encodeURIComponent(photoId)+'/'+(kind||'thumb'),controller?{signal:controller.signal}:undefined);
     if(!r.ok)throw new Error('photo '+r.status);
     var u=URL.createObjectURL(await r.blob());
-    if(!screen.isConnected){URL.revokeObjectURL(u);return;}
+    if(!screen.isConnected||!img.isConnected||generation!==screen.__photoGeneration){URL.revokeObjectURL(u);return;}
     screen.__urls.push(u);img.src=u;img.classList.add('loaded');
-  }catch(e){img.closest('[data-photo]')&&img.closest('[data-photo]').classList.add('photo-failed');}
+  }catch(e){if(e&&e.name!=='AbortError'&&img.isConnected&&img.closest('[data-photo]'))img.closest('[data-photo]').classList.add('photo-failed');}
+  finally{
+    if(controller){var at=(screen.__photoControllers||[]).indexOf(controller);if(at>=0)screen.__photoControllers.splice(at,1);}
+  }
 }
 
 /* 地図用の共有写真。最大24枚だけを保持し、古いURLは解放する。 */
@@ -197,9 +214,21 @@ function renderAlbumHome(screen,host){
 }
 
 /* ---------- タイムライン / 通知 / チャット ---------- */
-async function socialJson(path,options){
-  var r=await api(path,options),j=await r.json().catch(function(){return {};});
-  if(!r.ok)throw new Error(j.error||'読み込めませんでした');return j;
+function socialWaitLabel(path){
+  if(path==='/api/feed'||path.indexOf('/api/posts?')===0)return '写真を読み込んでいます';
+  if(path.indexOf('/comments')>=0)return 'コメントを読み込んでいます';
+  if(path.indexOf('/notifications')===0)return '通知を読み込んでいます';
+  if(path.indexOf('/conversations')===0)return 'メッセージを読み込んでいます';
+  return '読み込んでいます';
+}
+async function socialJson(path,options,showWait){
+  var method=String(options&&options.method||'GET').toUpperCase();
+  var shouldWait=showWait!==false&&(method==='GET'||path==='/api/feed');
+  var waitId=shouldWait&&window.SpotaMotion?window.SpotaMotion.beginWait(socialWaitLabel(path)):0;
+  try{
+    var r=await api(path,options),j=await r.json().catch(function(){return {};});
+    if(!r.ok)throw new Error(j.error||'読み込めませんでした');return j;
+  }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
 }
 function beginSocialRender(screen){screen.__socialGeneration=(screen.__socialGeneration||0)+1;return screen.__socialGeneration;}
 function socialRenderAlive(screen,host,generation){return releaseScreen===screen&&screen.isConnected&&host.isConnected&&screen.__socialGeneration===generation;}
@@ -207,9 +236,9 @@ function feedCard(p,i){
   var who=p.author&&(p.author.name||p.author.handle)||'Spotaユーザー';
   return '<article class="timeline-card" data-post="'+esc(p.id)+'">'+
     '<header><button class="timeline-person" type="button" data-profile="'+esc(p.author&&p.author.handle||'')+'"><i>'+profileIconSvg(p.author&&p.author.profile_icon)+'</i><span><b>'+esc(who)+'</b><small>@'+esc(p.author&&p.author.handle||'')+'</small></span></button>'+
-      (!p.mine?'<button class="timeline-follow'+(p.following?' on':'')+'" type="button" data-follow="'+i+'" aria-pressed="'+String(!!p.following)+'">'+(p.following?'フォロー中':'フォロー')+'</button>':'')+
+      (!p.mine?'<button class="timeline-follow'+(p.following?' on':'')+'" type="button" data-follow="'+i+'" aria-pressed="'+String(!!p.following)+'"><span class="follow-label">フォロー</span><span class="following-label"><i class="follow-check" aria-hidden="true"></i>フォロー中</span></button>':'')+
       '<time>'+esc(releaseDate(p.taken_at||p.created_at))+'</time></header>'+
-    '<button class="timeline-photo" type="button" data-photo="'+esc(p.photo_id||'')+'" data-index="'+i+'" aria-label="写真を開く"><img alt="" loading="lazy"></button>'+
+    '<button class="timeline-photo" type="button" data-photo="'+esc(p.photo_id||'')+'" data-index="'+i+'" aria-label="写真を開く"><img alt="" loading="lazy"><span class="timeline-like-heart" aria-hidden="true">♥</span><span class="timeline-like-particles" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span></button>'+
     '<div class="timeline-copy"><div class="timeline-place"><b>'+esc(p.title||p.place_name||'思い出')+'</b>'+
       (p.map_available?'<button type="button" data-map="'+i+'">地図で見る</button>':'')+'</div>'+
       (p.tag?'<p>'+esc(p.tag)+'</p>':'')+
@@ -227,12 +256,15 @@ function bindFeedCards(screen,host,posts,timelineState){
     b.onclick=function(){if(img.src)openViewer([img.src],0,p.author&&(p.author.name||p.author.handle),p.place_name||p.title,p.tag||'',releaseDate(p.taken_at),releaseTags(p.tag),[p.photo_id]);};
   });
   Array.prototype.forEach.call(host.querySelectorAll('[data-like]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
-    var p=posts[Number(b.dataset.like)],next=!p.liked;b.disabled=true;
-    try{var j=await socialJson('/api/posts/'+encodeURIComponent(p.id)+'/like',{method:next?'PUT':'DELETE'});p.liked=j.liked;p.like_count=j.count;
+    var p=posts[Number(b.dataset.like)],next=!p.liked,wasLiked=!!p.liked,wasCount=Number(p.like_count)||0;
+    var photo=b.closest('.timeline-card').querySelector('.timeline-photo');
+    function paint(liked,count){p.liked=!!liked;p.like_count=Math.max(0,Number(count)||0);
       b.classList.toggle('on',p.liked);b.setAttribute('aria-pressed',String(p.liked));b.querySelector('b').textContent=p.like_count;
-      b.setAttribute('aria-label','いいね '+p.like_count+'件');
-      if(p.liked){b.classList.remove('flash');void b.offsetWidth;b.classList.add('flash');setTimeout(function(){b.classList.remove('flash');},430);}
-    }catch(e){setTip(e.message);}b.disabled=false;
+      b.setAttribute('aria-label','いいね '+p.like_count+'件');}
+    b.disabled=true;paint(next,wasCount+(next?1:-1));
+    if(next&&window.SpotaMotion){window.SpotaMotion.restartClass(b,'flash',820);window.SpotaMotion.restartClass(photo,'like-burst',1000);}
+    try{var j=await socialJson('/api/posts/'+encodeURIComponent(p.id)+'/like',{method:next?'PUT':'DELETE'});paint(j.liked,j.count);}
+    catch(e){paint(wasLiked,wasCount);setTip(e.message);}b.disabled=false;
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-comments]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){
     var state=timelineState||{};state={query:state.query||'',mode:state.mode||'recommended',scrollY:screen.scrollTop||0};
@@ -251,9 +283,11 @@ function bindFeedCards(screen,host,posts,timelineState){
     }catch(e){b.disabled=false;setTip(e.message||'フラッシュできませんでした');}
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-follow]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
-    var p=posts[Number(b.dataset.follow)],next=!p.following,handle=p.author&&p.author.handle;if(!handle)return;b.disabled=true;
-    try{await socialJson('/api/follows/'+encodeURIComponent(handle),{method:next?'PUT':'DELETE'});p.following=next;b.classList.toggle('on',next);b.textContent=next?'フォロー中':'フォロー';b.setAttribute('aria-pressed',String(next));}
-    catch(e){setTip(e.message);}b.disabled=false;
+    var p=posts[Number(b.dataset.follow)],previous=!!p.following,next=!previous,handle=p.author&&p.author.handle;if(!handle)return;
+    function paint(value){p.following=!!value;b.classList.toggle('on',p.following);b.setAttribute('aria-pressed',String(p.following));b.setAttribute('aria-label',p.following?'フォロー中':'フォロー');}
+    b.disabled=true;paint(next);if(next&&window.SpotaMotion)window.SpotaMotion.restartClass(b,'follow-confirm',620);
+    try{await socialJson('/api/follows/'+encodeURIComponent(handle),{method:next?'PUT':'DELETE'});}
+    catch(e){paint(previous);setTip(e.message);}b.disabled=false;
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-share]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){sharePost(posts[Number(b.dataset.share)]);};});
 }
@@ -275,6 +309,7 @@ function bindTimelineRefresh(screen,host,query,mode){
   function paint(value,ready){
     pull=Math.max(0,Math.min(96,value));
     hint=screen.__timelineRefreshState.host.querySelector('.timeline-refresh-hint')||hint;
+    screen.__timelineRefreshState.host.style.setProperty('--pull',pull+'px');
     hint.style.setProperty('--pull',pull+'px');
     hint.classList.toggle('pulling',pull>4);
     hint.classList.toggle('ready',!!ready);
@@ -298,11 +333,15 @@ function bindTimelineRefresh(screen,host,query,mode){
   function up(e){
     if(!tracking||e.pointerId!==pointer)return;
     var ready=pull>=64,state=screen.__timelineRefreshState;
-    reset();
     if(ready&&!screen.__timelineRefreshBusy&&state){
+      tracking=false;pointer=null;paint(64,true);
+      hint.classList.add('refreshing');hint.setAttribute('aria-hidden','false');
       screen.__timelineRefreshBusy=true;
-      renderTimeline(screen,state.host,state.query,state.mode,0).finally(function(){screen.__timelineRefreshBusy=false;});
-    }
+      renderTimeline(screen,state.host,state.query,state.mode,0,true).finally(function(){
+        screen.__timelineRefreshBusy=false;
+        if(hint&&hint.isConnected){hint.classList.remove('refreshing','pulling','ready');hint.style.setProperty('--pull','0px');state.host.style.setProperty('--pull','0px');hint.setAttribute('aria-hidden','true');}
+      });
+    }else reset();
   }
   screen.addEventListener('pointerdown',down);
   screen.addEventListener('pointermove',move,{passive:false});
@@ -310,24 +349,37 @@ function bindTimelineRefresh(screen,host,query,mode){
   screen.addEventListener('pointercancel',reset);
   screen.addEventListener('lostpointercapture',function(){if(tracking)reset();});
 }
-async function renderTimeline(screen,host,query,mode,restoreY){
-  var generation=beginSocialRender(screen);
-  mode=mode||'recommended';
-  host.innerHTML='<div class="timeline-refresh-hint" aria-hidden="true"><span aria-hidden="true">↻</span></div>'+
+function drawTimelineShell(screen,host,query,mode){
+  resetReleasePhotos(screen);
+  host.innerHTML='<div class="timeline-refresh-hint" aria-hidden="true"><span aria-hidden="true"><i class="timeline-refresh-spinner"></i></span></div>'+
     '<form class="timeline-search" id="timeline-search"><span aria-hidden="true">⌕</span>'+
       '<input id="timeline-q" value="'+esc(query||'')+'" placeholder="場所・ことば・#タグ" enterkeyhint="search" autocomplete="off">'+
       '<button type="submit">探す</button></form>'+
     '<div class="feed-modes" role="tablist" aria-label="タイムラインの種類">'+
       '<button type="button" data-feed-mode="recommended" class="'+(mode==='recommended'?'on':'')+'" role="tab" aria-selected="'+String(mode==='recommended')+'">おすすめ</button>'+
       '<button type="button" data-feed-mode="following" class="'+(mode==='following'?'on':'')+'" role="tab" aria-selected="'+String(mode==='following')+'">フォロー中</button></div>'+
-    '<div class="timeline-status" aria-live="polite">写真を読み込んでいます…</div>';
+    '<div class="timeline-status timeline-loading"><span class="sr-only">写真を読み込んでいます</span></div>';
   bindTimelineRefresh(screen,host,query,mode);
   Array.prototype.forEach.call(host.querySelectorAll('[data-feed-mode]'),function(b){b.onclick=function(){renderTimeline(screen,host,query,b.dataset.feedMode);};});
   host.querySelector('#timeline-search').onsubmit=function(e){e.preventDefault();renderTimeline(screen,host,host.querySelector('#timeline-q').value.trim(),mode);};
-  if(!fbUser){host.querySelector('.timeline-status').innerHTML='<b>ログインするとタイムラインを見られます</b><span>公開された写真と、フレンドの写真が表示されます。</span><button class="release-main" id="timeline-login" type="button">ログインする</button>';host.querySelector('#timeline-login').onclick=function(){closeReleaseScreen();document.getElementById('btn-me').click();};return;}
+}
+async function renderTimeline(screen,host,query,mode,restoreY,refreshing){
+  var generation=refreshing?(screen.__socialGeneration||0):beginSocialRender(screen);
+  mode=mode||'recommended';
+  if(!refreshing)drawTimelineShell(screen,host,query,mode);
+  if(!fbUser){
+    if(refreshing)drawTimelineShell(screen,host,query,mode);
+    host.querySelector('.timeline-status').classList.remove('timeline-loading');
+    host.querySelector('.timeline-status').innerHTML='<b>ログインするとタイムラインを見られます</b><span>公開された写真と、フレンドの写真が表示されます。</span><button class="release-main" id="timeline-login" type="button">ログインする</button>';
+    host.querySelector('#timeline-login').onclick=function(){closeReleaseScreen();document.getElementById('btn-me').click();};return;
+  }
   try{
     var feedBody={limit:24,mode:mode,query:query||''};
-    var result=await Promise.all([socialJson('/api/feed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(feedBody)}),socialJson('/api/hashtags/trending').catch(function(){return {tags:[]};})]);if(!socialRenderAlive(screen,host,generation))return;var j=result[0],tags=result[1].tags||[],posts=j.posts||[],status=host.querySelector('.timeline-status');
+    var result=await Promise.all([socialJson('/api/feed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(feedBody)},!refreshing),socialJson('/api/hashtags/trending',undefined,!refreshing).catch(function(){return {tags:[]};})]);
+    if(!socialRenderAlive(screen,host,generation))return;
+    if(refreshing)drawTimelineShell(screen,host,query,mode);
+    var j=result[0],tags=result[1].tags||[],posts=j.posts||[],status=host.querySelector('.timeline-status');
+    status.classList.remove('timeline-loading');
     if(!posts.length){status.innerHTML='<b>'+(mode==='following'?'フォロー中の投稿はまだありません':'写真が見つかりませんでした')+'</b><span>'+(query?'ことばを変えて、もう一度探してみてください。':'気になる人をフォローすると、ここに写真が並びます。')+'</span>';return;}
     status.outerHTML=(tags.length?'<div class="trend-row" aria-label="よく使われているタグ">'+tags.map(function(t){return '<button type="button" data-tag="'+esc(t.label)+'">'+esc(t.label)+'</button>';}).join('')+'</div>':'')+
       '<div class="timeline-list">'+posts.map(feedCard).join('')+'</div>'+(j.has_more?'<button type="button" class="feed-more" id="feed-more">さらに見る</button>':'');
@@ -339,7 +391,11 @@ async function renderTimeline(screen,host,query,mode,restoreY){
         posts=posts.concat(next.posts||[]);var list=host.querySelector('.timeline-list');list.insertAdjacentHTML('beforeend',(next.posts||[]).map(function(p,i){return feedCard(p,offset+i);}).join(''));bindFeedCards(screen,list,posts,{query:query,mode:mode});j=next;if(!next.has_more)more.remove();else more.disabled=false;
       }catch(e){more.disabled=false;setTip(e.message);}
     };
-  }catch(e){if(!socialRenderAlive(screen,host,generation))return;var st=host.querySelector('.timeline-status');if(st)st.innerHTML='<b>読み込めませんでした</b><span>'+esc(e.message||'通信を確認してください')+'</span>';}
+  }catch(e){
+    if(!socialRenderAlive(screen,host,generation))return;
+    if(refreshing){setTip(e.message||'更新できませんでした');return;}
+    var st=host.querySelector('.timeline-status');if(st){st.classList.remove('timeline-loading');st.innerHTML='<b>読み込めませんでした</b><span>'+esc(e.message||'通信を確認してください')+'</span>';}
+  }
 }
 
 async function openComments(post,onBack){
@@ -387,7 +443,7 @@ async function refreshSocialBadge(){
   if(!notificationBadge||!messageBadge)return;
   function update(badge,n,label){n=Number(n)||0;badge.hidden=!n;badge.textContent=n>99?'99+':String(n);badge.setAttribute('aria-label',label+' '+n+'件');}
   if(!fbUser){update(notificationBadge,0,'未読通知');update(messageBadge,0,'未読メッセージ');return;}
-  try{var j=await socialJson('/api/unread');update(notificationBadge,j.notifications,'未読通知');update(messageBadge,j.messages,'未読メッセージ');}
+  try{var j=await socialJson('/api/unread',undefined,false);update(notificationBadge,j.notifications,'未読通知');update(messageBadge,j.messages,'未読メッセージ');}
   catch(e){update(notificationBadge,0,'未読通知');update(messageBadge,0,'未読メッセージ');}
 }
 function openTimelineMap(p){
@@ -445,7 +501,13 @@ async function openPublicProfile(handle){
     var settings=body.querySelector('#profile-settings');if(settings)settings.onclick=function(){closeReleaseScreen();openMe();};
     var timeline=body.querySelector('#profile-timeline');if(timeline)timeline.onclick=function(){openSocialHub('timeline');};
     var avatar=body.querySelector('#profile-avatar');if(avatar&&own)avatar.onclick=function(){openProfileIconPicker(profile.handle||handle,profile.profile_icon||'pin');};
-    var followButton=body.querySelector('#profile-follow');if(followButton)followButton.onclick=async function(){var next=!follow.followed;followButton.disabled=true;try{await socialJson('/api/follows/'+encodeURIComponent(profile.handle||handle),{method:next?'PUT':'DELETE'});follow.followed=next;followButton.classList.toggle('on',next);followButton.textContent=next?'フォロー中':'フォロー';followButton.setAttribute('aria-pressed',String(next));}catch(e){setTip(e.message);}followButton.disabled=false;};
+    var followButton=body.querySelector('#profile-follow');if(followButton)followButton.onclick=async function(){
+      var previous=!!follow.followed,next=!previous;followButton.disabled=true;
+      function paint(value){follow.followed=!!value;followButton.classList.toggle('on',follow.followed);followButton.textContent=follow.followed?'フォロー中':'フォロー';followButton.setAttribute('aria-pressed',String(follow.followed));}
+      paint(next);if(next&&window.SpotaMotion)window.SpotaMotion.restartClass(followButton,'profile-follow-confirm',620);
+      try{await socialJson('/api/follows/'+encodeURIComponent(profile.handle||handle),{method:next?'PUT':'DELETE'});}
+      catch(e){paint(previous);setTip(e.message);}followButton.disabled=false;
+    };
     var message=body.querySelector('#profile-message');if(message)message.onclick=function(){startConversation(profile.handle||handle);};
     var friend=body.querySelector('#profile-friend');if(friend)friend.onclick=async function(){friend.disabled=true;await addByHandle(profile.handle||handle);friend.textContent='申請しました';};
     Array.prototype.forEach.call(body.querySelectorAll('[data-profile-photo]'),function(b){

@@ -29,12 +29,13 @@ function openViewer(list, idx, who, place, cap, when, tags, photoIds){
   document.body.appendChild(v);
   v.__previousFocus=previousFocus;v.__blobUrls=[];
   v.__inert=[];Array.prototype.forEach.call(document.body.children,function(node){
-    if(node!==v&&!node.inert){node.inert=true;v.__inert.push(node);}
+    if(node!==v&&node.id!=='spota-wait'&&node.id!=='spota-wait-status'&&!node.inert){node.inert=true;v.__inert.push(node);}
   });
   viewerEl=v;
-  void v.offsetWidth; v.classList.add('on');
-
   var track=v.querySelector('#vwt');
+  if(idx)track.scrollLeft=track.clientWidth*idx;
+  void v.offsetWidth; v.classList.add('on');
+  if(window.SpotaMotion)window.SpotaMotion.viewerTransition(v,previousFocus,track.children[idx]);
   if(idx) setTimeout(function(){ track.scrollLeft=track.clientWidth*idx; },30);
   var dots=v.querySelector('#vwd');
   if(dots) track.onscroll=function(){
@@ -55,6 +56,7 @@ function openViewer(list, idx, who, place, cap, when, tags, photoIds){
     if(!viewAuth)return;
     [center-1,center,center+1].forEach(function(i){
       var id=photoIds&&photoIds[i];if(!id||viewLoaded[i])return;viewLoaded[i]=1;
+      var waitId=i===center&&window.SpotaMotion?window.SpotaMotion.beginWait('写真を読み込んでいます'):0;
       apiAs(viewAuth,'/api/photo/'+encodeURIComponent(id)+'/view').then(function(r){
         if(!r.ok)throw new Error('view '+r.status);return r.blob();
       }).then(function(blob){
@@ -62,7 +64,7 @@ function openViewer(list, idx, who, place, cap, when, tags, photoIds){
         var u=URL.createObjectURL(blob),im=track.children[i];
         if(!im){URL.revokeObjectURL(u);return;}
         v.__blobUrls.push(u);im.src=u;
-      }).catch(function(){delete viewLoaded[i];});
+      }).catch(function(){delete viewLoaded[i];}).finally(function(){if(waitId)window.SpotaMotion.endWait(waitId);});
     });
   }
   if(photoIds&&photoIds.length&&fbUser){

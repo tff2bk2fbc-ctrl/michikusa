@@ -227,9 +227,11 @@ let locDone=false;
 function showMe(lat,lng,acc){
   if(meM)meM.remove();
   var d=document.createElement('div');
-  d.style.cssText='width:15px;height:15px;border-radius:50%;background:#1E88E5;'+
-    'border:2.5px solid #fff;box-shadow:0 0 0 6px rgba(30,136,229,.22),0 2px 8px rgba(0,0,0,.35)';
+  d.className='current-location-marker';
+  d.innerHTML='<i class="current-location-dot"></i><i class="current-location-ring"></i>'+
+    '<i class="current-location-ring"></i><i class="current-location-ring"></i>';
   meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
+  if(window.SpotaMotion)window.SpotaMotion.pulseLocation(d);
 }
 async function goHome(quiet){
   var p=await whereAmI();
@@ -411,14 +413,16 @@ function shrink(file,cb){
 }
 
 document.getElementById('map-locate').onclick=async function(){
-  var btn=this;
+  var btn=this,waitId=window.SpotaMotion?window.SpotaMotion.beginWait('現在地を取得しています'):0;
   setTip('現在地を取得しています…');
-  var p=await whereAmI();
-  if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
-  locDone=true;
-  map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
-  showMe(p.lat,p.lng,p.acc);
-  setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
+  try{
+    var p=await whereAmI();
+    if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
+    locDone=true;
+    map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
+    showMe(p.lat,p.lng,p.acc);
+    setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
+  }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
 };
 
 window.setColorMode=function(mode){

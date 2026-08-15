@@ -50,6 +50,85 @@ test('release UI uses authenticated social routes and persisted actions', async 
   assert.match(release, /encodeURIComponent\(p\.id\)\+'\/flash/);
 });
 
+test('timeline redraw revokes old photo URLs and aborts stale thumbnail requests', async () => {
+  const release = await read('public/release.js');
+  const start = release.indexOf('function resetReleasePhotos');
+  const end = release.indexOf('/* 地図用の共有写真', start);
+  assert.ok(start >= 0 && end > start);
+
+  let resolveResponse;
+  const api = () => new Promise(resolve => { resolveResponse = resolve; });
+  const revoked = [];
+  const objectUrl = {
+    createObjectURL(){ return 'blob:new'; },
+    revokeObjectURL(value){ revoked.push(value); }
+  };
+  class TestAbortController {
+    constructor(){ this.signal = { aborted: false }; }
+    abort(){ this.signal.aborted = true; }
+  }
+  const helpers = Function('api', 'URL', 'AbortController',
+    release.slice(start, end) + ';return {resetReleasePhotos,putRemotePhoto};'
+  )(api, objectUrl, TestAbortController);
+
+  const stale = new TestAbortController();
+  const screen = {
+    isConnected: true,
+    __urls: ['blob:old'],
+    __photoControllers: [stale],
+    __photoGeneration: 0
+  };
+  helpers.resetReleasePhotos(screen);
+  assert.equal(stale.signal.aborted, true);
+  assert.deepEqual(revoked, ['blob:old']);
+  assert.deepEqual(screen.__urls, []);
+  assert.deepEqual(screen.__photoControllers, []);
+
+  const image = {
+    isConnected: true,
+    src: '',
+    classList: { add(){} },
+    closest(){ return null; }
+  };
+  const pending = helpers.putRemotePhoto(image, 'photo-1', screen, 'thumb');
+  await Promise.resolve();
+  assert.equal(screen.__photoControllers.length, 1);
+  const active = screen.__photoControllers[0];
+  helpers.resetReleasePhotos(screen);
+  assert.equal(active.signal.aborted, true);
+  resolveResponse({ ok: true, blob: async () => ({}) });
+  await pending;
+  assert.deepEqual(revoked, ['blob:old', 'blob:new']);
+  assert.equal(image.src, '');
+  assert.deepEqual(screen.__photoControllers, []);
+});
+
+test('a thumbnail finishing after its image node was replaced is revoked immediately', async () => {
+  const release = await read('public/release.js');
+  const start = release.indexOf('function resetReleasePhotos');
+  const end = release.indexOf('/* 地図用の共有写真', start);
+  let resolveResponse;
+  const api = () => new Promise(resolve => { resolveResponse = resolve; });
+  const revoked = [];
+  const helpers = Function('api', 'URL', 'AbortController',
+    release.slice(start, end) + ';return {putRemotePhoto};'
+  )(
+    api,
+    { createObjectURL(){ return 'blob:detached'; }, revokeObjectURL(value){ revoked.push(value); } },
+    class { constructor(){ this.signal = {}; } abort(){} }
+  );
+  const screen = { isConnected: true, __urls: [], __photoControllers: [], __photoGeneration: 3 };
+  const image = { isConnected: true, src: '', classList: { add(){} }, closest(){ return null; } };
+  const pending = helpers.putRemotePhoto(image, 'photo-2', screen, 'thumb');
+  await Promise.resolve();
+  image.isConnected = false;
+  resolveResponse({ ok: true, blob: async () => ({}) });
+  await pending;
+  assert.deepEqual(revoked, ['blob:detached']);
+  assert.deepEqual(screen.__urls, []);
+  assert.equal(image.src, '');
+});
+
 test('PDF map header and iPhone viewport rules stay fixed', async () => {
   const html = await read('public/index.html');
   const css = await read('public/app.css');
