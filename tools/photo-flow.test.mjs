@@ -195,6 +195,21 @@ test("一括追加は0枚を成功表示せず、候補ファイルの再読込�
   assert.doesNotMatch(postSource, /setTip\(done\+'枚を '\+donePlaces\+'か所に置きました'\);/);
   assert.match(postSource, /putSpotWithStorageRecovery\(rec\)/);
   assert.match(postSource, /compactSyncedPhotos/);
+  assert.match(postSource, /id="bulk-vis"/);
+  assert.match(postSource, /visibility:bulkVisibility/);
+  assert.doesNotMatch(postSource, /visibility:defaultPostVisibility\(\),owner_scope:workScope/);
+});
+
+test("共有地図からの写真追加は全経路で公開範囲の明示選択を要求する", () => {
+  assert.match(postSource, /function initialPostVisibility\(\)/);
+  assert.match(postSource, /mapAudience==='public'[\s\S]{0,30}\?null:defaultPostVisibility\(\)/);
+  assert.match(postSource, /var bulkVisibility=initialPostVisibility\(\)/);
+  assert.match(postSource, /var chosenVisibility=initialPostVisibility\(\)/);
+  assert.match(postSource, /\['public','みんな'\]/);
+  assert.match(postSource, /go\.disabled=!value/);
+  assert.match(postSource, /ok\.disabled = !chosenVisibility/);
+  assert.match(postSource, /みんなの地図へ公開/);
+  assert.match(postSource, /settings\.public_precision\|\|'approx'/);
 });
 
 test("端末保存はIndexedDBトランザクション確定後だけ成功になる", () => {

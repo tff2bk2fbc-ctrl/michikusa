@@ -261,8 +261,10 @@ function startPlacing(lat,lng,opt){
   if(!isFinite(lat)||!isFinite(lng))return;
   if(dropM){dropM.remove();dropM=null;}
   placing=Object.assign({lat:lat,lng:lng,place:null},opt);
-  var d=document.createElement('div');d.className='pn drop';
-  d.innerHTML='<div class="im"></div><div class="tl"></div>';
+  // 選択座標は確認シートだけで伝える。Marker はドラッグ操作の透明な
+  // 当たり領域としてだけ残し、CSSの継承や古いピン装飾でも円を描かない。
+  var d=document.createElement('div');d.className='drop';
+  d.setAttribute('aria-hidden','true');
   dropM=new maplibregl.Marker({element:d,draggable:true,anchor:'bottom'})
     .setLngLat([lng,lat]).addTo(map);
   dropM.on('dragend',function(){var q=dropM.getLngLat();movePlacing(q.lat,q.lng,true);});

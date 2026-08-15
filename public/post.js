@@ -33,6 +33,15 @@ function defaultPostVisibility(){
   var v=meP&&meP.settings&&meP.settings.default_visibility;
   return ['private','friends','public'].indexOf(v)>=0?v:'private';
 }
+/*
+ * 「みんなの地図」で既定値のまま保存すると、投稿が直後に消えて保存失敗に
+ * 見える。一方、閲覧中という理由だけで public にすると意図しない公開になる。
+ * 共有地図では未選択から始め、本人が公開範囲をタップするまで保存させない。
+ */
+function initialPostVisibility(){
+  return typeof mapAudience!=='undefined'&&mapAudience==='public'
+    ?null:defaultPostVisibility();
+}
 function visibilityLabel(v){
   return {private:'自分だけ',friends:'フレンド',public:'みんな'}[v]||'自分だけ';
 }
@@ -40,9 +49,13 @@ function precisionLabel(v){
   return {exact:'正確な位置',approx:'約500m',area:'約2kmのエリア',hidden:'位置なし'}[v]||'位置なし';
 }
 function visibilityDescription(v){
+  if(!v)return '公開範囲を選んでください';
   if(v==='private')return '自分だけに表示されます';
   var settings=meP&&meP.settings||{};
-  var precision=v==='friends'?settings.friend_precision:settings.public_precision;
+  // 設定取得が一時失敗しても、サーバー既定値と違う「位置なし」を表示しない。
+  // 公開前の説明と実際の配信精度を一致させる。
+  var precision=v==='friends'?(settings.friend_precision||'exact'):
+    (settings.public_precision||'approx');
   return visibilityLabel(v)+'に表示・位置は'+precisionLabel(precision)+'。公開用画像は安全確認のためGoogle Cloud Visionへ送信されます';
 }
 
@@ -312,12 +325,45 @@ async function handleBulk(files){
     };
   });
 
-  foot.innerHTML='<button class="btn" id="go" style="margin-top:16px">'+
-      'この '+groups.length+' か所を地図に置く'+(manual.length?'＋場所を選ぶ':'')+'</button>'+
+  // 一括追加でも公開範囲を暗黙の既定値だけで決めない。ここで明示してから
+  // 全写真へ同じ値を付けるため、「みんな」を選んだ投稿だけが共有地図へ出る。
+  var bulkVisibility=initialPostVisibility();
+  foot.innerHTML='<div class="post-vis-label bulk-vis-label">この写真すべての公開範囲</div>'+
+    '<div class="chips post-vis" id="bulk-vis" role="radiogroup" aria-label="一括追加する写真の公開範囲">'+
+      [['private','自分だけ'],['friends','フレンド'],['public','みんな']].map(function(o){
+        return '<button type="button" class="chip '+(bulkVisibility===o[0]?'on':'')+'" data-v="'+o[0]+'" role="radio" aria-checked="'+(bulkVisibility===o[0])+'">'+o[1]+'</button>';
+      }).join('')+'</div>'+
+    '<div class="post-vis-note" id="bulk-vis-note" aria-live="polite">'+visibilityDescription(bulkVisibility)+'</div>'+
+    '<button class="btn" id="go" style="margin-top:16px">公開範囲を選んでください</button>'+
     '<button class="btn g" id="x" style="margin-top:8px">やめる</button>';
   foot.querySelector('#x').onclick=closeSheet;
+  var bulkVis=foot.querySelector('#bulk-vis'),bulkVisNote=foot.querySelector('#bulk-vis-note'),
+    go=foot.querySelector('#go');
+  function setBulkVisibility(value){
+    bulkVisibility=value;
+    Array.prototype.forEach.call(bulkVis.querySelectorAll('.chip'),function(x){
+      var on=x.dataset.v===value;x.classList.toggle('on',on);x.setAttribute('aria-checked',String(on));x.tabIndex=on?0:-1;
+    });
+    bulkVisNote.textContent=visibilityDescription(value);
+    go.disabled=!value;
+    go.textContent=!value?'公開範囲を選んでください':
+      (value==='public'?'この '+groups.length+' か所をみんなの地図へ公開':
+       value==='friends'?'この '+groups.length+' か所をフレンドに共有':
+       'この '+groups.length+' か所を自分だけに残す')+(manual.length?'＋場所を選ぶ':'');
+  }
+  Array.prototype.forEach.call(bulkVis.querySelectorAll('.chip'),function(b){
+    b.onclick=function(){setBulkVisibility(b.dataset.v);};
+  });
+  bulkVis.onkeydown=function(e){
+    if(['ArrowLeft','ArrowRight','Home','End'].indexOf(e.key)<0)return;
+    var buttons=Array.prototype.slice.call(bulkVis.querySelectorAll('.chip'));
+    var i=buttons.indexOf(document.activeElement),next=e.key==='Home'?0:e.key==='End'?buttons.length-1:
+      (i+(e.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;
+    e.preventDefault();buttons[next].focus();buttons[next].click();
+  };
+  setBulkVisibility(bulkVisibility);
 
-  foot.querySelector('#go').onclick=async function(){
+  go.onclick=async function(){
     var btn=this; btn.disabled=true;
     var workScope=activeSpotScope;
     var use=groups.filter(function(g,i){return !skip[i];});
@@ -339,7 +385,7 @@ async function handleBulk(files){
         url=await photoForLocalStorage(url);
         var rec={id:nid(),n:g.name,c:g.cat,lat:item.lat,lng:item.lng,place:g.place||'',
           tag:'',d:item.d||new Date(item.at).toISOString().slice(0,10),photo:url,
-          visibility:defaultPostVisibility(),owner_scope:workScope};
+          visibility:bulkVisibility,owner_scope:workScope};
         if(!(await putSpotWithStorageRecovery(rec))){
           saveFailed++;
           continue;
@@ -377,7 +423,7 @@ async function handleBulk(files){
 function openAdd(p){
   var cat=p.cat||CATS[0];
   var tagged=[];        // 一緒にいた人
-  var chosenVisibility=defaultPostVisibility();
+  var chosenVisibility=initialPostVisibility();
   var sheetScope=activeSpotScope;
 
   /* 聞くことを絞る。場所も日付も写真から分かるので、聞かない */
@@ -425,6 +471,10 @@ function openAdd(p){
       var on=x.dataset.v===value;x.classList.toggle('on',on);x.setAttribute('aria-checked',String(on));x.tabIndex=on?0:-1;
     });
     visNote.textContent=visibilityDescription(chosenVisibility);
+    ok.textContent=!value?'公開範囲を選んでください':
+      value==='public'?'みんなの地図へ公開':
+      value==='friends'?'フレンドに共有して残す':'自分だけに残す';
+    sync();
   }
   if(vis)Array.prototype.forEach.call(vis.querySelectorAll('.chip'),function(b){
     b.onclick=function(){
@@ -443,7 +493,7 @@ function openAdd(p){
   };
   setPostVisibility(chosenVisibility);
 
-  function sync(){ ok.disabled = nm ? !nm.value.trim() : false; }
+  function sync(){ ok.disabled = !chosenVisibility || (nm ? !nm.value.trim() : false); }
   if(nm) nm.oninput=sync;
   sync();
 

@@ -230,13 +230,18 @@ test('map controls follow the requested audience icon, transparent place marker,
   const core = await read('public/core.js');
   const data = await read('public/data.js');
   const native = await read('public/native.js');
+  const place = await read('public/place.js');
   const css = await read('public/app.css');
   assert.match(core, /viewingPublic\s*\?\s*'<svg/);
   assert.match(core, /自分の地図へ切り替える/);
   assert.match(native, /getElementById\('map-locate'\)/);
   assert.doesNotMatch(native, /getElementById\('btn-loc'\)/);
   assert.doesNotMatch(data, /件 読み込みました/);
-  assert.match(css, /\.drop \.im\{[^}]*background:transparent!important/);
+  assert.match(place, /d\.className='drop'/);
+  assert.doesNotMatch(place, /d\.innerHTML='<div class="im"/);
+  assert.match(css, /\.drop\{[^}]*opacity:0!important/);
+  assert.match(css, /\.drop\{[^}]*border:0!important/);
+  assert.match(css, /\.drop::after\{[^}]*border:0!important[^}]*opacity:0!important/);
 });
 
 test('profile post response contains authorized thumbnail identifiers', async () => {
