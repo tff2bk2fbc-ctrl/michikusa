@@ -59,9 +59,14 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
 @keyframes spotaCharge{0%{stroke-dashoffset:270}62%{stroke-dashoffset:0}70%,100%{stroke-dashoffset:0;opacity:0}}
 
 /* 写真はカメラから地図上の保存地点へ着地する。実データとは分離した表示専用レイヤー。 */
-.motion-photo-drop{position:fixed;z-index:120;width:140px;height:140px;padding:5px;overflow:hidden;
+.motion-photo-drop{position:fixed;z-index:120;width:150px;height:150px;padding:5px;overflow:hidden;
   border-radius:20px;background:#fff;box-shadow:0 14px 28px rgba(0,0,0,.25);pointer-events:none;opacity:0}
 .motion-photo-drop img{width:100%;height:100%;display:block;border-radius:15px;object-fit:cover}
+.motion-camera-flash{position:fixed;inset:0;z-index:121;background:#fff;opacity:0;pointer-events:none;
+  animation:spotaCameraFlash .5s cubic-bezier(.22,.61,.36,1) forwards}
+.cam.motion-shutter-press{animation:spotaShutterPress .5s cubic-bezier(.34,1.56,.64,1)}
+@keyframes spotaCameraFlash{0%,100%{opacity:0}25%{opacity:.82}}
+@keyframes spotaShutterPress{0%,100%{transform:scale(1)}45%{transform:scale(.82)}}
 .motion-land-ring{position:fixed;z-index:119;width:58px;height:58px;border:2px solid color-mix(in srgb,var(--ink) 45%,transparent);
   border-radius:50%;opacity:0;pointer-events:none}
 .motion-land-ring.is-on{animation:spotaLandRing 1s cubic-bezier(.22,.61,.36,1) forwards}
@@ -74,9 +79,9 @@ body.dark{--glass:rgba(28,28,30,.48);--glassline:rgba(255,255,255,.28);
 .current-location-ring{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px;
   border:2px solid rgba(30,136,229,.55);border-radius:50%;opacity:0;pointer-events:none}
 .current-location-marker.is-locating .current-location-dot{animation:spotaDotSettle .8s cubic-bezier(.34,1.56,.64,1)}
-.current-location-marker.is-locating .current-location-ring{animation:spotaLocationPulse 2.4s cubic-bezier(.22,.61,.36,1) forwards}
-.current-location-marker.is-locating .current-location-ring:nth-child(3){animation-delay:.45s}
-.current-location-marker.is-locating .current-location-ring:nth-child(4){animation-delay:.9s}
+.current-location-marker.is-locating .current-location-ring{animation:spotaLocationPulse 2.4s cubic-bezier(.22,.61,.36,1) infinite}
+.current-location-marker.is-locating .current-location-ring:nth-child(3){animation-delay:.8s}
+.current-location-marker.is-locating .current-location-ring:nth-child(4){animation-delay:1.6s}
 @keyframes spotaDotSettle{0%{transform:scale(.4)}70%{transform:scale(1.22)}100%{transform:scale(1)}}
 @keyframes spotaLocationPulse{0%{opacity:.75;transform:scale(.4)}74%,100%{opacity:0;transform:scale(5)}}
 
@@ -419,11 +424,12 @@ body.placing .map-locate{display:none}
 .feed-modes button{min-height:44px;color:var(--dim);font-size:13px;font-weight:650;border-bottom:2px solid transparent}
 .feed-modes button.on{color:var(--ink);border-color:var(--ink)}
 .timeline-refresh-hint{position:relative;z-index:2;height:0;display:flex;justify-content:center;pointer-events:none;overflow:visible}
-.timeline-refresh-hint span{display:grid;place-items:center;width:32px;height:32px;opacity:0;
+.timeline-refresh-hint>span{display:grid;place-items:center;min-width:32px;height:32px;opacity:0;
   transform:translateY(-32px);transition:opacity .16s,transform .16s}
-.timeline-refresh-spinner{display:block;width:24px;height:24px;border:2px solid color-mix(in srgb,var(--dim) 32%,transparent);
+.timeline-refresh-copy{font-size:12px;font-style:normal;color:var(--dim);white-space:nowrap}
+.timeline-refresh-spinner{display:none;width:24px;height:24px;border:2px solid color-mix(in srgb,var(--dim) 32%,transparent);
   border-top-color:var(--ink);border-radius:50%;transform:rotate(calc(var(--pull,0px) * 2deg))}
-.timeline-refresh-hint.pulling span,.timeline-refresh-hint.refreshing span{opacity:1;
+.timeline-refresh-hint.pulling>span,.timeline-refresh-hint.refreshing>span{opacity:1;
   transform:translateY(calc(var(--pull,0px) * .3))}
 .timeline-refresh-hint.pulling~.timeline-search,.timeline-refresh-hint.pulling~.feed-modes,
 .timeline-refresh-hint.pulling~.timeline-status,.timeline-refresh-hint.pulling~.trend-row,
@@ -431,9 +437,12 @@ body.placing .map-locate{display:none}
 .timeline-refresh-hint.refreshing~.timeline-search,.timeline-refresh-hint.refreshing~.feed-modes,
 .timeline-refresh-hint.refreshing~.timeline-status,.timeline-refresh-hint.refreshing~.trend-row,
 .timeline-refresh-hint.refreshing~.timeline-list,.timeline-refresh-hint.refreshing~.feed-more{
-  transform:translateY(calc(var(--pull,0px) * .65))}
-.timeline-refresh-hint.refreshing .timeline-refresh-spinner{animation:timelineSpin 1s linear infinite}
+  transform:translateY(var(--pull,0px))}
+.timeline-refresh-hint.refreshing .timeline-refresh-copy{display:none}
+.timeline-refresh-hint.refreshing .timeline-refresh-spinner{display:block;animation:timelineSpin 1s linear infinite}
 @keyframes timelineSpin{to{transform:rotate(360deg)}}
+.timeline-card.timeline-fresh{animation:timelineFreshRow .55s cubic-bezier(.34,1.56,.64,1)}
+@keyframes timelineFreshRow{from{opacity:0;transform:translateY(-28px) scale(.97)}to{opacity:1;transform:none}}
 .daily-view{display:flex;align-items:center;gap:13px;margin:20px 16px 14px;padding:18px 0;
   border-top:1px solid var(--ink);border-bottom:1px solid var(--line)}
 .daily-photo{width:58px;height:58px;flex:0 0 58px;padding:0;overflow:hidden;background:var(--chip)}
@@ -451,15 +460,16 @@ body.placing .map-locate{display:none}
 .timeline-person i{width:38px;height:38px;display:grid;place-items:center;border-radius:50%;background:var(--ink);color:var(--bg);
   font-size:13px;font-style:normal;font-weight:700}.timeline-person span{display:block}.timeline-person b{display:block;font-size:13.5px}
 .timeline-person small{display:block;margin-top:1px;color:var(--dim);font-size:11.5px}
-.timeline-card time{color:var(--dim);font-size:10.5px;margin-left:8px;white-space:nowrap}.timeline-follow{position:relative;min-width:88px;min-height:44px;padding:0 10px;margin-left:7px;overflow:hidden;border:1px solid var(--ink);border-radius:99px;background:var(--ink);color:var(--bg);font-size:11px;font-weight:700;white-space:nowrap;transition:color .38s cubic-bezier(.22,.61,.36,1),background .38s cubic-bezier(.22,.61,.36,1),border-color .38s cubic-bezier(.22,.61,.36,1)}
-.timeline-follow>span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transition:opacity .38s cubic-bezier(.22,.61,.36,1),transform .38s cubic-bezier(.22,.61,.36,1)}
-.timeline-follow .following-label{opacity:0;transform:translateY(10px)}
-.timeline-follow .follow-check{display:inline-block;width:13px;height:7px;margin-right:5px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg) scale(0);transform-origin:center}
+.timeline-card time{color:var(--dim);font-size:10.5px;margin-left:8px;white-space:nowrap}.timeline-follow{position:relative;min-width:94px;min-height:44px;padding:0 10px;margin-left:7px;overflow:hidden;border:1px solid var(--ink);border-radius:99px;background:var(--ink);color:var(--bg);font-size:11px;font-weight:700;white-space:nowrap;transition:color .45s cubic-bezier(.22,.61,.36,1),background .45s cubic-bezier(.22,.61,.36,1),border-color .45s cubic-bezier(.22,.61,.36,1)}
+.timeline-follow>span{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;transition:opacity .45s cubic-bezier(.22,.61,.36,1),transform .45s cubic-bezier(.22,.61,.36,1)}
+.timeline-follow .following-label{opacity:0;transform:translateY(12px)}
+.timeline-follow .follow-check{display:inline-block;width:15px;height:8px;margin-right:5px;border-left:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg) scale(0);transform-origin:center}
 .timeline-follow.on{background:transparent;color:var(--dim);border-color:var(--line)}
-.timeline-follow.on .follow-label{opacity:0;transform:translateY(-10px)}
+.timeline-follow.on .follow-label{opacity:0;transform:translateY(-12px)}
 .timeline-follow.on .following-label{opacity:1;transform:none}
-.timeline-follow.follow-confirm .follow-check{animation:followCheck .4s cubic-bezier(.34,1.56,.64,1) .08s forwards}
-@keyframes followCheck{to{transform:rotate(-45deg) scale(1)}}
+.timeline-follow.on .follow-check{transform:rotate(-45deg) scale(1)}
+.timeline-follow.follow-confirm .follow-check{animation:followCheck .4s cubic-bezier(.34,1.56,.64,1) .12s forwards}
+@keyframes followCheck{from{transform:rotate(-45deg) scale(0)}to{transform:rotate(-45deg) scale(1)}}
 .timeline-photo{position:relative;display:block;width:100%;padding:0;background:var(--chip);aspect-ratio:4/5;overflow:hidden}
 .timeline-photo img{width:100%;height:100%;display:block;object-fit:cover;opacity:0;transition:opacity .2s}.timeline-photo img.loaded{opacity:1}
 .timeline-like-heart{position:absolute;left:50%;top:50%;z-index:2;color:#fff;font-size:76px;line-height:1;
@@ -477,11 +487,13 @@ body.placing .map-locate{display:none}
 .timeline-actions{display:flex;align-items:center;gap:5px;margin-top:12px;border-top:1px solid var(--line);padding-top:7px}
 .timeline-actions button{min-width:48px;min-height:44px;display:flex;align-items:center;justify-content:center;gap:5px;color:var(--dim)}
 .timeline-actions button svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
-.timeline-actions button b{font-size:11px}.timeline-actions button.on{color:var(--ink)}.timeline-actions button.on svg{fill:currentColor}
+.timeline-actions button b{position:relative;width:34px;height:18px;overflow:hidden;font-size:11px;line-height:18px;text-align:left;font-variant-numeric:tabular-nums}
+.timeline-actions button b span{position:absolute;inset:0 auto auto 0;display:block;transition:transform .4s cubic-bezier(.34,1.56,.64,1)}
+.timeline-actions button.on{color:var(--ink)}.timeline-actions button[data-like].on{color:#C2554A}.timeline-actions button.on svg{fill:currentColor}
 .timeline-actions button.flash svg{animation:likeFlash .8s cubic-bezier(.34,1.56,.64,1)}
 .timeline-actions button[data-flash].on svg{fill:currentColor;stroke:currentColor}
 .timeline-actions button.flash-burst svg{animation:flashBurst .5s cubic-bezier(.18,.88,.24,1)}
-@keyframes likeFlash{0%{transform:scale(.7);opacity:.35}55%{transform:scale(1.38)}100%{transform:scale(1);opacity:1}}
+@keyframes likeFlash{0%{transform:scale(1)}22%{transform:scale(.7)}55%{transform:scale(1.3)}100%{transform:scale(1)}}
 @keyframes flashBurst{0%{transform:scale(.72) rotate(-8deg);opacity:.3}50%{transform:scale(1.45) rotate(5deg)}100%{transform:scale(1);opacity:1}}
 .feed-more{display:block;width:calc(100% - 32px);min-height:48px;margin:18px 16px;border:1px solid var(--line);font-size:13px;font-weight:700}
 
@@ -565,6 +577,13 @@ body.placing .map-locate{display:none}
 .viewer.viewer-photo-transition .vw-bar,.viewer.viewer-photo-transition .vw-dots,
 .viewer.viewer-photo-transition .vw-cap,.viewer.viewer-photo-transition .vw-tags,
 .viewer.viewer-photo-transition .vw-meta{opacity:0}
+.motion-detail-panel{position:fixed;z-index:-1;left:0;right:0;bottom:0;height:min(330px,42dvh);
+  border-radius:30px 30px 0 0;background:#111;pointer-events:none}
+.viewer.viewer-photo-transition .motion-detail-panel{z-index:0}
+.viewer.viewer-photo-transition .vw-bar,.viewer.viewer-photo-transition .vw-track,
+.viewer.viewer-photo-transition .vw-dots,.viewer.viewer-photo-transition .vw-cap,
+.viewer.viewer-photo-transition .vw-tags,.viewer.viewer-photo-transition .vw-meta{position:relative;z-index:1}
+.viewer.viewer-photo-transition .vw-track{overflow:visible}
 .vw-bar{display:flex;align-items:center;gap:11px;padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px}
 .vw-bar .av{width:32px;height:32px;border-radius:50%;flex:0 0 32px;background:#26262C;
   background-size:cover;background-position:center}

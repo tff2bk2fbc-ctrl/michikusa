@@ -242,7 +242,7 @@ function feedCard(p,i){
     '<div class="timeline-copy"><div class="timeline-place"><b>'+esc(p.title||p.place_name||'思い出')+'</b>'+
       (p.map_available?'<button type="button" data-map="'+i+'">地図で見る</button>':'')+'</div>'+
       (p.tag?'<p>'+esc(p.tag)+'</p>':'')+
-      '<div class="timeline-actions"><button type="button" data-like="'+i+'" aria-label="いいね '+Number(p.like_count||0)+'件" aria-pressed="'+String(!!p.liked)+'" class="'+(p.liked?'on':'')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 5.8c-2.1-2.3-5.6-1.8-7.2.6L12 8.7l-1.6-2.3c-1.6-2.4-5.1-2.9-7.2-.6-2 2.2-1.7 5.7.5 7.7L12 21l8.3-7.5c2.2-2 2.5-5.5.5-7.7Z"/></svg><b>'+Number(p.like_count||0)+'</b></button>'+
+      '<div class="timeline-actions"><button type="button" data-like="'+i+'" aria-label="いいね '+Number(p.like_count||0)+'件" aria-pressed="'+String(!!p.liked)+'" class="'+(p.liked?'on':'')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 5.8c-2.1-2.3-5.6-1.8-7.2.6L12 8.7l-1.6-2.3c-1.6-2.4-5.1-2.9-7.2-.6-2 2.2-1.7 5.7.5 7.7L12 21l8.3-7.5c2.2-2 2.5-5.5.5-7.7Z"/></svg><b><span>'+Number(p.like_count||0)+'</span></b></button>'+
       '<button type="button" data-comments="'+i+'" aria-label="コメント '+Number(p.comment_count||0)+'件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v11H9l-5 3Z"/><path d="M8 10h8M8 13h5"/></svg><b>'+Number(p.comment_count||0)+'</b></button>'+
       (p.visibility==='public'?'<button type="button" data-flash="'+i+'" aria-label="フラッシュ '+Number(p.flash_count||0)+'件" aria-pressed="'+String(!!p.flashed)+'" class="'+(p.flashed?'on':'')+'" '+(p.flashed?'disabled':'')+'><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 5.8 13h5.5l-.8 9L18.2 11h-5.5Z"/></svg><b>'+Number(p.flash_count||0)+'</b></button>':'')+
       (p.mine&&p.visibility==='public'?'<button type="button" data-share="'+i+'" aria-label="共有"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v6H5V6h6"/></svg></button>':'')+'</div></div></article>';
@@ -253,13 +253,25 @@ function bindFeedCards(screen,host,posts,timelineState){
   Array.prototype.forEach.call(host.querySelectorAll('.timeline-photo'),function(b){
     if(b.__releaseBound)return;b.__releaseBound=1;
     var p=posts[Number(b.dataset.index)],img=b.querySelector('img');putRemotePhoto(img,p.photo_id,screen,'thumb');
-    b.onclick=function(){if(img.src)openViewer([img.src],0,p.author&&(p.author.name||p.author.handle),p.place_name||p.title,p.tag||'',releaseDate(p.taken_at),releaseTags(p.tag),[p.photo_id]);};
+    var lastTap=0,openTimer=0;
+    function openPhoto(){if(b.isConnected&&img.src)openViewer([img.src],0,p.author&&(p.author.name||p.author.handle),p.place_name||p.title,p.tag||'',releaseDate(p.taken_at),releaseTags(p.tag),[p.photo_id]);}
+    b.onclick=function(){
+      var now=Date.now();
+      if(now-lastTap<330){
+        clearTimeout(openTimer);lastTap=0;
+        var like=b.closest('.timeline-card').querySelector('[data-like]');
+        if(like&&like.getAttribute('aria-pressed')!=='true')like.click();
+        else if(window.SpotaMotion)window.SpotaMotion.restartClass(b,'like-burst',1000);
+      }else{lastTap=now;openTimer=setTimeout(openPhoto,340);}
+    };
   });
   Array.prototype.forEach.call(host.querySelectorAll('[data-like]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
     var p=posts[Number(b.dataset.like)],next=!p.liked,wasLiked=!!p.liked,wasCount=Number(p.like_count)||0;
     var photo=b.closest('.timeline-card').querySelector('.timeline-photo');
     function paint(liked,count){p.liked=!!liked;p.like_count=Math.max(0,Number(count)||0);
-      b.classList.toggle('on',p.liked);b.setAttribute('aria-pressed',String(p.liked));b.querySelector('b').textContent=p.like_count;
+      b.classList.toggle('on',p.liked);b.setAttribute('aria-pressed',String(p.liked));
+      if(window.SpotaMotion)window.SpotaMotion.rollNumber(b.querySelector('b'),p.like_count);
+      else b.querySelector('b').innerHTML='<span>'+p.like_count+'</span>';
       b.setAttribute('aria-label','いいね '+p.like_count+'件');}
     b.disabled=true;paint(next,wasCount+(next?1:-1));
     if(next&&window.SpotaMotion){window.SpotaMotion.restartClass(b,'flash',820);window.SpotaMotion.restartClass(photo,'like-burst',1000);}
@@ -307,12 +319,13 @@ function bindTimelineRefresh(screen,host,query,mode){
   screen.__timelineRefreshBound=true;
   var tracking=false,startY=0,pull=0,pointer=null;
   function paint(value,ready){
-    pull=Math.max(0,Math.min(96,value));
+    pull=Math.max(0,Math.min(90,value));
     hint=screen.__timelineRefreshState.host.querySelector('.timeline-refresh-hint')||hint;
     screen.__timelineRefreshState.host.style.setProperty('--pull',pull+'px');
     hint.style.setProperty('--pull',pull+'px');
     hint.classList.toggle('pulling',pull>4);
     hint.classList.toggle('ready',!!ready);
+    var copy=hint.querySelector('.timeline-refresh-copy');if(copy)copy.textContent=ready?'離して更新':'下に引いて更新';
     hint.setAttribute('aria-hidden',String(pull<=4));
   }
   function reset(){tracking=false;pointer=null;paint(0,false);}
@@ -326,20 +339,22 @@ function bindTimelineRefresh(screen,host,query,mode){
     if(!tracking||e.pointerId!==pointer)return;
     var dy=e.clientY-startY;
     if(dy<=0||screen.scrollTop>1){reset();return;}
-    var distance=Math.min(96,dy*.58);
-    paint(distance,distance>=64);
+    var distance=Math.min(90,dy*.45);
+    paint(distance,distance>=56);
     if(distance>8)e.preventDefault();
   }
   function up(e){
     if(!tracking||e.pointerId!==pointer)return;
-    var ready=pull>=64,state=screen.__timelineRefreshState;
+    var ready=pull>=56,state=screen.__timelineRefreshState;
     if(ready&&!screen.__timelineRefreshBusy&&state){
-      tracking=false;pointer=null;paint(64,true);
+      tracking=false;pointer=null;paint(56,true);
       hint.classList.add('refreshing');hint.setAttribute('aria-hidden','false');
       screen.__timelineRefreshBusy=true;
       renderTimeline(screen,state.host,state.query,state.mode,0,true).finally(function(){
         screen.__timelineRefreshBusy=false;
-        if(hint&&hint.isConnected){hint.classList.remove('refreshing','pulling','ready');hint.style.setProperty('--pull','0px');state.host.style.setProperty('--pull','0px');hint.setAttribute('aria-hidden','true');}
+        var currentHint=state.host.querySelector('.timeline-refresh-hint');
+        state.host.style.setProperty('--pull','0px');
+        if(currentHint){currentHint.classList.remove('refreshing','pulling','ready');currentHint.style.setProperty('--pull','0px');currentHint.setAttribute('aria-hidden','true');}
       });
     }else reset();
   }
@@ -351,7 +366,7 @@ function bindTimelineRefresh(screen,host,query,mode){
 }
 function drawTimelineShell(screen,host,query,mode){
   resetReleasePhotos(screen);
-  host.innerHTML='<div class="timeline-refresh-hint" aria-hidden="true"><span aria-hidden="true"><i class="timeline-refresh-spinner"></i></span></div>'+
+  host.innerHTML='<div class="timeline-refresh-hint" aria-hidden="true"><span aria-hidden="true"><i class="timeline-refresh-copy">下に引いて更新</i><i class="timeline-refresh-spinner"></i></span></div>'+
     '<form class="timeline-search" id="timeline-search"><span aria-hidden="true">⌕</span>'+
       '<input id="timeline-q" value="'+esc(query||'')+'" placeholder="場所・ことば・#タグ" enterkeyhint="search" autocomplete="off">'+
       '<button type="submit">探す</button></form>'+
@@ -383,6 +398,7 @@ async function renderTimeline(screen,host,query,mode,restoreY,refreshing){
     if(!posts.length){status.innerHTML='<b>'+(mode==='following'?'フォロー中の投稿はまだありません':'写真が見つかりませんでした')+'</b><span>'+(query?'ことばを変えて、もう一度探してみてください。':'気になる人をフォローすると、ここに写真が並びます。')+'</span>';return;}
     status.outerHTML=(tags.length?'<div class="trend-row" aria-label="よく使われているタグ">'+tags.map(function(t){return '<button type="button" data-tag="'+esc(t.label)+'">'+esc(t.label)+'</button>';}).join('')+'</div>':'')+
       '<div class="timeline-list">'+posts.map(feedCard).join('')+'</div>'+(j.has_more?'<button type="button" class="feed-more" id="feed-more">さらに見る</button>':'');
+    if(refreshing){var fresh=host.querySelector('.timeline-card');if(fresh){fresh.classList.add('timeline-fresh');setTimeout(function(){if(fresh.isConnected)fresh.classList.remove('timeline-fresh');},700);}}
     Array.prototype.forEach.call(host.querySelectorAll('[data-tag]'),function(b){b.onclick=function(){renderTimeline(screen,host,b.dataset.tag,mode);};});
     bindFeedCards(screen,host,posts,{query:query,mode:mode});
     if(restoreY)requestAnimationFrame(function(){if(screen.isConnected)screen.scrollTop=restoreY;});
