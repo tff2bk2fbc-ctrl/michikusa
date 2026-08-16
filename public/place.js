@@ -443,7 +443,7 @@ map.on('click',function(e){
     return null;
   }
 
-  var cluster=nearest(['photo-cluster','photo-cluster-count']);
+  var cluster=nearest(['photo-cluster-a','photo-cluster-a-pending','photo-cluster','photo-cluster-count']);
   if(cluster){
     var source=map.getSource('spota-photo');
     var clusterId=Number(cluster.properties&&cluster.properties.cluster_id);
@@ -456,7 +456,7 @@ map.on('click',function(e){
     return;
   }
 
-  var f=nearest(['photo-ic','photo-same-cluster','photo-same-cluster-count','photo-pending','mine-ring','mine-ic']);
+  var f=nearest(['photo-ic','photo-group-ic','photo-same-cluster','photo-same-cluster-count','photo-pending','mine-ring','mine-ic']);
   if(f){
     var s=recordForFeature(visibleOwnSpots(),f);
     if(s){ openPlace(s,true); return; }

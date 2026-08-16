@@ -185,7 +185,7 @@ test('本番UIはFilmo動作を追加し、更新と即時反応を分離する'
     read('public/native.js'), read('public/post.js'), read('public/place.js'), read('public/map.js')
   ]);
   assert.match(html, /id="spota-wait" hidden aria-hidden="true"/);
-  assert.ok(html.indexOf('/motion.js?v=120') < html.indexOf('/map.js?v=120'));
+  assert.ok(html.indexOf('/motion.js?v=121') < html.indexOf('/map.js?v=121'));
   assert.match(css, /\.spota-wait\{[^}]*background:transparent;pointer-events:none/s);
   assert.match(css, /spotaCharge 2\.2s/);
   assert.match(css, /\.timeline-refresh-hint\.refreshing \.timeline-refresh-spinner\{display:block;animation:timelineSpin 1s linear infinite\}/);
