@@ -112,6 +112,11 @@
 - `/api/monitor/run`へ認証なしでGETした場合は認証ゲートの401が返る。これはAPI不存在の証拠ではない。実機アプリのPOSTが本番の古いWorkerへ届いた場合、旧Worker側では認証後に該当ルートがなく、404相当になる可能性が高い。
 - 結論は、通知許可・Appleログイン・APNs登録の問題ではなく、ローカル実装とCloudflare本番公開のデプロイ不一致である。api-44と同じ静的資産をセキュリティ・QAゲート後に一体で公開する必要がある。
 - 今回は本番Worker、GitHub、Cloudflare設定を変更していない。次の公開前に、`/api/health`が`api-44`、公開`sync.js`にモニター呼び出しが存在、認証済み実機で`POST /api/monitor/run`が`device_not_registered`または`fcm_not_configured`等の具体的な状態を返すことを確認する。
+## 2026-08-19 リリース前セキュリティ再承認
+
+AIセキュリティ部署がリリースコミットを読み取り専用で再レビューし、GitHub pushとCloudflare反映を`APPROVE`した。通知モニターの認証後配置、`run_id`と`user_id`による所有者制限、日次・読み書き制限、FCM relayのHMAC/timestamp/nonce/body署名、8件/16KiB上限、機微情報拒否、Apple raw nonce、APNs forward、写真所有者照合、Vision fail-closed、EXIF第三者送信なし、秘密鍵・FCM secret・サービスアカウントJSONのGit混入なし、FCM relay依存0件、関連テスト23/23、Wrangler dry-run成功を確認した。
+
+本番反映前の必須作業は、D1 migration `0004_legal_acceptance.sql` → `0005_account_safety_monitor.sql`、Cloudflare secret（`FCM_RELAY_URL`、`FCM_RELAY_SHARED_SECRET`、`GOOGLE_API_KEY`）の存在確認、Worker/Assets一体デプロイ、`/api/health=api-44`確認、実機APNs登録・FCM受付・端末受信・開封・画面確認である。Appleアカウント削除用の再認証は通常ログインと別経路のため、公開後に実機回帰を行う。静的承認は実機通知成功を保証しない。
 - `git diff --check`: 成功
 - `wrangler deploy --dry-run`: 成功
 - Wrangler Static Assets: 14ファイル認識
