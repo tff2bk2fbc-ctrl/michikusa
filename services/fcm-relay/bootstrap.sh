@@ -18,8 +18,8 @@ gcloud projects add-iam-policy-binding "$project" \
   --member="serviceAccount:${account}" --role="roles/firebasecloudmessaging.admin" >/dev/null
 
 if ! gcloud secrets describe "$secret" >/dev/null 2>&1; then
-  # Secretの値は標準出力へ出さず、JSON鍵も作らない。
-  openssl rand -base64 32 | gcloud secrets create "$secret" --data-file=- >/dev/null
+  # Secretの値は標準出力へ出さず、JSON鍵も作らない。末尾改行も保存しない。
+  openssl rand -base64 32 | tr -d '\n' | gcloud secrets create "$secret" --data-file=- >/dev/null
 fi
 gcloud secrets add-iam-policy-binding "$secret" \
   --member="serviceAccount:${account}" --role="roles/secretmanager.secretAccessor" >/dev/null

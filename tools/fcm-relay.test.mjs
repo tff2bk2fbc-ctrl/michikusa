@@ -37,6 +37,17 @@ test('relay health endpoint is available at a non-reserved Cloud Run path',async
   assert.deepEqual(await response.json(),{ok:true});
 });
 
+test('relay normalizes a Secret Manager trailing newline before HMAC verification',async()=>{
+  const body=JSON.stringify({messages:[message()]});
+  const response=await handleRelayRequest(
+    signedRequest(body,'nonce-newline-secret-000001'),
+    {...env,FCM_RELAY_SHARED_SECRET:secret+'\n'},
+    {now:1_700_000_000_000,tokenProvider:async()=> 'adc-token',fetchImpl:async()=>new Response('{}',{status:200})}
+  );
+  assert.equal(response.status,200);
+  assert.deepEqual(await response.json(),{sent:1,code:'accepted',invalid_tokens:[]});
+});
+
 test('relay rejects replay, stale signatures, and sensitive location data',async()=>{
   const body=JSON.stringify({messages:[message()]});
   const first=await handleRelayRequest(signedRequest(body,'nonce-replay-0000000001'),env,{now:1_700_000_000_000,tokenProvider:async()=>'',fetchImpl:async()=>new Response('{}')});

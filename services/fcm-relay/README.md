@@ -14,6 +14,8 @@ Cloudflare Worker
 
 Workerは最大8台分を1リクエストで送ります。中継は本文16KiB、通知長、dataキー、位置情報・メール・IPなどの機微キーを検証し、無効登録tokenだけを返します。nonceはCloud Runインスタンス内で短時間保持します。複数インスタンス／再起動をまたぐ完全なリプレイ防止が必要になったら、nonceストアをFirestoreまたはCloudflare側のDurable Objectへ移します。
 
+Secret Managerの値は、登録方法によって末尾改行を含むことがあります。Cloud RunとCloudflareはHMAC計算前に外側の空白を除去して同じ値へ正規化します。新規bootstrapでは末尾改行を保存しません。
+
 ## Google Cloud側（初回のみ）
 
 次の操作はGoogle Cloudプロジェクト管理権限が必要です。サービスアカウントキーは作りません。

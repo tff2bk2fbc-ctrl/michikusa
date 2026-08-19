@@ -17,7 +17,9 @@ function json(value, status = 200) {
 }
 
 function secretFrom(env) {
-  const secret = String(env.FCM_RELAY_SHARED_SECRET || "");
+  // Secret Managerへ標準入力から登録した値は末尾改行を含むことがある。
+  // Cloudflare側の登録処理と同じく外側の空白を正規化し、HMAC不一致を防ぐ。
+  const secret = String(env.FCM_RELAY_SHARED_SECRET || "").trim();
   return secret.length >= 32 ? secret : null;
 }
 

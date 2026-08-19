@@ -436,3 +436,13 @@ AIセキュリティ部署がリリースコミットを読み取り専用で再
 - `didRegisterForRemoteNotificationsWithDeviceToken`は`capacitorDidRegisterForRemoteNotifications`へ、失敗コールバックは`capacitorDidFailToRegisterForRemoteNotifications`へ転送する。これで成功時はtoken保存へ進み、失敗時は`registration_error`を明示できる。
 - `npm run check`: 104/104成功。Xcode Simulator Debug build: `** BUILD SUCCEEDED **`。途中の容量不足は一時ビルド（合計4.8GB）だけを整理して解消した。リポジトリとiOS同梱JavaScriptのソースは削除していない。
 - 実機で修正後アプリを再ビルドしてAPNs tokenと通信モニター4段階を確認するまで、GitHub push／Cloudflare本番公開／セキュリティ最終許可は保留する。
+
+## 2026-08-19 FCM relayのHMAC 401修正
+
+- 実機の通知モニターは本番`api-44`へ到達し、D1へ端末token 1件とモニター失敗結果を保存できていた。最新runの`last_error`は`relay_error`で、同時刻のCloud Runログは`POST /send`の401だった。
+- Google Secret Managerの共有secretは、作成時の標準入力により末尾改行を1文字含んでいた。Cloud Runは改行込みの値、Cloudflare登録スクリプトは`.trim()`した値を使用していたため、Workerが生成したHMACとrelayの期待値が一致しなかった。
+- Google Secret Manager値をtrimして署名した診断は旧revisionで401、改行込みでは200となり、原因を再現した。端末tokenは使用せず、匿名の診断tokenだけを使用した。
+- `services/fcm-relay/server.mjs`でsecretの外側空白を正規化し、`bootstrap.sh`では新規secretへ末尾改行を保存しないようにした。Cloudflare側の既存`.trim()`と統一し、32文字未満拒否、HMAC、timestamp、nonce、body署名、本文・件数上限は維持した。
+- 改行を含むSecret Manager値の回帰テストを追加し、relayテスト5/5、`npm audit --omit=dev`脆弱性0件、`git diff --check`成功。AIセキュリティ部署はCloud Runホットフィックスを`APPROVE`した。
+- Cloud Run revision `spota-fcm-relay-00003-fvs`を`asia-northeast1`へデプロイし、100%のトラフィックを切り替えた。旧URLとサービスURLの`/health`は200、署名なし`/send`は401、trimしたSecret Manager値による署名付き診断は200となった。
+- 実機で通知モニターを再実行し、FCM受付、端末受信、開封、画面上の目視確認を行う必要がある。ホットフィックスのGitHub pushは、このMacのGitHub CLI認証が未設定のためGitHub Desktopから行う。
