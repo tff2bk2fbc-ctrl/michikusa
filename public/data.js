@@ -10,6 +10,9 @@ let loadLog={run:0,ours:0,err:'',skip:''};
    force が true なら、記録を無視して必ず取りに行く */
 async function autoLoad(force){
   try{
+    if(window.__spotaOnboardingActive||window.__spotaNeedsOnboarding){
+      loadLog.skip='初回設定の完了待ち';return;
+    }
     // なぜ走らなかったかを残す。原因の切り分けのため
     if(busy){ loadLog.skip='ほかの取得が動いている'; return; }
     if(placing && !force){ loadLog.skip='場所を置いている途中'; return; }

@@ -4,7 +4,13 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v115';
+var BUILD='v123';
+var SPOTA_ONBOARDING_VERSION='2026-08-17.1';
+var onboardingSaved='';
+try{onboardingSaved=localStorage.getItem('spota_onboarding_complete')||'';}catch(e){}
+window.__spotaNeedsOnboarding=onboardingSaved!==SPOTA_ONBOARDING_VERSION;
+window.__spotaOnboardingActive=window.__spotaNeedsOnboarding;
+window.__spotaOnboardingVersion=SPOTA_ONBOARDING_VERSION;
 /* 一度読んだものを端末に残す。次からは待たずに出せる */
 if('serviceWorker' in navigator && location.protocol==='https:'){
   navigator.serviceWorker.register('/sw.js').then(function(reg){

@@ -13,6 +13,50 @@ function plugin(name){
           window.Capacitor.Plugins[name]) || null;
 }
 
+function grantedPermission(value){
+  return value==='granted'||value==='limited';
+}
+
+/** 初回説明画面からだけ呼ぶ。許可を求めることと、実データの取得を分ける。 */
+async function requestSpotaNotificationPermission(){
+  var P=plugin('PushNotifications');
+  if(isApp&&P){
+    var state=await P.checkPermissions();
+    if(state.receive==='prompt'||state.receive==='prompt-with-rationale')state=await P.requestPermissions();
+    return {supported:true,granted:state.receive==='granted',state:state.receive||'unknown'};
+  }
+  if(typeof Notification!=='undefined'&&typeof Notification.requestPermission==='function'){
+    var browserState=Notification.permission;
+    if(browserState==='default')browserState=await Notification.requestPermission();
+    return {supported:true,granted:browserState==='granted',state:browserState};
+  }
+  return {supported:false,granted:false,state:'unsupported'};
+}
+
+async function requestSpotaMediaPermissions(){
+  var Camera=plugin('Camera');
+  if(!isApp||!Camera||!Camera.checkPermissions||!Camera.requestPermissions)
+    return {supported:false,granted:false,state:'unsupported'};
+  var state=await Camera.checkPermissions(),ask=[];
+  if(!grantedPermission(state.camera))ask.push('camera');
+  if(!grantedPermission(state.photos))ask.push('photos');
+  if(ask.length)state=await Camera.requestPermissions({permissions:ask});
+  return {supported:true,granted:grantedPermission(state.camera)&&grantedPermission(state.photos),
+    state:{camera:state.camera||'unknown',photos:state.photos||'unknown'}};
+}
+
+async function requestSpotaLocationPermission(){
+  var Geo=plugin('Geolocation');
+  if(!isApp||!Geo||!Geo.checkPermissions||!Geo.requestPermissions)
+    return {supported:false,granted:false,state:'unsupported'};
+  var state=await Geo.checkPermissions();
+  if(!grantedPermission(state.location))state=await Geo.requestPermissions({permissions:['location']});
+  return {supported:true,granted:grantedPermission(state.location),state:state.location||'unknown'};
+}
+window.requestSpotaNotificationPermission=requestSpotaNotificationPermission;
+window.requestSpotaMediaPermissions=requestSpotaMediaPermissions;
+window.requestSpotaLocationPermission=requestSpotaLocationPermission;
+
 /** 写真を1枚。撮るか、選ぶか */
 function blobToPhotoDataUrl(blob){
   return new Promise(function(resolve,reject){
@@ -183,40 +227,99 @@ async function whereAmI(){
    フレンドが新しい場所を記録したときに知らせる。
    アプリのときだけ。断られても普通に使える。
    ============================================================ */
-async function setupPush(){
+async function setupPush(requestPermission){
+  function result(code,message){
+    return {ok:code==='registered',code:code,message:message||''};
+  }
+  if(!isApp)return result('not_native','通知の端末登録はiPhoneアプリでのみ利用できます。');
+  var P=plugin('PushNotifications');
+  if(!P)return result('plugin_unavailable','通知機能を読み込めませんでした。アプリを更新して再試行してください。');
+
+  var st;
+  try{st=await P.checkPermissions();}
+  catch(e){return result('permission_check_failed','通知の許可状態を確認できませんでした。アプリを再起動して再試行してください。');}
+  if(st.receive==='prompt'||st.receive==='prompt-with-rationale'){
+    if(!requestPermission)return result('permission_prompt','通知の許可が必要です。');
+    try{st=await P.requestPermissions();}
+    catch(e){return result('permission_request_failed','通知の許可画面を開けませんでした。iPhoneの設定から通知を確認してください。');}
+  }
+  if(st.receive!=='granted')return result('permission_denied','iPhoneの「設定 → 通知 → spota」で通知を許可してから、もう一度お試しください。');
+
+  if(window.__spotaPushRegistration&&window.__spotaPushRegistration.remove){
+    try{await window.__spotaPushRegistration.remove();}catch(e){}
+  }
+  if(window.__spotaPushRegistrationError&&window.__spotaPushRegistrationError.remove){
+    try{await window.__spotaPushRegistrationError.remove();}catch(e){}
+  }
+  // registerより先にlistenerを置く。即時に返るAPNs tokenを取りこぼさない。
+  var registrationDone,settled=false,timeoutId=0;
+  var registrationReady=new Promise(function(resolve){
+    registrationDone=function(value){
+      if(settled)return;
+      settled=true;
+      if(timeoutId)clearTimeout(timeoutId);
+      resolve(value);
+    };
+  });
   try{
-    if(!isApp)return;
-    var P=plugin('PushNotifications');
-    if(!P)return;
-
-    var st=await P.checkPermissions();
-    if(st.receive==='prompt'||st.receive==='prompt-with-rationale'){
-      st=await P.requestPermissions();
+    window.__spotaPushRegistration=await P.addListener('registration',async function(t){
+      var token=String(t&&t.value||'');
+      if(!token){registrationDone(result('registration_error','Apple Push通知の端末トークンを取得できませんでした。アプリを再起動して再試行してください。'));return;}
+      window.__spotaPushToken=token;
+      try{localStorage.setItem('spota_push_token',token);}catch(e){}
+      // 設定がオンでも、このサーバー登録が完了しないとモニターは開始できない。
+      try{
+        var response=await api('/api/push/token',{method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({token:token,platform:'ios'})});
+        if(!response.ok){registrationDone(result('token_save_failed','通知はオンですが、サーバーへの端末登録に失敗しました。通信を確認して再試行してください。'));return;}
+        registrationDone(result('registered','通知先の端末登録が完了しました。'));
+      }catch(e){registrationDone(result('token_save_failed','通知はオンですが、サーバーへの端末登録に失敗しました。通信を確認して再試行してください。'));}
+    });
+    // 設定がオンでも、APNsの登録自体が失敗する場合がある（証明書・環境・通信など）。
+    window.__spotaPushRegistrationError=await P.addListener('registrationError',function(error){
+      registrationDone(result('registration_error','通知はオンですが、Apple Push通知への端末登録に失敗しました。アプリを再起動して再試行してください。'));
+    });
+    async function receipt(data,event){
+      var run=String(data&&data.monitor_run||'');
+      if(!/^[A-Za-z0-9_-]{8,80}$/.test(run))return;
+      try{await api('/api/monitor/receipt',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({run_id:run,event:event})});}catch(e){}
     }
-    if(st.receive!=='granted')return;
-
-    if(window.__spotaPushRegistration&&window.__spotaPushRegistration.remove){
-      try{await window.__spotaPushRegistration.remove();}catch(e){}
-    }
-    // registerより先にlistenerを置く。即時に返るtokenを取りこぼさない。
-    window.__spotaPushRegistration=await P.addListener('registration',function(t){
-      window.__spotaPushToken=t.value;
-      try{localStorage.setItem('spota_push_token',t.value);}catch(e){}
-      // この端末の宛先をサーバーへ預ける
-      api('/api/push/token',{method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({token:t.value,platform:'ios'})}).catch(function(){});
+    if(!window.__spotaPushReceived)window.__spotaPushReceived=await P.addListener('pushNotificationReceived',function(notification){
+      var data=notification&&notification.data||{};
+      receipt(data,'received');
+      if(data.monitor_run)setTip('通信確認の通知を受信しました');
     });
     if(!window.__spotaPushAction)window.__spotaPushAction=await P.addListener('pushNotificationActionPerformed',function(ev){
       // Pushに正確な座標は入れない。通知種別から認証済み画面だけを開く。
       var d=(ev&&ev.notification&&ev.notification.data)||{};
+      receipt(d,'opened');
       if(d.conversation&&typeof openConversation==='function')openConversation(String(d.conversation),'メッセージ');
       else if(d.profile&&typeof openPublicProfile==='function')openPublicProfile(String(d.profile));
       else if(d.post&&typeof openSocialHub==='function')openSocialHub('timeline');
     });
-    await P.register();
-  }catch(e){}
+    timeoutId=setTimeout(function(){
+      registrationDone(result('registration_timeout','通知はオンですが、Apple Push通知の端末登録に時間がかかっています。アプリを再起動して再試行してください。'));
+    },8000);
+    try{await P.register();}
+    catch(e){registrationDone(result('registration_error','通知はオンですが、Apple Push通知への端末登録を開始できませんでした。アプリを再起動して再試行してください。'));}
+    var registered=await registrationReady;
+    if(window.__spotaPushRegistration&&window.__spotaPushRegistration.remove){
+      try{await window.__spotaPushRegistration.remove();}catch(e){}
+    }
+    if(window.__spotaPushRegistrationError&&window.__spotaPushRegistrationError.remove){
+      try{await window.__spotaPushRegistrationError.remove();}catch(e){}
+    }
+    window.__spotaPushRegistration=null;
+    window.__spotaPushRegistrationError=null;
+    return registered;
+  }catch(e){
+    if(timeoutId)clearTimeout(timeoutId);
+    return result('registration_setup_failed','通知の端末登録を開始できませんでした。アプリを再起動して再試行してください。');
+  }
 }
+window.setupSpotaPush=setupPush;
 
 /* ============================================================
    起動したら、まず自分のいる場所を映す
@@ -252,6 +355,7 @@ async function goHome(quiet,initial){
 /* 地図のstyleとnative.jsは通信状況によって完了順が入れ替わる。
    どちらが先でも、両方が揃った時点で初回の現在地取得を一度だけ始める。 */
 function requestInitialHome(){
+  if(window.__spotaOnboardingActive||window.__spotaNeedsOnboarding)return;
   if(locDone||window.__homed)return;
   window.__homed=1;
   goHome(false,true);
@@ -264,6 +368,7 @@ try{
   var App=plugin('App');
   if(App&&App.addListener)App.addListener('appStateChange',async function(state){
     if(!state||!state.isActive)return;
+    if(window.__spotaOnboardingActive||window.__spotaNeedsOnboarding)return;
     var Geo=plugin('Geolocation'),granted=false;
     try{var permission=Geo&&await Geo.checkPermissions();granted=!!permission&&permission.location==='granted';}catch(e){}
     if(locDone&&!granted){

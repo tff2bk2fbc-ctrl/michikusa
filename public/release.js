@@ -10,7 +10,15 @@
    ============================================================ */
 
 var releaseScreen=null;
-var sharedPhotoQueue=[],sharedPhotoBusy=0,sharedPhotoCache={},sharedPhotoOrder=[],sharedPhotoRecords={},sharedPhotoGeneration=0;
+// 認証コンテキストを含む待機列もwindowの名前付きプロパティへ出さない。
+let sharedPhotoQueue=[],sharedPhotoBusy=0,sharedPhotoCache={},sharedPhotoOrder=[],sharedPhotoRecords={},sharedPhotoPending={},sharedPhotoGeneration=0;
+// classic script の `var` で認証情報を window の名前付きプロパティへ出さない。
+let mapPhotoAuth=null;
+
+function rememberSharedPhotoRecord(id,rec){
+  var records=sharedPhotoRecords[id]||(sharedPhotoRecords[id]=[]);
+  if(records.indexOf(rec)<0)records.push(rec);
+}
 
 function releaseDate(value){
   if(!value)return '';
@@ -135,18 +143,38 @@ async function putRemotePhoto(img,photoId,screen,kind){
   }
 }
 
-/* 地図用の共有写真。最大24枚だけを保持し、古いURLは解放する。 */
+/* 地図用サムネイル。自分・共有の区別なく、画面が必要とした写真だけ取得する。 */
 function queueSharedPhoto(rec,auth){
   if(!rec||!rec.server_photo_id||rec.photo)return;
   var id=rec.server_photo_id;
   if(sharedPhotoCache[id]){
     rec.photo=sharedPhotoCache[id];
-    (sharedPhotoRecords[id]||(sharedPhotoRecords[id]=[])).push(rec);
+    rememberSharedPhotoRecord(id,rec);
     return;
   }
   if(rec.photo_loading)return;
-  rec.photo_loading=1;sharedPhotoQueue.push({rec:rec,auth:auth,id:id,generation:sharedPhotoGeneration});runSharedPhotoQueue();
+  var pending=sharedPhotoPending[id];
+  if(pending&&pending.generation===sharedPhotoGeneration){
+    rec.photo_loading=1;if(pending.records.indexOf(rec)<0)pending.records.push(rec);return;
+  }
+  if(sharedPhotoQueue.length>=32)return;
+  rec.photo_loading=1;
+  var job={rec:rec,records:[rec],auth:auth,id:id,generation:sharedPhotoGeneration};
+  sharedPhotoPending[id]=job;sharedPhotoQueue.push(job);runSharedPhotoQueue();
 }
+function setMapPhotoAuth(auth){
+  if(!auth||!authIsCurrent(auth))return;
+  var changed=!mapPhotoAuth||mapPhotoAuth.uid!==auth.uid||mapPhotoAuth.scope!==auth.scope||mapPhotoAuth.seq!==auth.seq;
+  mapPhotoAuth=auth;
+  // 認証前の初回描画で取得を見送ったサーバ写真を、認証確定直後に再評価する。
+  if(changed&&typeof render==='function')render(true);
+}
+function queueMapPhotoThumb(rec){
+  if(!mapPhotoAuth||!authIsCurrent(mapPhotoAuth))return;
+  queueSharedPhoto(rec,mapPhotoAuth);
+}
+window.setMapPhotoAuth=setMapPhotoAuth;
+window.queueMapPhotoThumb=queueMapPhotoThumb;
 function runSharedPhotoQueue(){
   while(sharedPhotoBusy<2&&sharedPhotoQueue.length){
     var job=sharedPhotoQueue.shift();sharedPhotoBusy++;
@@ -156,21 +184,27 @@ function runSharedPhotoQueue(){
         if(!r.ok)throw new Error('photo '+r.status);
         var u=URL.createObjectURL(await r.blob());
         if(item.generation!==sharedPhotoGeneration||!authIsCurrent(item.auth)){URL.revokeObjectURL(u);return;}
-        sharedPhotoCache[item.id]=u;sharedPhotoOrder.push(item.id);item.rec.photo=u;
-        (sharedPhotoRecords[item.id]||(sharedPhotoRecords[item.id]=[])).push(item.rec);
-        while(sharedPhotoOrder.length>24){
+        sharedPhotoCache[item.id]=u;sharedPhotoOrder.push(item.id);
+        item.records.forEach(function(rec){rec.photo=u;rememberSharedPhotoRecord(item.id,rec);});
+        while(sharedPhotoOrder.length>36){
           var old=sharedPhotoOrder.shift(),oldUrl=sharedPhotoCache[old];
           (sharedPhotoRecords[old]||[]).forEach(function(rec){if(rec.photo===oldUrl)delete rec.photo;});
           delete sharedPhotoRecords[old];delete sharedPhotoCache[old];if(oldUrl)URL.revokeObjectURL(oldUrl);
         }
         if(typeof render==='function')render(true);
-      }catch(e){}finally{delete item.rec.photo_loading;sharedPhotoBusy--;runSharedPhotoQueue();}
+      }catch(e){}finally{
+        item.records.forEach(function(rec){delete rec.photo_loading;});
+        if(sharedPhotoPending[item.id]===item)delete sharedPhotoPending[item.id];
+        sharedPhotoBusy--;runSharedPhotoQueue();
+      }
     })(job);
   }
 }
 function clearSharedPhotoCache(){
   sharedPhotoGeneration++;
-  sharedPhotoQueue.forEach(function(item){delete item.rec.photo_loading;});sharedPhotoQueue=[];
+  mapPhotoAuth=null;
+  sharedPhotoQueue.forEach(function(item){item.records.forEach(function(rec){delete rec.photo_loading;});});
+  sharedPhotoQueue=[];sharedPhotoPending={};
   Object.keys(sharedPhotoCache).forEach(function(id){
     var url=sharedPhotoCache[id];
     (sharedPhotoRecords[id]||[]).forEach(function(rec){if(rec.photo===url)delete rec.photo;delete rec.photo_loading;});
@@ -233,7 +267,37 @@ function feedCard(p,i){
       '<div class="timeline-actions"><button type="button" data-like="'+i+'" aria-label="いいね '+Number(p.like_count||0)+'件" aria-pressed="'+String(!!p.liked)+'" class="'+(p.liked?'on':'')+'"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 5.8c-2.1-2.3-5.6-1.8-7.2.6L12 8.7l-1.6-2.3c-1.6-2.4-5.1-2.9-7.2-.6-2 2.2-1.7 5.7.5 7.7L12 21l8.3-7.5c2.2-2 2.5-5.5.5-7.7Z"/></svg><b><span>'+Number(p.like_count||0)+'</span></b></button>'+
       '<button type="button" data-comments="'+i+'" aria-label="コメント '+Number(p.comment_count||0)+'件"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16v11H9l-5 3Z"/><path d="M8 10h8M8 13h5"/></svg><b>'+Number(p.comment_count||0)+'</b></button>'+
       (p.visibility==='public'?'<button type="button" data-flash="'+i+'" aria-label="フラッシュ '+Number(p.flash_count||0)+'件" aria-pressed="'+String(!!p.flashed)+'" class="'+(p.flashed?'on':'')+'" '+(p.flashed?'disabled':'')+'><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2 5.8 13h5.5l-.8 9L18.2 11h-5.5Z"/></svg><b>'+Number(p.flash_count||0)+'</b></button>':'')+
-      (p.mine&&p.visibility==='public'?'<button type="button" data-share="'+i+'" aria-label="共有"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v6H5V6h6"/></svg></button>':'')+'</div></div></article>';
+      (p.mine&&p.visibility==='public'?'<button type="button" data-share="'+i+'" aria-label="共有"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 5h5v5M19 5l-8 8"/><path d="M18 13v6H5V6h6"/></svg></button>':'')+
+      (!p.mine?'<button type="button" data-report="'+i+'" aria-label="この投稿を通報"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4m0 1h11l-2 4 2 4H6"/></svg></button>':'')+'</div></div></article>';
+}
+
+function openPostReport(post){
+  var choices=[['spam','迷惑投稿・宣伝'],['harassment','嫌がらせ'],['nudity','不適切な画像'],
+    ['violence','暴力的な内容'],['privacy','プライバシー'],['other','その他']];
+  var html='<div class="grab"></div><div class="pad report-sheet" style="padding-top:20px">'+
+    '<h2>投稿を通報</h2><p>運営確認に必要な内容だけを送ります。通報した人の名前は投稿者へ表示されません。</p>'+
+    '<form id="report-form" novalidate><fieldset><legend>理由</legend>'+choices.map(function(row,i){
+      return '<label><input type="radio" name="reason" value="'+row[0]+'" '+(i===0?'checked':'')+'><span>'+row[1]+'</span></label>';
+    }).join('')+'</fieldset><label for="report-details">補足（任意）</label>'+
+    '<textarea class="fld" id="report-details" maxlength="500" rows="3" aria-describedby="report-help report-error"></textarea>'+
+    '<p id="report-help">個人情報や正確な位置情報は入力しないでください。</p>'+
+    '<p class="form-error" id="report-error" role="alert" hidden></p>'+
+    '<p class="form-status" id="report-status" role="status" aria-live="polite"></p>'+
+    '<button class="btn" type="submit">通報を送る</button><button class="btn g" id="report-cancel" type="button">やめる</button></form></div>';
+  var sheet=showSheet(html),form=sheet.querySelector('#report-form'),error=sheet.querySelector('#report-error');
+  var status=sheet.querySelector('#report-status'),submit=form.querySelector('[type="submit"]');
+  sheet.querySelector('#report-cancel').onclick=closeSheet;
+  form.onsubmit=async function(event){
+    event.preventDefault();submit.disabled=true;error.hidden=true;status.textContent='送信しています…';
+    try{
+      var reason=form.querySelector('input[name="reason"]:checked');
+      var result=await socialJson('/api/reports',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        target_type:'post',target_id:post.id,reason:reason&&reason.value||'',
+        details:sheet.querySelector('#report-details').value.trim(),client_operation_id:nid()
+      })});
+      if(!result.ok)throw new Error('通報を送れませんでした');closeSheet();setTip('通報を受け付けました');
+    }catch(e){submit.disabled=false;status.textContent='';error.textContent=e&&e.message||'通報を送れませんでした';error.hidden=false;error.focus();}
+  };
 }
 function bindFeedCards(screen,host,posts,timelineState){
   Array.prototype.forEach.call(host.querySelectorAll('[data-profile]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){if(b.dataset.profile)openPublicProfile(b.dataset.profile);};});
@@ -290,6 +354,7 @@ function bindFeedCards(screen,host,posts,timelineState){
     catch(e){paint(previous);setTip(e.message);}b.disabled=false;
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-share]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){sharePost(posts[Number(b.dataset.share)]);};});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-report]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){openPostReport(posts[Number(b.dataset.report)]);};});
 }
 async function sharePost(post){
   try{

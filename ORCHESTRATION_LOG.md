@@ -78,6 +78,40 @@
 - `node --check src/index.js`: 成功
 - `node --check public/*.js`: 全ファイル成功
 - DOM ID参照照合: 参照28件、欠落0件
+
+## 2026-08-18 専門部署体制の新設
+
+ユーザー要望に基づき、実在の人材を採用したと誤認させない形で、Codexオーケストレーション上の仮想専門部署を正式化した。新設・正式化した部署と責任範囲は `docs/DEPARTMENTS.md` に記録している。
+
+- デザイン本部: 写真・地図中心のWeb/iOS/Android体験、デザイントークン、モーション、アクセシビリティ。UI変更の受入条件を作成する。
+- 写真メディア・画像基盤室: EXIF GPS、原本/表示用/サムネイル、色空間、圧縮、公開精度、所有者確認、R2/D1整合性。
+- iOS/Androidネイティブ室: Appleログイン、APNs/FCM、カメラ/写真/位置情報権限、縦画面、端末ライフサイクル。
+- 地図・地理情報室: 初期位置、ピン/サムネイル、クラスタ、ズーム、地図テーマ、逆ジオコーディング。
+- バックエンド・データ信頼性室: 写真保存、共有マップ、タイムライン、DM、冪等性、リトライ、migration。
+- セキュリティ・プライバシー室: 認証/認可、位置情報、IDOR、APIキー、課金DoS、CSP、依存関係。push前の必須ゲート。
+- 品質保証・実機検証室: iPhone/Android実機、権限状態、通信断、クラッシュ、視覚回帰、写真保存を検証する。
+- 運用・SRE/コスト室: 起動障害、quota、R2/D1/Firebase使用量、アラート、バックアップ、ロールバック、料金上限。
+- 法務・コンプライアンス室、税務・会計・事業管理室: 規約・特商法・ライセンス・個人情報、料金・消費税・従量課金をレビューする。
+
+実在する「ヘッドハンティング」や雇用・委託契約は実施していない。採用が必要な場合は `docs/DEPARTMENTS.md` の能力要件を求人・委託仕様書としてユーザーが契約手続きを行う。必須部署の承認と実機検証が揃わない変更は、今後もpush・デプロイしない。
+
+## 2026-08-18 AI社員の任命
+
+ユーザーの補足により、ヘッドハンティング対象は実在の人材ではなくAI社員であることを確認した。デザイン本部ヘッドとして高性能の専門エージェント `design_director` を任命し、写真・地図中心のWeb/iOS/Android UI、モーション、色、アクセシビリティ、DESIGN.md準拠の初回監査を依頼した。
+
+既存の `legal_review` と `tax_review` はそれぞれ法務・コンプライアンス室、税務・会計・事業管理室のAI社員として継続配置している。主担当Codexがオーケストレーション責任者となり、他部署は必要な作業ごとに専門役へ切り替える。AI社員へ外部サービスの管理者権限、秘密鍵、課金設定、GitHub push、本番デプロイを単独で許可しない。
+
+`design_director` の初回監査結果では、P0をホーム地図、写真追加・保存、地図上の写真表示、長時間ロードに設定した。画面ごとに保持要素・変更要素・変更禁止のAPI/認証/公開範囲/位置精度を記録し、loading・empty・error・offline・権限拒否・再試行・完了を受入条件へ含める。写真はサムネイル、EXIF、色空間、向き、画像メモリを確認し、地図はピン・クラスタ・ズーム・固定ナビ・片手操作・Safe Areaを実機で確認する。デザイン本部の承認単独ではpushを許可せず、QA、セキュリティ、法務/SREの必要なゲートを通す。
+
+## 2026-08-18 通知モニターAPIがないように見える問題の切り分け
+
+- ユーザーの実機で通知モニターテストを開始したところ、APIが存在しない旨の表示が出た。
+- ローカルの `src/index.js` には、認証後の `POST /api/monitor/run`、`POST /api/monitor/receipt`、`GET /api/monitor/:run_id` が実装されている。通知モニターのクライアント呼び出しも `public/sync.js` とCapacitor同梱版に存在する。
+- 本番Workerの読み取り専用確認では、`GET /api/health` が `{"ok":true,"build":"api-43"}`を返した。ローカルソースは`api-44`としているため、Workerが一世代古い。
+- 本番の`/sync.js`には`/api/monitor/run`文字列がなく、公開HTMLは`sync.js?v=121`、ローカルHTMLは`sync.js?v=123`だった。アプリ側の新しいUIと、本番Worker・公開資産が同じリリースになっていない。
+- `/api/monitor/run`へ認証なしでGETした場合は認証ゲートの401が返る。これはAPI不存在の証拠ではない。実機アプリのPOSTが本番の古いWorkerへ届いた場合、旧Worker側では認証後に該当ルートがなく、404相当になる可能性が高い。
+- 結論は、通知許可・Appleログイン・APNs登録の問題ではなく、ローカル実装とCloudflare本番公開のデプロイ不一致である。api-44と同じ静的資産をセキュリティ・QAゲート後に一体で公開する必要がある。
+- 今回は本番Worker、GitHub、Cloudflare設定を変更していない。次の公開前に、`/api/health`が`api-44`、公開`sync.js`にモニター呼び出しが存在、認証済み実機で`POST /api/monitor/run`が`device_not_registered`または`fcm_not_configured`等の具体的な状態を返すことを確認する。
 - `git diff --check`: 成功
 - `wrangler deploy --dry-run`: 成功
 - Wrangler Static Assets: 14ファイル認識
@@ -297,3 +331,103 @@
 - CapacitorのWeb資産をローカルのiOSプロジェクトへ同期し、iOS Simulator向けDebugビルドが成功した。Wrangler 4.123.0のdry-runでも静的34ファイル、D1×10、R2、Rate Limiter、Assetsのバインドを維持していることを確認した。
 - セキュリティ監査では、新しい外部通信先、API、認証・認可変更、CSP緩和、秘密情報、HTML注入経路がないことを確認した。写真の読込元は既存の同一オリジン／Worker制限を維持し、差分のpushを`APPROVE`した。
 - フロント版を`v121`、Service Worker cacheを`spota-v47`へ更新した。本記録をpush前の監査証跡とする。
+
+## 2026-08-16 A案再実装・ズーム消失とiOS反映ミスの是正
+
+- ユーザー提示のGitHub Desktop 3.6.3 URLはソースコードではなくインストーラZIPのため、再現元に使用していない。ユーザー承認済みの`outputs/spota-cluster-number-options.html`のA案を唯一の数値基準とした。
+- `v121`が実機で変わって見えなかった主原因を4点特定した。単写真表示がズーム12以上に限定されていたこと、サーバー記録が`server_photo_id`のみで表示候補にならなかったこと、MapLibre Workerのクラスタ計算を固定70msだけ待っていたこと、GitHubリポジトリのWeb資産とXcodeのCapacitor同梱資産が一致していなかったことである。
+- A案は写真56×60px、外側領域64×70px、白枠3px、角丸13px、尾10px、バッジ23px以上、白枠2px、数字11px相当、写真影0 2px 9px rgba(5,5,7,.30)を2倍密度Canvasで再現した。読込待ちの小丸がカード下からはみ出す差異も、ready時は透明化して解消した。
+- 個別写真の開始ズームを6へ下げ、ズーム6.01から20へ上げても選択済み36枚が消えない実行テストを追加した。座標は最大1,600地点を安定して保持する。
+- サーバー写真は、画面内候補になった時だけ既存の認証付き`/api/photo/:id/thumb`を使う。同じ写真IDは1通信にまとめて複数レコードへ結果を共有する。待機32件、同時2通信、Blob URL 36件、Canvas画像72件、画面内単写真36件、集合24件、デコード3並列を上限とした。アカウント変更時は待機列とBlob URLを無効化・解放する。
+- MapLibreの`sourcedata`完了通知でクラスタ代表写真を再評価し、遅い端末でも固定時間の経過だけで打ち切らないようにした。認証が写真ソースより後に準備された場合は、認証確定後に一度だけ再描画する。
+- iOS Simulatorに同一地点4枚と2枚の検証データを一時投入し、A案の写真カード、右上の`4`・`2`、余分な大数字丸の非表示、写真読込・MapLibre登録エラー0件を目視確認した。検証データと診断表示は最終ビルドから完全に除去した。
+- 全86テスト、JavaScript構文検査、`git diff --check`、iOS Simulator Debugビルドが成功した。リポジトリ、ネイティブアプリの`public`、Xcode同梱`public`、ビルト済み`App.app/public`の`index.html`・`map.js`・`release.js`・`sync.js`・`sw.js`をSHA-256相当で一致確認した。
+- セキュリティ再監査で、新規外部送信先、CSP緩和、認証前API、公開範囲・位置精度の変更、秘密情報、HTML注入経路がないことを確認した。写真GETは既存の所有者・public/friends/private・ブロック・モデレーション・回数制限を経由する。
+- フロント版を`v122`、Service Worker cacheを`spota-v48`へ更新した。ユーザーの「完全に一致するまでpushしない」指示に従い、本記録追記時点でcommit、push、Cloudflareデプロイはいずれも行っていない。
+
+## 2026-08-17 初回起動・規約同意・一度限りのログアウト
+
+- サブエージェントは使用せず、主担当がMobile App Design、iOS HIG、Forms、Content Design、Touch/Keyboard、Live Region、Taste、Color Contrast、Light/Dark、Playwright、Security Best Practices、Cloudflare Workers/D1の各手順を順に適用した。
+- 初回起動を「説明、通知、写真・カメラ、位置、規約同意、ログイン、利用者IDとアイコン」の7段階に分けた。権限は説明後の本人操作でだけ要求し、各権限はスキップ可能にした。
+- 利用規約とプライバシーポリシーを現行実装に合わせて作成し、同意した文書版と時刻を端末および認証後のD1へ記録する経路を追加した。サーバーは現行版への同意だけを受理する。
+- この初回案内版では既存ログインを一度だけ解除し、途中位置を規約版ごとのキーへ分離して最初の説明画面から開始する。push tokenと認証だけを解除し、投稿、写真、IndexedDB、サーバーアカウントは削除しない。
+- 同意前の地図style、tile、現在地、周辺データ、同期を遅延させた。390×844の実ブラウザで同意前の動的外部/API通信0件、完了後の地図通信開始、地図ready、コンソールエラー0件を確認した。
+- セキュリティ監査で、任意の文字列を規約版としてD1へ記録できる問題と、削除依頼を公開GitHub Issuesへ誘導する問題を検出した。前者は現行版の完全一致検証、後者は個人情報を公開Issueへ書かない注意と非公開窓口の公開前必須化により修正した。
+- 全91テスト、Wrangler dry-run、iOS Simulator Debug buildが成功した。本番D1 migration、commit、push、Cloudflare deploy、実アカウントの投稿・DM・いいね・通知・フラッシュ通信テストは行っていない。
+
+## 2026-08-17 Appleログイン・削除・通報・本番通信モニター
+
+- サブエージェントは使用せず、主担当がApple/Firebase公式仕様、Cloudflare Workers/D1、iOS HIG、Forms、Live Region、Touch/Keyboard、Content Design、Security Best Practicesを順に照合した。機能の出典は `public/sync.js`、`public/onboarding.js`、`public/native.js`、`public/release.js`、`src/index.js`、`migrations/0005_account_safety_monitor.sql` である。
+- Appleログインを初回案内とプロフィールへ追加した。iOSはCapacitor Firebase Authentication、WebはFirebase OAuthProviderを使い、GitHubから再現するentitlementとXcode capabilityを `native/ios/apply-to-capacitor.sh` に追加した。
+- アプリ内アカウント削除へ10分以内の再認証、Apple token revocation、確認語、回数制限、Firebase Auth削除、D1 cascade、共有R2 object保護、50件単位の再開可能な削除、削除済みID tokenによる再作成防止を追加した。
+- 投稿・利用者通報へ認証、閲覧認可、理由allowlist、500文字上限、1日20件、操作IDの重複防止を追加した。通報UIは非所有投稿だけに表示する。
+- 専用botによる通信モニターを追加した。投稿、DM、いいね、Flash、アプリ内通知、FCM Pushを実データ経路で作り、15分後にモニター所有artifactだけを削除する。別利用者のモニターいいねを消す競合は最終監査で検出し、対象投稿単位へ修正した。
+- Pushの成功判定をFCM受付、端末受信、通知開封、画面上の目視確認に分けた。FCM service accountはproject一致と鍵形式を検証し、通知payloadへ正確な座標や端末tokenを含めない。
+- 本番D1を586,021 bytesでバックアップ後、`0004_legal_acceptance.sql` と `0005_account_safety_monitor.sql` を適用した。6テーブル、通報表の2列、外部キー違反0件を確認した。
+- 実行時だけ発生するアカウント削除job IDの未定義参照を最終監査で検出し、明示的なUUID生成と回帰検査を追加した。FCM OAuth交換も生成RSA鍵を使った実行型テストへ追加した。
+- `FCM_SERVICE_ACCOUNT` はCloudflareに未登録、本番D1のpush tokenは0件、物理iPhoneは未接続である。このためコードとD1は承認したが、実機Push通知とGitHub pushによる自動公開は承認していない。外部設定後、通信モニターの4段階確認が完了してから判定を更新する。
+
+## 2026-08-17 FCM鍵レス中継の自動化準備
+
+- ユーザーが選択した「サービスアカウントキーを作らない」方針を、Cloudflare WorkerからGoogle FCMへ直接秘密鍵署名する旧経路ではなく、Cloud Runの実行時サービスアカウント（ADC）へ分離した。Cloudflare側にはGoogle秘密鍵を置かず、WorkerはCloud RunへHMAC-SHA-256署名付きHTTPSだけを送る。
+- Workerの通知上限（1宛先日100件、全体時間上限、最大8端末）を維持し、Cloud Run側でも本文16KiB、最大8メッセージ、通知長、dataキー、緯度経度・メール・IP等の機微キーを検証する。timestamp（5分以内）とnonceの再利用を拒否し、無効FCM登録tokenだけをD1削除対象として返す。
+- `services/fcm-relay/` にCloud Run用のNode 22イメージ、Google Auth Library、Dockerfile、Secret Manager注入用のデプロイ手順、再現可能な`deploy.sh`を追加した。サービスアカウントJSON、APNs鍵、FCMアクセストークンをファイル・Git・Wrangler varsへ保存しない。
+- セキュリティ担当は、旧`FCM_SERVICE_ACCOUNT`経路の削除、HTTPS URL強制、HMAC署名、リプレイ、本文上限、機微data拒否、FCM `UNREGISTERED`の限定削除を検証し`APPROVE`した。Cloud RunはHMACなしでは送信処理へ到達できないが、複数インスタンス／再起動をまたぐnonce完全防止は将来Durable ObjectまたはFirestoreへ移行する課題として記録した。
+- `npm audit --prefix services/fcm-relay --omit=dev` は0件、FCM relay単体3テスト、既存を含む全101テスト、JavaScript構文検査が成功した。Google Cloud CLIはこのMacに未インストールだったため、サービスアカウント作成、Secret Manager、Cloud Runデプロイ、Cloudflare secret投入、Worker公開は実行していない。
+- 現在の公開判定は、コード・テスト`APPROVE`、Google Cloud外部設定`BLOCK`、実機Push確認`BLOCK`、GitHub push／Cloudflare公開`BLOCK`。`services/fcm-relay/README.md`の順でGoogle Cloud設定と実機4段階確認を終えた後に再審査する。
+- secret値を画面へ表示・コピーせず、Secret Managerから標準入力でCloudflareへ渡す`services/fcm-relay/configure-cloudflare.sh`を追加した。`wrangler secret put`はWorker公開を発生させるため、審査前には実行しない。
+- Googleアカウント`kouya.sgechan@gmail.com`でCloud CLIを認証し、`michikusa-e34df`へBilling account `012CFB-8F591F-CC46B6`をリンクした（請求に関わるためユーザー明示許可済み）。サービスアカウント`spota-fcm-relay`、`roles/firebasecloudmessaging.admin`、Secret Manager version 1を作成した。
+- Cloud Run source deployの不足権限を、Computeサービスアカウントへ`roles/run.builder`、ソースバケットへ対象限定の`roles/storage.objectViewer`として追加し、revision `spota-fcm-relay-00002-t9w`を`asia-northeast1`へデプロイした。`GET /health`は200、署名なし`POST /send`は401で、HMACゲートが実稼働していることを確認した。
+- Cloudflare secret登録（`FCM_RELAY_URL` / `FCM_RELAY_SHARED_SECRET`）、Worker公開、GitHub push、実機Pushはまだ実行していない。secret登録はWorker新バージョンを作るため、法務・セキュリティ条件の最終確認後に行う。
+- Cloud Run URLとSecret Managerの値を`configure-cloudflare.sh`から標準入力でCloudflareへ渡し、`FCM_RELAY_URL` / `FCM_RELAY_SHARED_SECRET`を1回のsecret bulk更新で登録した。secret一覧に名前だけが存在することを確認し、値は表示・保存していない。本番`/api/health`は`api-43`で応答し、GitHub push前のためWorkerソースはまだ`api-44`へ更新していない。
+
+## 2026-08-17 請求時開示方式への規約更新・法務／税務二重レビュー開始
+
+- ユーザーの自宅住所を公開リポジトリへ直接記載せず、運営者情報（住所・電話番号を含む）を請求があった場合に請求窓口から遅滞なく提供する方式へ、`public/terms.html` と `public/privacy.html` を更新した。運営者名と請求窓口はページ上に明示し、公開GitHub Issuesには個人情報を書かない注意を維持した。
+- 日本には「税務省」という名称の省がないため、税務レビューは財務省所管の国税庁の公式資料を基準にする。法務レビューは法務省、個人情報保護委員会、消費者庁の公式資料を基準にする。各担当が独立して検討した後、主担当が根拠と実装差分を相互照合して最終判定する。
+- 特定商取引法の課金開始条件、個人情報保護法上の「本人の知り得る状態」、請求窓口の対応時間、バーチャルオフィスの利用条件、収益化時の税務記録を、公開前に二重チェックする。法務・税務レビューが完了するまでcommit・pushは行わない。
+- 法務担当の結論は、無料版における請求時開示方式を文書上`APPROVE`、有料販売とSpota全体の個人情報保護法対応を`BLOCK`とした。運用上は正確な住所・電話番号の安全な保管、毎営業日の窓口監視、遅滞ない回答、個人情報の開示・訂正・削除等の内部手続、外部サービスの処理データ・契約主体・処理国・保存期間・削除方法の確認が必要である。根拠は個人情報保護委員会FAQ Q9-1/Q9-26、通則ガイドライン、消費者庁の通信販売広告Q&A、法務省の定型約款資料とした。
+- 税務担当の結論は、現在完全無料である限り住所の常時公開は税務上の即時必須事項ではなく、請求時開示方式を維持可能とした。無料期間からAPI、クラウド、ドメイン、Apple/Google費用等の請求書・利用明細・支払日・取引先・用途・外貨換算を保存し、課金・広告開始前に販売主体、税込総額、返金、消費税、インボイス、国外役務の区分を確定する必要がある。根拠は国税庁・財務省の適格請求書、電子帳簿保存、所得区分、消費税、国外役務資料とした。
+- 二重レビュー後も、物理iPhoneでのFCM受信・開封・目視確認、請求窓口の実運用、外部サービスのデータ処理確認が未完了のため、セキュリティゲートは`BLOCK`のままとした。今回の規約変更差分、102テスト、npm audit 0件、Wrangler dry-runは成功しているが、commit・push・Cloudflare本番公開は実行していない。
+
+## 2026-08-17 実機Push確認（自動化可能範囲の実行）
+
+- ユーザーの「3」を、(A)自動実行できる静的・サーバー検証、(B)実機画面が必要な検証に分解した。外部ユーザーへ通知を送る操作は行わず、安全な読み取り・拒否確認だけを実行した。
+- 自動検証は、`npm run check` 102/102、`git diff --check`、FCM relayの`npm audit`脆弱性0件、Cloud Run `/health` 200、署名なし`/send` 401、本番Worker `/api/health` 200（build `api-43`）、iOS entitlement／capability静的検査、秘密鍵ファイル0件、Wrangler dry-run成功となった。
+- Cloudflare D1の`push_tokens`件数は読み取り専用SELECTを実行したが、端末のAPI認可エラー`7403`で取得できなかった。既存監査記録の0件を上書きせず、今回の操作によるD1変更はない。
+- Xcode 26.4で、ユーザーの`/Users/shigematsutomoki/michikusa-app/ios/App/App.xcodeproj`を署名なしSimulator向けにビルドし、`BUILD SUCCEEDED`を確認した。Booted iPhone 17 Pro Simulatorへインストールし、`com.damo.michikusa`の起動まで成功した。署名付き実機ビルド、APNs登録、通知許可、受信・開封・画面目視はユーザーのiPhone操作が必要で自動化対象外とした。
+- 結論: 自動化可能な範囲は完了。実機4段階（FCM受付・端末受信・開封・目視）の結果が得られるまで、セキュリティ担当のpush許可は`BLOCK`。commit、GitHub push、Cloudflare本番公開は実行していない。
+
+## 2026-08-17 Appleログイン失敗の切り分け
+
+- 利用者からAppleログイン失敗の報告を受け、iOS capability、Bundle ID、FirebaseAuthenticationのApple provider list、GoogleService-Info.plist、Web資産のiOS同梱差分を確認した。Team IDは`Q4684PUCF7`、Bundle IDは`com.damo.michikusa`で、ソースとローカルXcodeプロジェクトの静的設定は一致している。
+- 失敗原因を画面から特定できなかったため、Appleの認証コードだけを表示する診断を追加した。トークン・メール・URL・生のAppleエラー本文は表示しない。キャンセル時はログインボタンを再有効化する。
+- `npm run check`は103/103成功、iOS Simulator Debug buildは成功、`public/sync.js`と`public/onboarding.js`はiOS同梱版と一致した。
+- 次回の実機操作で表示されるコード（例: `auth/operation-not-allowed`、`auth/invalid-credential`、`apple/1000`）を受け取り、Firebase ConsoleまたはApple Developer設定の具体的な修正箇所を確定する。まだGitHub push、Cloudflare本番公開、実機通知送信は行っていない。
+
+## 2026-08-17 Apple nonce不一致の修正
+
+- 実機スクリーンショットで`auth/missing-or-invalid-nonce`を確認した。Apple Developer／Firebaseの外部設定ではなく、ネイティブFirebase認証後にWeb SDKでも同じcredentialを使っていた二重認証が直接原因だった。
+- `FA.signInWithApple({skipNativeAuth:true})`へ変更し、AppleのネイティブUIで得たraw nonce付きcredentialをWeb SDKへ一度だけ渡すようにした。これによりnonceの消費済み再利用を防ぐ。
+- ソース、ルートWeb資産、iOS同梱Web資産を一致させ、エラーコード表示とキャンセル後の再試行も維持した。`npm run check` 103/103、iOS Simulator Debug build成功。
+- 次の確認は、Xcodeでアプリを再ビルドして実機でAppleログインを再試行すること。成功確認前のGitHub push、Cloudflare本番公開、実機通知送信は行っていない。
+
+## 2026-08-17 通知オンなのに通信モニターが開始できない切り分け
+
+- Appleログイン成功後、「アプリの通知はオンだが、通知が許可されていないため通信モニターが起動しない」という実機報告を受けた。
+- 通知許可、APNs端末登録、認証済み`POST /api/push/token`によるD1保存は別段階である。旧実装は全失敗をboolean `false`へ潰していたため、設定オンでも発生するAPNs登録失敗・サーバー保存失敗・タイムアウトを誤って同じ文言で表示していた。
+- `public/native.js`、`/Users/shigematsutomoki/michikusa-app/public/native.js`、`/Users/shigematsutomoki/michikusa-app/ios/App/App/public/native.js`を構造化結果へ変更した。`permission_denied`、`registration_error`、`registration_timeout`、`token_save_failed`、`plugin_unavailable`等を区別し、`registrationError` listenerを`register()`より前に設定した。成功時だけ`{ok:true,code:'registered'}`を返す。
+- サーバー保存がHTTP非成功または通信例外なら、通知設定ではなくサーバー登録の失敗として表示する。APNs token、メール、URL、生のOSエラーはUI・ログへ出さない。8秒以内にtokenが来ない場合はタイムアウトとしてアプリ再起動を案内する。
+- `public/sync.js`およびiOS同梱版2箇所の通信モニターは構造化結果の`ok`を確認してから`/api/monitor/run`を呼ぶよう変更した。設定オンなのに登録未完了の状態でテスト投稿・DM・通知を作らない。
+- 失敗時は秘密情報を含まない固定コード（`permission_denied`、`registration_error`、`token_save_failed`等）を画面へ添え、次の切り分けで同じ誤表示を繰り返さないようにした。
+- `npm run check`: 104/104成功。`git diff --check`成功。3つの`native.js`と3つの`sync.js`一致確認。Xcode Simulator Debug build: `** BUILD SUCCEEDED **`。
+- 実機APNs受信、D1 token保存、FCM受付、通知開封、画面目視はまだ完了していない。GitHub push／Cloudflare本番公開は行わず、再ビルドした実機でモニターを再試行して新しいエラーコードまたは4段階成功結果を記録してからセキュリティ判定を更新する。
+
+## 2026-08-18 `registration_timeout`の根本原因修正
+
+- 実機で`registration_timeout`が発生したため、Capacitor Push Notificationsの公式iOS実装要求とプロジェクトのAppDelegateを照合した。
+- `AppDelegate.swift`に、iOSのAPNsコールバックをCapacitorのNotificationCenterイベントへ転送する2メソッドが欠落していた。通知許可がオンでもtoken／失敗イベントがJavaScriptへ届かないため、8秒でタイムアウトしていた。
+- `native/ios/AppDelegate.swift`を追加し、`native/ios/apply-to-capacitor.sh`から生成アプリへ適用するようにした。ローカル`/Users/shigematsutomoki/michikusa-app/ios/App/App/AppDelegate.swift`にも同じ処理を反映した。
+- `didRegisterForRemoteNotificationsWithDeviceToken`は`capacitorDidRegisterForRemoteNotifications`へ、失敗コールバックは`capacitorDidFailToRegisterForRemoteNotifications`へ転送する。これで成功時はtoken保存へ進み、失敗時は`registration_error`を明示できる。
+- `npm run check`: 104/104成功。Xcode Simulator Debug build: `** BUILD SUCCEEDED **`。途中の容量不足は一時ビルド（合計4.8GB）だけを整理して解消した。リポジトリとiOS同梱JavaScriptのソースは削除していない。
+- 実機で修正後アプリを再ビルドしてAPNs tokenと通信モニター4段階を確認するまで、GitHub push／Cloudflare本番公開／セキュリティ最終許可は保留する。

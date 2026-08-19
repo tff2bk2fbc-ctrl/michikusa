@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: capacitor:; connect-src 'self' capacitor: https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com; font-src 'self' data:; worker-src 'self' blob:; frame-src https://*.firebaseapp.com https://accounts.google.com; object-src 'none'; base-uri 'self'">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: capacitor:; connect-src 'self' capacitor: https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com; font-src 'self' data:; worker-src 'self' blob:; frame-src https://*.firebaseapp.com https://accounts.google.com https://appleid.apple.com; object-src 'none'; base-uri 'self'">
 <meta name="theme-color" content="#EFEDE8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -13,16 +14,31 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="stylesheet" href="/vendor/maplibre-gl-4.7.1.min.css" integrity="sha384-K282sW/zFjTkrjR/+yr1H+gCukuy4OEYrkXRybV88g7pk+kZZYpNV6SAV59NcgFg">
-<link rel="stylesheet" href="/app.css?v=121">
+<link rel="stylesheet" href="/app.css?v=123">
 </head>
 <div id="err"></div>
 <div id="splash">
   <div class="sp-in">
-    <img src="/icon-192.png?v=121" class="sp-mark" id="sp-icon" alt="">
+    <img src="/icon-192.png?v=123" class="sp-mark" id="sp-icon" alt="">
     <div class="sp-nm">Spota</div>
     <div class="sp-sb">地図に、思い出を。</div>
   </div>
 </div>
+
+<section class="onboarding" id="onboarding" hidden aria-labelledby="onboarding-title">
+  <main class="onboarding-panel" id="onboarding-panel" tabindex="-1">
+    <div class="onboarding-progress" aria-hidden="true"><i id="onboarding-progress"></i></div>
+    <div class="onboarding-content" id="onboarding-content"></div>
+  </main>
+</section>
+
+<dialog class="onboarding-legal" id="onboarding-legal" aria-labelledby="onboarding-legal-title">
+  <header>
+    <h1 id="onboarding-legal-title">文書を読み込んでいます</h1>
+    <button type="button" id="onboarding-legal-close" aria-label="文書を閉じる">閉じる</button>
+  </header>
+  <div class="onboarding-legal-body" id="onboarding-legal-body"></div>
+</dialog>
 
 <div id="map"></div>
 
@@ -117,21 +133,22 @@
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 
-<script src="/boot.js?v=121"></script>
+<script src="/boot.js?v=123"></script>
 <script src="/vendor/maplibre-gl-4.7.1.min.js" integrity="sha384-KKgyz2mG25bKJ1O2PyqTJPlAF8Kw2BpDmsLTNBXslICOBvhTAyF5F0XhLWF2ZovY"></script>
-<script src="/lazy.js?v=121"></script>
+<script src="/lazy.js?v=123"></script>
 
 <!-- 中身。役割ごとに分けてある。
      読む順番には意味があるので、入れ替えないこと -->
-<script src="/core.js?v=121"></script>    <!-- 設定・道具・端末内の保存 -->
-<script src="/motion.js?v=121"></script>  <!-- 待機表示・写真・現在地の動き -->
-<script src="/map.js?v=121"></script>     <!-- 地図・配色・ピン -->
-<script src="/place.js?v=121"></script>   <!-- 場所のシート・写真を開く -->
-<script src="/data.js?v=121"></script>    <!-- 自前DBの取り込み・明示的な地名検索 -->
-<script src="/native.js?v=121"></script>  <!-- カメラ・現在地・通知 -->
-<script src="/post.js?v=121"></script>    <!-- 記録する・思い出アルバム -->
-<script src="/sync.js?v=121"></script>    <!-- サーバー保存・タグ・ログイン -->
-<script src="/release.js?v=121"></script> <!-- 公開地図・アルバム・タイムライン・プロフィール -->
-<script src="/ui.js?v=121"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
+<script src="/core.js?v=123"></script>    <!-- 設定・道具・端末内の保存 -->
+<script src="/motion.js?v=123"></script>  <!-- 待機表示・写真・現在地の動き -->
+<script src="/map.js?v=123"></script>     <!-- 地図・配色・ピン -->
+<script src="/place.js?v=123"></script>   <!-- 場所のシート・写真を開く -->
+<script src="/data.js?v=123"></script>    <!-- 自前DBの取り込み・明示的な地名検索 -->
+<script src="/native.js?v=123"></script>  <!-- カメラ・現在地・通知 -->
+<script src="/post.js?v=123"></script>    <!-- 記録する・思い出アルバム -->
+<script src="/sync.js?v=123"></script>    <!-- サーバー保存・タグ・ログイン -->
+<script src="/onboarding.js?v=123"></script><!-- 初回起動・権限・規約・ログイン -->
+<script src="/release.js?v=123"></script> <!-- 公開地図・アルバム・タイムライン・プロフィール -->
+<script src="/ui.js?v=123"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
 </body>
 </html>

@@ -20,6 +20,21 @@ fi
 cp "$SOURCE_DIR/DailyPhotoPlugin.swift" "$APP_DIR/DailyPhotoPlugin.swift"
 cp "$SOURCE_DIR/SpotaBridgeViewController.swift" "$APP_DIR/SpotaBridgeViewController.swift"
 cp "$SOURCE_DIR/SceneDelegate.swift" "$APP_DIR/SceneDelegate.swift"
+cp "$SOURCE_DIR/AppDelegate.swift" "$APP_DIR/AppDelegate.swift"
+cp "$SOURCE_DIR/App.entitlements" "$APP_DIR/App.entitlements"
+
+ruby -rjson - "$IOS_ROOT/../capacitor.config.json" "$APP_DIR/capacitor.config.json" <<'RUBY'
+ARGV.each do |path|
+  next unless File.file?(path)
+  config = JSON.parse(File.read(path))
+  plugins = config["plugins"] ||= {}
+  auth = plugins["FirebaseAuthentication"] ||= {}
+  auth["providers"] = ["apple.com", "google.com"]
+  push = plugins["PushNotifications"] ||= {}
+  push["presentationOptions"] = ["badge", "sound", "alert"]
+  File.write(path, JSON.pretty_generate(config) + "\n")
+end
+RUBY
 
 PLIST_BUDDY=/usr/libexec/PlistBuddy
 if ! "$PLIST_BUDDY" -c "Set :NSPhotoLibraryUsageDescription 選択した写真の追加と、許可した写真から1日1枚の思い出候補を端末内で選ぶために使います" "$PLIST" 2>/dev/null; then
@@ -62,6 +77,33 @@ unless text.include?("DailyPhotoPlugin.swift in Sources")
   abort "App Sources phase was not found" unless text.sub!(source_pattern) { Regexp.last_match(1) + source_lines }
   File.write(path, text)
 end
+
+unless text.include?("App.entitlements")
+  file_ref = "\t\tA10D0005301F500000000001 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = \"<group>\"; };\n"
+  abort "PBXFileReference section was not found" unless text.sub!("/* Begin PBXFileReference section */\n", "/* Begin PBXFileReference section */\n#{file_ref}")
+  group_pattern = /(\t\t[0-9A-F]+ \/\* App \*\/ = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n)/
+  abort "App PBXGroup was not found" unless text.sub!(group_pattern) { Regexp.last_match(1) + "\t\t\t\tA10D0005301F500000000001 /* App.entitlements */,\n" }
+end
+
+unless text.include?("CODE_SIGN_ENTITLEMENTS = App/App.entitlements;")
+  text.gsub!("CODE_SIGN_STYLE = Automatic;", "CODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n\t\t\t\tCODE_SIGN_STYLE = Automatic;")
+end
+
+unless text.include?("com.apple.SignInWithApple")
+  marker = "\t\t\t\t\t\tProvisioningStyle = Automatic;"
+  capability = "\t\t\t\t\t\tSystemCapabilities = {\n" \
+               "\t\t\t\t\t\t\tcom.apple.SignInWithApple = { enabled = 1; };\n" \
+               "\t\t\t\t\t\t};\n" \
+               "#{marker}"
+  abort "App target attributes were not found" unless text.sub!(marker, capability)
+end
+
+unless text.include?("com.apple.Push")
+  marker = "\t\t\t\t\t\t\tcom.apple.SignInWithApple = { enabled = 1; };"
+  replacement = marker + "\n\t\t\t\t\t\t\tcom.apple.Push = { enabled = 1; };"
+  abort "Apple Sign In capability marker was not found" unless text.sub!(marker, replacement)
+end
+File.write(path, text)
 RUBY
 
-echo "Applied Spota PhotoKit bridge and portrait-only configuration to $IOS_ROOT"
+echo "Applied Spota PhotoKit bridge, Apple Sign In, push presentation, and portrait-only configuration to $IOS_ROOT"

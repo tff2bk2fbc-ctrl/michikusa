@@ -299,7 +299,9 @@ async function syncOwnArchive(auth){
           existing.synced=0;existing.photo_synced=0;existing.sync_error='server photo missing';
           await dbPut('spots',existing);missingUploads++;
         }
-        if(!existing.photo&&p.photo_id)queuePhotoRestore(existing,p.photo_id,auth);
+        // 新端末のプロフィール用に直近3枚だけを永続サムネイルへ戻す。
+        // 地図は必要な代表写真をBlobで遅延取得するため、全件復元しない。
+        if(!existing.photo&&p.photo_id&&page===0&&i<3)queuePhotoRestore(existing,p.photo_id,auth);
         continue;
       }
       var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
@@ -309,7 +311,7 @@ async function syncOwnArchive(auth){
         photo_synced:p.photo_id?1:0,owner_scope:auth.scope};
       if(await dbPut('spots',rec)){
         if(authIsCurrent(auth))spots.push(rec);
-        if(p.photo_id)queuePhotoRestore(rec,p.photo_id,auth);
+        if(p.photo_id&&page===0&&i<3)queuePhotoRestore(rec,p.photo_id,auth);
         added++;
       }
     }
@@ -323,11 +325,13 @@ async function syncOwnArchive(auth){
   if(authIsCurrent(auth))setTimeout(function(){syncOwnArchive(auth);},1500);
 }
 async function syncDown(){
+  if(window.__spotaOnboardingActive||window.__spotaNeedsOnboarding)return;
   if(!fbUser||fetching)return;
   fetching=true;
   var auth=null,startedScope=activeSpotScope,startedUid=fbUser.uid;
   try{
     auth=await captureAuth();if(!auth)return;
+    if(typeof window.setMapPhotoAuth==='function')window.setMapPhotoAuth(auth);
     startedScope=auth.scope;startedUid=auth.uid;
     await syncDeletions(auth);
     var b=map.getBounds();
@@ -354,7 +358,6 @@ async function syncDown(){
             local.synced=0;local.photo_synced=0;local.sync_error='server photo missing';
             dbPut('spots',local);missingUploads++;
           }
-          if(!local.photo&&p.photo_id)queuePhotoRestore(local,p.photo_id,auth);
           return;
         }
         var rec={id:nid(),server_id:p.id,synced:1,n:p.title,c:p.category,
@@ -363,7 +366,7 @@ async function syncDown(){
           photo:'',visibility:p.visibility,server_photo_id:p.photo_id||null,
           photo_synced:p.photo_id?1:0};
         rec.owner_scope=activeSpotScope;
-        spots.push(rec); dbPut('spots',rec);if(p.photo_id)queuePhotoRestore(rec,p.photo_id,auth);added++;
+        spots.push(rec); dbPut('spots',rec);added++;
       }else{
         // 他人の思い出。地図には出すが端末には残さない
         var k=p.id;
@@ -374,7 +377,6 @@ async function syncDown(){
           author:p.author,precision:p.precision,visibility:p.visibility,
           server_photo_id:p.photo_id||null,friend:p.visibility==='friends'});
         others[k]=shared;
-        if(typeof queueSharedPhoto==='function'&&shared.visibility==='public'&&shared.server_photo_id)queueSharedPhoto(shared,auth);
         if(!others[k].__counted){others[k].__counted=1;added++;}
       }
     });
@@ -462,6 +464,92 @@ const FB={apiKey:"AIzaSyAJFFjRk6zvAA_L9-1O7Y7Q43Yw86QQtxM",
   messagingSenderId:"1058235183759",appId:"1:1058235183759:web:8d0741be89ad707c07b6fa"};
 let fbUser=null,meP=null;
 let authChangeSeq=0;
+let authenticatedSessionSeq=0;
+
+function emitSpotaAuthChanged(){
+  window.dispatchEvent(new CustomEvent('spota:auth-changed',{detail:{user:fbUser,profile:meP}}));
+}
+
+function onboardingLogoutKey(){
+  return 'spota_onboarding_logout_'+String(window.__spotaOnboardingVersion||'current').replace(/[^A-Za-z0-9_.-]/g,'_');
+}
+
+async function syncLegalAcceptance(auth){
+  if(!auth)return false;
+  var accepted;
+  try{accepted=JSON.parse(localStorage.getItem('spota_legal_acceptance')||'null');}catch(e){return false;}
+  var version=String(window.__spotaOnboardingVersion||'');
+  if(!accepted||accepted.terms!==version||accepted.privacy!==version||!accepted.accepted_at)return false;
+  var key='spota_legal_synced_'+auth.uid+'_'+version;
+  try{if(localStorage.getItem(key)==='1')return true;}catch(e){}
+  try{
+    var response=await apiAs(auth,'/api/legal/acceptance',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({terms_version:accepted.terms,privacy_version:accepted.privacy,accepted_at:accepted.accepted_at})});
+    if(!response.ok)return false;
+    try{localStorage.setItem(key,'1');}catch(e){}
+    return true;
+  }catch(e){return false;}
+}
+
+/**
+ * この版の初回案内を最初から確認できるよう、既存の認証だけを一度解除する。
+ * 投稿、写真、IndexedDB、サーバー上のアカウントは削除しない。
+ */
+async function resetExistingLoginForOnboarding(user){
+  if(!window.__spotaNeedsOnboarding||window.__spotaOnboardingLogoutDone)return false;
+  var key=onboardingLogoutKey(),done=false;
+  try{done=localStorage.getItem(key)==='1';}catch(e){}
+  if(done){window.__spotaOnboardingLogoutDone=true;return false;}
+
+  var pushToken=window.__spotaPushToken;
+  if(!pushToken)try{pushToken=localStorage.getItem('spota_push_token');}catch(e){}
+  if(pushToken&&user){
+    try{
+      var token=await user.getIdToken();
+      await fetch(SERVER+'/api/push/token',{method:'DELETE',headers:{
+        'Authorization':'Bearer '+token,'Content-Type':'application/json'
+      },body:JSON.stringify({token:pushToken})});
+    }catch(e){}
+  }
+  window.__spotaPushToken=null;
+  try{localStorage.removeItem('spota_push_token');}catch(e){}
+  var FA=plugin('FirebaseAuthentication');
+  if(isApp&&FA&&FA.signOut){try{await FA.signOut();}catch(e){}}
+
+  window.__spotaOnboardingLogoutDone=true;
+  try{localStorage.setItem(key,'1');}catch(e){}
+  if(!user)return false;
+  try{
+    await firebase.auth().signOut();
+    return true;
+  }catch(e){
+    window.__spotaOnboardingLogoutDone=false;
+    try{localStorage.removeItem(key);}catch(ignore){}
+    return false;
+  }
+}
+
+async function startAuthenticatedSession(user,auth,authSeq){
+  if(window.__spotaOnboardingActive||!authIsCurrent(auth)||authSeq!==authChangeSeq)return false;
+  if(authenticatedSessionSeq===authSeq)return true;
+  authenticatedSessionSeq=authSeq;
+  // 旧版が残した同期済み原本を先に整理し、新しい写真を書ける容量を戻す。
+  await compactSyncedPhotos();
+  if(typeof setMapAudience==='function')setMapAudience('public',true);
+  await migrateOwnedLegacy(auth);
+  await offerLegacySpots(user,auth);
+  if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return false;
+  syncUp();syncDown().then(function(){syncOwnArchive(auth);});askHandle();setupPush(false);checkTags();
+  return true;
+}
+
+window.getSpotaAuthState=function(){return {user:fbUser,profile:meP};};
+window.resumeSpotaAfterOnboarding=async function(){
+  if(!fbUser)return false;
+  var seq=authChangeSeq,auth=await captureAuth(fbUser);
+  if(!auth||seq!==authChangeSeq)return false;
+  return startAuthenticatedSession(fbUser,auth,seq);
+};
 
 /* 旧版の未同期データは、自動で新しいアカウントへ送らず本人に確認する。 */
 async function migrateOwnedLegacy(auth){
@@ -528,6 +616,7 @@ window.initAuth=function(){
       if(typeof closeReleaseScreen==='function')closeReleaseScreen();
       fbUser=u;meP=null;var b=document.getElementById('btn-me');
       if(!b)return;
+      if(await resetExistingLoginForOnboarding(u))return;
       await activateSpotScope(u);
       if(authSeq!==authChangeSeq)return;
       if(u){
@@ -540,17 +629,16 @@ window.initAuth=function(){
         var profile=await loadMe(auth);
         if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
         meP=profile;
-        // 旧版が残した同期済み原本を先に整理し、新しい写真を書ける容量を戻す。
-        await compactSyncedPhotos();
-        if(typeof setMapAudience==='function')setMapAudience('public',true);
-        await migrateOwnedLegacy(auth);
-        await offerLegacySpots(u,auth);
+        await syncLegalAcceptance(auth);
         if(!authIsCurrent(auth)||authSeq!==authChangeSeq)return;
-        syncUp();syncDown().then(function(){syncOwnArchive(auth);});askHandle();setupPush();checkTags();
+        emitSpotaAuthChanged();
+        if(window.__spotaOnboardingActive)return;
+        await startAuthenticatedSession(u,auth,authSeq);
       }else{
         b.innerHTML='<div class="bc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg></div>';
         meP=null;
         if(typeof setMapAudience==='function')setMapAudience('mine',true);
+        emitSpotaAuthChanged();
       }
     });
 
@@ -724,6 +812,94 @@ function doLogin(){
     }
   });
 }
+window.startSpotaLogin=doLogin;
+
+function appleWebCredential(result){
+  var value=result&&result.credential||{};
+  if(!value.idToken)throw new Error('Appleの認証情報を受け取れませんでした');
+  var provider=new firebase.auth.OAuthProvider('apple.com');
+  return provider.credential({idToken:value.idToken,rawNonce:value.nonce||undefined});
+}
+
+// Appleのエラー本文には認証情報やOSの内部文言が混ざることがあるため、
+// 画面へ表示するのは既知のコードだけに限定する。トークン・メール・URLは表示しない。
+function spotaAppleAuthErrorCode(error){
+  var raw=String(error&&(error.code||error.message)||'unknown').trim();
+  var auth=raw.match(/auth\/[a-z0-9-]+/i);
+  if(auth)return auth[0].toLowerCase().slice(0,64);
+  var os=raw.match(/(?:ASAuthorizationError|error)\s*(?:code)?\s*[:=]?\s*(\d{1,4})/i);
+  if(os)return 'apple/'+os[1];
+  if(/^\d{1,4}$/.test(raw))return 'apple/'+raw;
+  return 'unknown';
+}
+function spotaAppleAuthErrorText(error){
+  var code=spotaAppleAuthErrorCode(error);
+  var labels={
+    'auth/operation-not-allowed':'FirebaseでAppleログインが有効になっていません',
+    'auth/invalid-credential':'Appleの認証情報を確認できませんでした',
+    'auth/account-exists-with-different-credential':'別のログイン方法で登録済みです',
+    'auth/popup-blocked':'Appleの確認画面がブロックされました',
+    'auth/popup-closed-by-user':'Appleの確認画面が閉じられました',
+    'auth/cancelled-popup-request':'Appleログインをキャンセルしました',
+    'apple/1000':'Appleのアプリ設定（Bundle ID・Team）を確認してください',
+    'apple/1001':'Appleログインをキャンセルしました'
+  };
+  return (labels[code]||'Appleログインに失敗しました')+'（コード: '+code+'）';
+}
+window.describeSpotaAppleAuthError=spotaAppleAuthErrorText;
+
+async function doAppleLogin(){
+  if(typeof firebase==='undefined'){setTip('ログインの部品がありません');return;}
+  var provider=new firebase.auth.OAuthProvider('apple.com');
+  provider.addScope('email');provider.addScope('name');
+  var FA=plugin('FirebaseAuthentication');
+  try{
+    setTip('Appleでログインしています…');
+    if(isApp&&FA&&FA.signInWithApple){
+      // ネイティブ側でFirebaseへ二重サインインせず、raw nonce付きcredentialだけを
+      // Web SDKへ渡す。skipNativeAuth=falseのままだとnonceが消費済みになり、
+      // auth/missing-or-invalid-nonceになる。
+      var result=await FA.signInWithApple({skipNativeAuth:true});
+      await firebase.auth().signInWithCredential(appleWebCredential(result));
+    }else{
+      try{await firebase.auth().signInWithPopup(provider);}
+      catch(error){
+        if(error&&/popup|blocked/i.test(error.code||''))return firebase.auth().signInWithRedirect(provider);
+        throw error;
+      }
+    }
+    setTip('ログインしました');
+  }catch(error){
+    var code=String(error&&(error.code||error.message)||error);
+    var text=spotaAppleAuthErrorText(error);
+    if(/cancel|canceled|1001/i.test(code)){
+      var cancelled=new Error(text);cancelled.code='auth/cancelled-popup-request';
+      throw cancelled;
+    }
+    setTip(text);
+    throw error;
+  }
+}
+window.startSpotaAppleLogin=doAppleLogin;
+
+window.saveSpotaOnboardingProfile=async function(handle,profileIcon){
+  var auth=await captureAuth();
+  if(!auth)throw new Error('ログインを確認できませんでした。');
+  var body={profile_icon:PROFILE_ICONS.indexOf(profileIcon)>=0?profileIcon:'pin'};
+  if(!(meP&&meP.handle))body.handle=String(handle||'').trim();
+  var response=await apiAs(auth,'/api/me',{method:'PATCH',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  var result=await response.json().catch(function(){return {};});
+  if(!response.ok){
+    if(response.status===409&&result.code==='taken')throw new Error('その利用者IDは既に使われています。');
+    throw new Error(result.error||'プロフィールを保存できませんでした。');
+  }
+  if(!authIsCurrent(auth))throw new Error('ログイン状態が変わりました。もう一度お試しください。');
+  await syncLegalAcceptance(auth);
+  meP=await loadMe(auth);
+  emitSpotaAuthChanged();
+  return meP;
+};
 
 /** ログアウト。アプリのときは両方から出る */
 async function doLogout(){
@@ -736,12 +912,168 @@ async function doLogout(){
   window.__spotaPushToken=null;
   try{localStorage.removeItem('spota_push_token');}catch(e){}
   var FA=plugin('FirebaseAuthentication');
-  if(isApp&&FA){ try{ FA.signOut(); }catch(e){} }
+  if(isApp&&FA){ try{ await FA.signOut(); }catch(e){} }
   fbUser=null;meP=null;activateSpotScope(null);
   if(typeof closeReleaseScreen==='function')closeReleaseScreen();
-  try{ firebase.auth().signOut(); }catch(e){}
+  try{ await firebase.auth().signOut(); }catch(e){}
   setTip('ログアウトしました');
 }
+
+function currentProviderId(){
+  var providers=(fbUser&&fbUser.providerData)||[];
+  for(var i=0;i<providers.length;i++)if(providers[i]&&providers[i].providerId)return providers[i].providerId;
+  return '';
+}
+
+async function reauthenticateForDeletion(){
+  if(!fbUser)throw new Error('ログインが必要です');
+  var providerId=currentProviderId();
+  var FA=plugin('FirebaseAuthentication');
+  if(providerId==='apple.com'){
+    if(isApp&&FA&&FA.signInWithApple){
+      var apple=await FA.signInWithApple();
+      await fbUser.reauthenticateWithCredential(appleWebCredential(apple));
+      var code=apple&&apple.credential&&apple.credential.authorizationCode;
+      if(!code||!FA.revokeAccessToken)throw new Error('Appleとの連携を解除できませんでした');
+      await FA.revokeAccessToken({token:code});
+      return {apple_revoked:true};
+    }
+    var appleProvider=new firebase.auth.OAuthProvider('apple.com');
+    appleProvider.addScope('email');appleProvider.addScope('name');
+    await fbUser.reauthenticateWithPopup(appleProvider);
+    throw new Error('Apple連携の解除はiPhoneアプリから行ってください');
+  }
+
+  var googleProvider=new firebase.auth.GoogleAuthProvider();
+  googleProvider.setCustomParameters({prompt:'select_account'});
+  if(isApp&&FA&&FA.signInWithGoogle){
+    var google=await FA.signInWithGoogle();
+    var token=google&&google.credential&&google.credential.idToken;
+    var access=google&&google.credential&&google.credential.accessToken;
+    if(!token&&!access)throw new Error('Googleの認証情報を受け取れませんでした');
+    await fbUser.reauthenticateWithCredential(
+      firebase.auth.GoogleAuthProvider.credential(token||null,access||null));
+  }else await fbUser.reauthenticateWithPopup(googleProvider);
+  return {apple_revoked:false};
+}
+
+async function purgeLocalAccountScope(scope){
+  await openDB();
+  for(var i=0;i<['spots','deleted'].length;i++){
+    var store=['spots','deleted'][i],rows=await dbAll(store);
+    for(var j=0;j<rows.length;j++)if(rows[j]&&rows[j].owner_scope===scope)await dbDel(store,rows[j].id||rows[j].server_id);
+  }
+}
+
+function openAccountDeletion(){
+  var html='<div class="grab"></div><div class="pad account-delete" style="padding-top:20px">'+
+    '<h2>アカウントを削除</h2><p>サーバーに保存した写真、投稿、フレンド、メッセージを削除します。この操作は元に戻せません。</p>'+
+    '<form id="account-delete-form" novalidate><label for="account-delete-confirm">確認のため「削除」と入力</label>'+
+    '<input class="fld" id="account-delete-confirm" autocomplete="off" autocapitalize="none" aria-describedby="account-delete-help account-delete-error">'+
+    '<p id="account-delete-help">本人確認のため、続けてAppleまたはGoogleのログイン画面が開きます。</p>'+
+    '<p class="form-error" id="account-delete-error" role="alert" hidden></p>'+
+    '<p class="form-status" id="account-delete-status" role="status" aria-live="polite"></p>'+
+    '<button class="btn d" type="submit">アカウントを削除</button><button class="btn g" id="account-delete-cancel" type="button">やめる</button></form></div>';
+  var sheet=showSheet(html),form=sheet.querySelector('#account-delete-form');
+  var input=sheet.querySelector('#account-delete-confirm'),error=sheet.querySelector('#account-delete-error');
+  var status=sheet.querySelector('#account-delete-status'),submit=form.querySelector('[type="submit"]');
+  sheet.querySelector('#account-delete-cancel').onclick=closeSheet;
+  form.onsubmit=async function(event){
+    event.preventDefault();error.hidden=true;
+    if(input.value.trim()!=='削除'){
+      input.setAttribute('aria-invalid','true');error.textContent='「削除」と入力してください。';error.hidden=false;input.focus();return;
+    }
+    input.removeAttribute('aria-invalid');submit.disabled=true;status.textContent='本人確認をしています…';
+    var scope=activeSpotScope;
+    try{
+      var proof=await reauthenticateForDeletion();
+      var auth=await captureAuth();if(!auth)throw new Error('本人確認を完了できませんでした');
+      status.textContent='写真とアカウントを削除しています…';
+      var response=await apiAs(auth,'/api/account/delete',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({confirmation:'削除',apple_revoked:!!proof.apple_revoked})});
+      var result=await response.json().catch(function(){return {};});
+      if(!response.ok)throw new Error(result.error||'削除できませんでした');
+      await purgeLocalAccountScope(scope);
+      window.__spotaPushToken=null;try{localStorage.removeItem('spota_push_token');}catch(ignore){}
+      var nativeAuth=plugin('FirebaseAuthentication');
+      if(isApp&&nativeAuth){try{await nativeAuth.signOut();}catch(ignore){}}
+      try{await firebase.auth().signOut();}catch(ignore){}
+      fbUser=null;meP=null;await activateSpotScope(null);closeSheet();
+      setTip(result.completed?'アカウントを削除しました':'削除を受け付けました。残りは自動で完了します');
+    }catch(e){
+      submit.disabled=false;status.textContent='';error.textContent=e&&e.message||'削除できませんでした';error.hidden=false;error.focus();
+    }
+  };
+}
+window.openSpotaAccountDeletion=openAccountDeletion;
+
+function monitorRows(state){
+  var steps=state&&state.steps||{};
+  var rows=[
+    ['投稿',!!steps.post],['DM',!!steps.message],['いいね',!!steps.like],
+    ['フラッシュ',!!steps.flash],['通知データ',!!steps.notification],
+    ['FCM受付',!!(state&&state.push_accepted)],['端末受信',!!(state&&state.received)],
+    ['通知を開いた',!!(state&&state.opened)],['目視確認',!!(state&&state.confirmed)]
+  ];
+  return rows.map(function(row){return '<li class="'+(row[1]?'done':'pending')+'"><span>'+esc(row[0])+'</span><b>'+(
+    row[1]?'確認済み':'待機中')+'</b></li>';}).join('');
+}
+
+function openCommunicationMonitor(){
+  var html='<div class="grab"></div><div class="pad communication-monitor" style="padding-top:20px">'+
+    '<h2>通信モニター</h2><p>テスト投稿、DM、いいね、フラッシュを作り、iPhoneへの通知まで順に確認します。テストデータは自動で消えます。</p>'+
+    '<p class="form-status" id="monitor-status" role="status" aria-live="polite">通知の準備をしています…</p>'+
+    '<ul class="monitor-checks" id="monitor-checks">'+monitorRows({})+'</ul>'+
+    '<button class="btn" id="monitor-confirm" type="button" disabled>通知が画面に見えた</button>'+
+    '<button class="btn g" id="monitor-close" type="button">閉じる</button></div>';
+  var sheet=showSheet(html),status=sheet.querySelector('#monitor-status');
+  var list=sheet.querySelector('#monitor-checks'),confirm=sheet.querySelector('#monitor-confirm');
+  var stopped=false,timer=0,runId='';
+  sheet.__onClose=function(){stopped=true;if(timer)clearTimeout(timer);};
+  sheet.querySelector('#monitor-close').onclick=closeSheet;
+  function paint(state){
+    list.innerHTML=monitorRows(state);confirm.disabled=!(state&&state.push_accepted)||!!state.confirmed;
+    if(state&&state.status==='failed')status.textContent='通信確認に失敗しました。'+(state.error?' '+state.error:' 15分後にもう一度お試しください。');
+    else if(state&&state.status==='expired')status.textContent='通信確認の期限が切れました。もう一度開始してください。';
+    else if(state&&state.confirmed)status.textContent='通知の目視確認まで完了しました。';
+    else if(state&&state.received)status.textContent='端末で受信しました。通知が見えたら下のボタンを押してください。';
+    else if(state&&state.push_accepted)status.textContent='FCMが受理しました。iPhoneの通知を確認してください。';
+  }
+  async function poll(){
+    if(stopped||!runId)return;
+    try{
+      var response=await api('/api/monitor/'+encodeURIComponent(runId));
+      var state=await response.json();if(response.ok){paint(state);if(state.confirmed||state.status==='failed'||state.status==='expired')return;}
+    }catch(e){}
+    timer=setTimeout(poll,1800);
+  }
+  confirm.onclick=async function(){
+    if(!runId)return;confirm.disabled=true;status.textContent='目視確認を記録しています…';
+    try{
+      var response=await api('/api/monitor/receipt',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({run_id:runId,event:'confirmed'})});
+      if(!response.ok)throw new Error('confirm failed');await poll();
+    }catch(e){confirm.disabled=false;status.textContent='確認を保存できませんでした。もう一度お試しください。';}
+  };
+  (async function(){
+    try{
+      var push=window.setupSpotaPush&&await window.setupSpotaPush(true);
+      if(!push||!push.ok){
+        var pushMessage=push&&push.message||'通知の端末登録を完了できませんでした。';
+        if(push&&push.code)pushMessage+='（コード: '+String(push.code).replace(/[^a-z_]/g,'')+'）';
+        throw new Error(pushMessage);
+      }
+      status.textContent='投稿・DM・通知を送っています…';
+      var response=await api('/api/monitor/run',{method:'POST'});
+      var result=await response.json().catch(function(){return {};});
+      if(response.status===409&&result.run_id){runId=result.run_id;status.textContent='進行中の通信確認を再開します。';poll();return;}
+      if(!response.ok)throw new Error(result.error||'通信モニターを開始できませんでした。');
+      runId=result.run_id;paint({steps:result.steps,push_accepted:!!result.push_accepted});
+      if(typeof refreshSocialBadge==='function')refreshSocialBadge();poll();
+    }catch(e){status.textContent=e&&e.message||'通信モニターを開始できませんでした。';}
+  })();
+}
+window.openSpotaCommunicationMonitor=openCommunicationMonitor;
 
 function openMe(){
   var html='<div class="grab"></div><div class="pad" style="padding-top:18px">';
@@ -751,12 +1083,19 @@ function openMe(){
       '思い出がこの端末から離れて残るようになります。機種を変えても戻ってきます。<br>'+
       'フレンドと見せあうこともできます。</div>'+
       '<button class="btn g" id="timeline-guest" style="margin-bottom:8px">タイムラインを見る</button>'+
-      '<button class="btn" id="g">Googleでログイン</button>'+
+      '<button class="btn" id="a" style="margin-bottom:8px">Appleでログイン</button>'+
+      '<button class="btn g" id="g">Googleでログイン</button>'+
+      '<div class="me-section">規約とプライバシー</div>'+
+      '<button class="me-row" id="guest-terms">利用規約<small>›</small></button>'+
+      '<button class="me-row" id="guest-privacy">プライバシーポリシー<small>›</small></button>'+
       '<button class="btn g" id="x" style="margin-top:8px">あとで</button></div>';
     var s0=showSheet(html);
     s0.querySelector('#x').onclick=closeSheet;
+    s0.querySelector('#a').onclick=function(){ closeSheet(); doAppleLogin(); };
     s0.querySelector('#g').onclick=function(){ closeSheet(); doLogin(); };
     s0.querySelector('#timeline-guest').onclick=function(){closeSheet();if(typeof openSocialHub==='function')openSocialHub('timeline');};
+    s0.querySelector('#guest-terms').onclick=function(){closeSheet();if(window.openSpotaLegal)window.openSpotaLegal('/terms.html');};
+    s0.querySelector('#guest-privacy').onclick=function(){closeSheet();if(window.openSpotaLegal)window.openSpotaLegal('/privacy.html');};
     return;
   }
 
@@ -818,15 +1157,26 @@ function openMe(){
     '<div class="postal-results" id="postal-results" aria-live="polite"></div>'+
 
 
+    '<div class="me-section">規約とプライバシー</div>'+
+    '<button class="me-row" id="me-terms">利用規約<small>›</small></button>'+
+    '<button class="me-row" id="me-privacy">プライバシーポリシー<small>›</small></button>'+
+
+
     '<div class="me-section">アカウント</div>'+
+    '<button class="me-row" id="communication-monitor">通信モニター<small>投稿・DM・通知を確認　›</small></button>'+
     '<button class="me-row" id="push-test">通知を試す<small>›</small></button>'+
+    '<button class="me-row" id="account-delete" style="color:var(--warn)">アカウントを削除<small>›</small></button>'+
     '<button class="me-row" id="out" style="color:var(--warn)">ログアウト</button></div></div>';
 
   var s=showSheet(html);
   s.querySelector('#x').onclick=closeSheet;
   s.querySelector('#fr').onclick=function(){openFriends();};
+  s.querySelector('#me-terms').onclick=function(){closeSheet();if(window.openSpotaLegal)window.openSpotaLegal('/terms.html');};
+  s.querySelector('#me-privacy').onclick=function(){closeSheet();if(window.openSpotaLegal)window.openSpotaLegal('/privacy.html');};
   var profileIcon=s.querySelector('#me-profile-icon');if(profileIcon)profileIcon.onclick=function(){closeSheet();if(meP&&meP.handle&&typeof openProfileIconPicker==='function')openProfileIconPicker(meP.handle,meP.profile_icon||'pin');};
   s.querySelector('#out').onclick=function(){ doLogout(); closeSheet(); };
+  s.querySelector('#account-delete').onclick=function(){closeSheet();openAccountDeletion();};
+  s.querySelector('#communication-monitor').onclick=function(){closeSheet();openCommunicationMonitor();};
   var pt=s.querySelector('#push-test');
   if(pt)pt.onclick=async function(){
     pt.textContent='送っています…';

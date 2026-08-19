@@ -7,7 +7,7 @@
  *  必要なもの
  *   - D1  : binding "DB"
  *   - R2  : binding "PHOTOS"
- *   - Secrets: GOOGLE_API_KEY / FCM_SERVICE_ACCOUNT（利用機能を有効にする場合）
+ *   - Secrets: GOOGLE_API_KEY / FCM_RELAY_SHARED_SECRET（通知中継を有効にする場合）
  *   - Var    : FIREBASE_PROJECT_ID
  *
  *  原則
@@ -20,6 +20,8 @@
 
 const JWKS = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const POSTAL_CODE_API = "https://jp-postal-code-api.ttskch.com/api/v1/";
+const CURRENT_TERMS_VERSION = "2026-08-17.1";
+const CURRENT_PRIVACY_VERSION = "2026-08-17.1";
 
 export default {
   async fetch(request, env) {
@@ -43,7 +45,7 @@ export default {
           "connect-src 'self' capacitor: https://broad-wildflower-9e30.j4hrd7zdgc.workers.dev https://tiles.openfreemap.org https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://*.firebaseapp.com",
           "font-src 'self' data:",
           "worker-src 'self' blob:",
-          "frame-src https://*.firebaseapp.com https://accounts.google.com",
+          "frame-src https://*.firebaseapp.com https://accounts.google.com https://appleid.apple.com",
           "object-src 'none'",
           "base-uri 'self'",
           "frame-ancestors 'none'"
@@ -58,7 +60,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-43"
+          build: "api-44"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
@@ -95,6 +97,24 @@ export default {
 
       if (p === "/api/me" && request.method === "GET")    return respond(json(await getMe(env, me)));
       if (p === "/api/me" && request.method === "PATCH")  return respond(await patchMe(request, env, me));
+      if (p === "/api/legal/acceptance" && request.method === "POST")
+        return respond(await saveLegalAcceptance(request, env, me));
+      if (p === "/api/legal/acceptance") return respond(json({ error: "POSTだけです" }, 405));
+      if (p === "/api/account/delete" && request.method === "POST")
+        return respond(await deleteAccount(request, env, me));
+      if (p === "/api/account/delete") return respond(json({ error: "POSTだけです" }, 405));
+
+      if (p === "/api/reports" && request.method === "POST")
+        return respond(await createReport(request, env, me));
+      if (p === "/api/reports") return respond(json({ error: "POSTだけです" }, 405));
+
+      if (p === "/api/monitor/run" && request.method === "POST")
+        return respond(await runCommunicationMonitor(env, me));
+      if (p === "/api/monitor/receipt" && request.method === "POST")
+        return respond(await saveMonitorReceipt(request, env, me));
+      const monitorRoute = /^\/api\/monitor\/([A-Za-z0-9_-]{8,80})$/.exec(p);
+      if (monitorRoute && request.method === "GET")
+        return respond(await getCommunicationMonitor(monitorRoute[1], env, me));
 
       if (p === "/api/posts" && request.method === "GET") {
         const handle = String(url.searchParams.get("user") || "").trim();
@@ -217,8 +237,9 @@ export default {
     // 容量整理は従来どおり03:17 JST（18:17 UTC）だけ実行する。
     const work = [retryErroredPhotoModeration(env), announceReadyPosts(env)];
     if (event.cron === "17 18 * * *") {
-      work.push(cleanupTransientConfig(env), cleanupDeletedPhotos(env));
+      work.push(cleanupTransientConfig(env), cleanupDeletedPhotos(env), cleanupCommunicationMonitors(env));
     }
+    work.push(resumeAccountDeletions(env));
     ctx.waitUntil(Promise.all(work));
   }
 };
@@ -306,6 +327,15 @@ async function authenticate(request, env) {
     return await env.DB.prepare("SELECT * FROM users WHERE id=? AND deleted_at IS NULL")
       .bind(found.user_id).first();
   }
+
+  // Firebase削除直後も、発行済みID tokenは最大1時間ほど端末に残り得る。
+  // その古いtokenで削除済みアカウントを即時再作成させない。2時間後は、
+  // 新しい本人確認で改めて登録できるようにする。
+  const recentDeletion = await env.DB.prepare(`SELECT 1 FROM account_deletion_jobs
+    WHERE provider=? AND provider_uid_hash=? AND status='completed'
+      AND completed_at>? LIMIT 1`)
+    .bind(provider, await shortHash(uid), Date.now() - 2 * 60 * 60 * 1000).first();
+  if (recentDeletion) return null;
 
   // 初回ログイン：ユーザーとログイン手段をまとめて作る
   const userId = uuid();
@@ -431,6 +461,240 @@ async function patchMe(request, env, me) {
     throw e;
   }
   return json({ ok: true });
+}
+
+async function saveLegalAcceptance(request, env, me) {
+  const parsed = await limitedJson(request, 1_000);
+  if (parsed.error) return parsed.error;
+  if (!(await userLimit(env, me.id, "legal-acceptance-hour", hourKey(), 20))) {
+    return json({ error: "同意記録の更新回数が多すぎます" }, 429);
+  }
+  const termsVersion = String(parsed.value.terms_version || "").trim();
+  const privacyVersion = String(parsed.value.privacy_version || "").trim();
+  // 形式だけでは、APIを直接呼んで存在しない版への同意を作れてしまう。
+  // 配信中の本文と同じ版だけをサーバー側で受理する。
+  if (termsVersion !== CURRENT_TERMS_VERSION || privacyVersion !== CURRENT_PRIVACY_VERSION) {
+    return json({ error: "現在の規約バージョンと一致しません" }, 409);
+  }
+  const acceptedAt = Date.parse(String(parsed.value.accepted_at || ""));
+  const now = Date.now();
+  if (!Number.isFinite(acceptedAt) || acceptedAt < Date.UTC(2026, 0, 1) || acceptedAt > now + 300_000) {
+    return json({ error: "同意時刻が不正です" }, 400);
+  }
+  await env.DB.prepare(`INSERT INTO legal_acceptances
+      (user_id,terms_version,privacy_version,accepted_at,recorded_at)
+    VALUES (?,?,?,?,?)
+    ON CONFLICT(user_id,terms_version,privacy_version)
+    DO UPDATE SET accepted_at=MIN(legal_acceptances.accepted_at,excluded.accepted_at),
+                  recorded_at=excluded.recorded_at`)
+    .bind(me.id, termsVersion, privacyVersion, acceptedAt, now).run();
+  return json({ ok: true, terms_version: termsVersion, privacy_version: privacyVersion });
+}
+
+/* ============================================================
+   アカウント削除 / 通報
+   ============================================================ */
+
+function tokenProvider(payload) {
+  const signIn = String(payload && payload.firebase && payload.firebase.sign_in_provider || "");
+  return signIn.includes("apple") ? "apple" : signIn.includes("phone") ? "phone" : "google";
+}
+
+async function deleteFirebaseAuthAccount(idToken, env) {
+  if (!env.FIREBASE_WEB_API_KEY) return { ok: false, code: "auth_delete_not_configured" };
+  try {
+    const response = await fetch(
+      "https://identitytoolkit.googleapis.com/v1/accounts:delete?key=" +
+        encodeURIComponent(env.FIREBASE_WEB_API_KEY),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+        signal: AbortSignal.timeout(8_000)
+      }
+    );
+    return response.ok ? { ok: true } : { ok: false, code: "auth_delete_failed" };
+  } catch (_) {
+    return { ok: false, code: "auth_delete_unavailable" };
+  }
+}
+
+async function snapshotAccountFiles(env, jobId, userId) {
+  await env.DB.batch([
+    env.DB.prepare(`INSERT OR IGNORE INTO account_deletion_files(job_id,object_key)
+      SELECT ?,key_orig FROM photos WHERE user_id=? AND key_orig IS NOT NULL`).bind(jobId, userId),
+    env.DB.prepare(`INSERT OR IGNORE INTO account_deletion_files(job_id,object_key)
+      SELECT ?,key_view FROM photos WHERE user_id=? AND key_view IS NOT NULL`).bind(jobId, userId),
+    env.DB.prepare(`INSERT OR IGNORE INTO account_deletion_files(job_id,object_key)
+      SELECT ?,key_thumb FROM photos WHERE user_id=? AND key_thumb IS NOT NULL`).bind(jobId, userId)
+  ]);
+}
+
+async function processAccountDeletion(env, jobId) {
+  const job = await env.DB.prepare(`SELECT id,user_id,status FROM account_deletion_jobs
+    WHERE id=? AND status IN ('auth_deleted','data_pending')`).bind(jobId).first();
+  if (!job || !job.user_id) return { completed: false, missing: true };
+  await snapshotAccountFiles(env, job.id, job.user_id);
+  const files = await env.DB.prepare(
+    "SELECT object_key FROM account_deletion_files WHERE job_id=? ORDER BY object_key LIMIT 50"
+  ).bind(job.id).all();
+  for (const row of (files.results || [])) {
+    const shared = await env.DB.prepare(`SELECT 1 FROM photos
+      WHERE user_id<>?1 AND (key_orig=?2 OR key_view=?2 OR key_thumb=?2) LIMIT 1`)
+      .bind(job.user_id, row.object_key).first();
+    if (!shared) await env.PHOTOS.delete(row.object_key);
+    await env.DB.prepare("DELETE FROM account_deletion_files WHERE job_id=? AND object_key=?")
+      .bind(job.id, row.object_key).run();
+  }
+  const remaining = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM account_deletion_files WHERE job_id=?"
+  ).bind(job.id).first();
+  if (Number(remaining && remaining.n || 0) > 0) {
+    await env.DB.prepare(`UPDATE account_deletion_jobs
+      SET status='data_pending',updated_at=? WHERE id=?`).bind(Date.now(), job.id).run();
+    return { completed: false, pending: Number(remaining.n) };
+  }
+
+  const now = Date.now();
+  // The original reports and places tables predate ON DELETE actions.
+  // Clear only references to this account before deleting the users row.
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM reports WHERE reporter_id=?1 OR target_user=?1
+      OR post_id IN (SELECT id FROM posts WHERE user_id=?1)`).bind(job.user_id),
+    env.DB.prepare("UPDATE places SET created_by=NULL WHERE created_by=?").bind(job.user_id)
+  ]);
+  await env.DB.prepare("DELETE FROM users WHERE id=?").bind(job.user_id).run();
+  await env.DB.prepare(`DELETE FROM conversations WHERE NOT EXISTS
+    (SELECT 1 FROM conversation_members cm WHERE cm.conversation_id=conversations.id)`).run();
+  await env.DB.prepare(`UPDATE account_deletion_jobs
+    SET user_id=NULL,status='completed',completed_at=?,updated_at=?,last_error=''
+    WHERE id=?`).bind(now, now, job.id).run();
+  return { completed: true };
+}
+
+async function deleteAccount(request, env, me) {
+  const parsed = await limitedJson(request, 2_000);
+  if (parsed.error) return parsed.error;
+  if (parsed.value.confirmation !== "削除")
+    return json({ error: "確認欄に「削除」と入力してください", code: "confirmation_required" }, 400);
+  if (!(await socialWriteLimit(env, me, "account-delete")) ||
+      !(await userLimit(env, me.id, "account-delete-day", dayKey(), 3)))
+    return json({ error: "削除操作の回数が多すぎます" }, 429);
+
+  const authorization = request.headers.get("Authorization") || "";
+  const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const payload = idToken ? await verifyToken(idToken, env.FIREBASE_PROJECT_ID) : null;
+  if (!payload || Number(payload.auth_time || 0) * 1000 < Date.now() - 10 * 60 * 1000)
+    return json({ error: "安全のため、もう一度ログインしてください", code: "recent_login_required" }, 401);
+  const provider = tokenProvider(payload);
+  if (provider === "apple" && parsed.value.apple_revoked !== true)
+    return json({ error: "Appleとの連携解除を完了してください", code: "apple_revoke_required" }, 409);
+
+  const identity = await env.DB.prepare(
+    "SELECT provider_uid FROM identities WHERE user_id=? AND provider=?"
+  ).bind(me.id, provider).first();
+  if (!identity) return json({ error: "ログイン方法を確認できません" }, 409);
+  const existing = await env.DB.prepare(`SELECT id,status FROM account_deletion_jobs
+    WHERE user_id=? AND status IN ('prepared','auth_deleted','data_pending') LIMIT 1`)
+    .bind(me.id).first();
+  if (existing) return json({ error: "削除処理はすでに進行中です", code: "deletion_pending" }, 409);
+
+  const jobId = uuid();
+  const now = Date.now();
+  await env.DB.prepare(`INSERT INTO account_deletion_jobs
+    (id,user_id,user_id_hash,provider,provider_uid_hash,status,requested_at,updated_at)
+    VALUES (?,?,?,?,?,'prepared',?,?)`)
+    .bind(jobId, me.id, await shortHash(me.id), provider,
+      await shortHash(identity.provider_uid), now, now).run();
+
+  const authDeleted = await deleteFirebaseAuthAccount(idToken, env);
+  if (!authDeleted.ok) {
+    await env.DB.prepare(`UPDATE account_deletion_jobs
+      SET status='failed',last_error=?,updated_at=? WHERE id=?`)
+      .bind(authDeleted.code, Date.now(), jobId).run();
+    return json({ error: "ログインアカウントを削除できませんでした。もう一度お試しください",
+      code: authDeleted.code }, authDeleted.code === "auth_delete_not_configured" ? 503 : 502);
+  }
+
+  await env.DB.batch([
+    env.DB.prepare("UPDATE users SET deleted_at=? WHERE id=? AND deleted_at IS NULL").bind(Date.now(), me.id),
+    env.DB.prepare(`UPDATE account_deletion_jobs
+      SET status='auth_deleted',updated_at=? WHERE id=?`).bind(Date.now(), jobId)
+  ]);
+  try {
+    const result = await processAccountDeletion(env, jobId);
+    return json({ ok: true, completed: !!result.completed, job_id: jobId }, result.completed ? 200 : 202);
+  } catch (error) {
+    await env.DB.prepare(`UPDATE account_deletion_jobs
+      SET status='data_pending',last_error=?,updated_at=? WHERE id=?`)
+      .bind(safeLogError(error), Date.now(), jobId).run();
+    return json({ ok: true, completed: false, job_id: jobId }, 202);
+  }
+}
+
+async function resumeAccountDeletions(env) {
+  const stalePrepared = Date.now() - 24 * 60 * 60 * 1000;
+  await env.DB.prepare(`UPDATE users SET deleted_at=?1 WHERE id IN (
+    SELECT user_id FROM account_deletion_jobs
+     WHERE status='prepared' AND updated_at<?2 AND user_id IS NOT NULL)`)
+    .bind(Date.now(), stalePrepared).run();
+  await env.DB.prepare(`UPDATE account_deletion_jobs SET status='data_pending',updated_at=?1
+    WHERE status='prepared' AND updated_at<?2`).bind(Date.now(), stalePrepared).run();
+  const jobs = await env.DB.prepare(`SELECT id FROM account_deletion_jobs
+    WHERE status IN ('auth_deleted','data_pending') ORDER BY updated_at LIMIT 2`).all();
+  for (const job of (jobs.results || [])) {
+    try { await processAccountDeletion(env, job.id); }
+    catch (error) {
+      await env.DB.prepare(`UPDATE account_deletion_jobs
+        SET status='data_pending',last_error=?,updated_at=? WHERE id=?`)
+        .bind(safeLogError(error), Date.now(), job.id).run();
+    }
+  }
+}
+
+async function createReport(request, env, me) {
+  const parsed = await limitedJson(request, 8_000);
+  if (parsed.error) return parsed.error;
+  if (!(await socialWriteLimit(env, me, "reports")) ||
+      !(await userLimit(env, me.id, "reports-day", dayKey(), 20)))
+    return json({ error: "今日の通報回数が上限です" }, 429);
+  const b = parsed.value;
+  const targetType = String(b.target_type || "");
+  const targetId = String(b.target_id || "");
+  const reason = String(b.reason || "");
+  const details = limitedText(b.details, 500);
+  const operationId = String(b.client_operation_id || "");
+  if (!["post", "user"].includes(targetType) || !/^[A-Za-z0-9_.-]{1,128}$/.test(targetId) ||
+      !["spam", "harassment", "nudity", "violence", "privacy", "other"].includes(reason) ||
+      details === null || !/^[A-Za-z0-9_-]{8,80}$/.test(operationId))
+    return json({ error: "通報内容を確認してください" }, 400);
+
+  let targetUserId = null;
+  if (targetType === "post") {
+    const post = await viewablePost(env, me, targetId);
+    if (!post) return json({ error: "投稿が見つかりません" }, 404);
+    targetUserId = post.user_id;
+  } else {
+    const user = await env.DB.prepare(
+      "SELECT id FROM users WHERE id=? AND deleted_at IS NULL"
+    ).bind(targetId).first();
+    if (!user) return json({ error: "利用者が見つかりません" }, 404);
+    targetUserId = user.id;
+  }
+  if (targetUserId === me.id) return json({ error: "自分自身は通報できません" }, 400);
+
+  const replay = await env.DB.prepare(
+    "SELECT id FROM reports WHERE reporter_id=? AND client_operation_id=?"
+  ).bind(me.id, operationId).first();
+  if (replay) return json({ ok: true, id: replay.id, replayed: true });
+  const now = Date.now();
+  const inserted = await env.DB.prepare(`INSERT INTO reports
+    (reporter_id,post_id,target_user,reason,detail,status,created_at,client_operation_id,updated_at)
+    VALUES (?,?,?,?,?,'open',?,?,?)`)
+    .bind(me.id, targetType === "post" ? targetId : null,
+      targetType === "user" ? targetUserId : null, reason, details || "",
+      now, operationId, now).run();
+  return json({ ok: true, id: Number(inserted.meta && inserted.meta.last_row_id || 0) }, 201);
 }
 
 
@@ -2627,7 +2891,9 @@ async function geocode(request, env) {
 
 // 回帰テスト用。HTTP経路は上のdefault exportだけが公開する。
 // 実運用と同じSQL経路をローカル統合テストから直接検証する。
-export { friendRequest, geocode, putLike, deleteLike, listComments, createComment, flashPost };
+export { friendRequest, geocode, putLike, deleteLike, listComments, createComment, flashPost,
+  createReport, createMonitorArtifacts, cleanupCommunicationMonitors, processAccountDeletion,
+  fcmRelayConfigured, relaySignature };
 
 async function reverseGeocode(request, env) {
   if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);
@@ -3114,117 +3380,102 @@ async function deleteToken(request, env, me) {
    （音のファイルはアプリの中に入れておく）
    ============================================================ */
 
-const SOUND = "spota.caf";     // アプリに入れた音の名前
-let fcmAccessCache = null;
+const SOUND = "default";       // XcodeのResources登録漏れに左右されないOS標準音
 
-/** Firebase に話しかけるための証をつくる */
-async function fcmToken(env) {
-  if (fcmAccessCache && fcmAccessCache.expiresAt > Date.now() + 60_000) {
-    return { token: fcmAccessCache.token, project: fcmAccessCache.project };
+function fcmRelayConfigured(env) {
+  if (typeof env.FCM_RELAY_SHARED_SECRET !== "string" ||
+      env.FCM_RELAY_SHARED_SECRET.length < 32) return false;
+  try {
+    const url = new URL(String(env.FCM_RELAY_URL || ""));
+    return url.protocol === "https:" && url.hostname.length > 0;
+  } catch (_) {
+    return false;
   }
-  const raw = env.FCM_SERVICE_ACCOUNT;
-  if (!raw) return null;
-
-  let sa;
-  try { sa = JSON.parse(raw); } catch (e) { return null; }
-
-  const now = Math.floor(Date.now() / 1000);
-  const head = { alg: "RS256", typ: "JWT" };
-  const claim = {
-    iss: sa.client_email,
-    scope: "https://www.googleapis.com/auth/firebase.messaging",
-    aud: "https://oauth2.googleapis.com/token",
-    iat: now,
-    exp: now + 3600
-  };
-
-  const b64 = function (o) {
-    return btoa(JSON.stringify(o)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  };
-  const unsigned = b64(head) + "." + b64(claim);
-
-  // 鍵を読み込んで署名する
-  const pem = sa.private_key.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
-  const bin = atob(pem);
-  const buf = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
-
-  const key = await crypto.subtle.importKey(
-    "pkcs8", buf.buffer,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false, ["sign"]
-  );
-  const sig = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)
-  );
-  const sigB64 = btoa(String.fromCharCode.apply(null, new Uint8Array(sig)))
-    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-
-  const res = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=" +
-          unsigned + "." + sigB64,
-    signal: AbortSignal.timeout(8_000)
-  });
-  if (!res.ok) return null;
-  const j = await res.json();
-  fcmAccessCache = {
-    token: j.access_token,
-    project: sa.project_id,
-    expiresAt: Date.now() + Math.max(300, Number(j.expires_in) || 3600) * 1000
-  };
-  return { token: fcmAccessCache.token, project: fcmAccessCache.project };
 }
 
-/** ある人に通知を届ける */
-async function sendPush(env, userId, title, body, data) {
+function relayBase64Url(bytes) {
+  let text = "";
+  const values = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (let i = 0; i < values.length; i += 0x8000)
+    text += String.fromCharCode(...values.subarray(i, i + 0x8000));
+  return btoa(text).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function relaySignature(secret, timestamp, nonce, body) {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const payload = `${timestamp}.${nonce}.${body}`;
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return relayBase64Url(signature);
+}
+
+/** Cloud RunのADCにFCM認証を任せ、WorkerにはGoogle秘密鍵を置かない。 */
+async function sendPushViaRelay(env, messages) {
+  if (!fcmRelayConfigured(env))
+    return { sent: 0, code: "fcm_not_configured", token_count: messages.length, invalid_tokens: [] };
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = randomToken();
+  const body = JSON.stringify({ messages });
+  try {
+    const signature = await relaySignature(env.FCM_RELAY_SHARED_SECRET, timestamp, nonce, body);
+    const response = await fetch(new URL("/send", env.FCM_RELAY_URL), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Spota-Timestamp": timestamp,
+        "X-Spota-Nonce": nonce,
+        "X-Spota-Signature": signature
+      },
+      body,
+      signal: AbortSignal.timeout(8_000)
+    });
+    let result = null;
+    try { result = await response.json(); } catch (_) {}
+    if (!response.ok || !result || !Number.isFinite(Number(result.sent)))
+      return { sent: 0, code: response.status === 429 ? "relay_rate_limited" : "relay_error", token_count: messages.length, invalid_tokens: [] };
+    return {
+      sent: Math.max(0, Math.min(messages.length, Number(result.sent))),
+      code: String(result.code || (result.sent ? "accepted" : "rejected")),
+      token_count: messages.length,
+      invalid_tokens: Array.isArray(result.invalid_tokens) ? result.invalid_tokens.filter(t => typeof t === "string") : []
+    };
+  } catch (_) {
+    return { sent: 0, code: "relay_unreachable", token_count: messages.length, invalid_tokens: [] };
+  }
+}
+
+/** ある人に通知を届け、FCMが受理した端末数も返す。 */
+async function sendPushDetailed(env, userId, title, body, data) {
   if (!(await userLimit(env, userId, "push-recipient-day", dayKey(), 100)) ||
-      !(await atomicLimit(env, "push_global_hour_" + hourKey(), 10_000, 1))) return 0;
-  const auth = await fcmToken(env);
-  if (!auth) return 0;
+      !(await atomicLimit(env, "push_global_hour_" + hourKey(), 10_000, 1)))
+    return { sent: 0, code: "rate_limited", token_count: 0 };
+  if (!fcmRelayConfigured(env)) return { sent: 0, code: "fcm_not_configured", token_count: 0 };
 
   const rows = await env.DB
     .prepare("SELECT token FROM push_tokens WHERE user_id=? ORDER BY updated_at DESC LIMIT 8")
     .bind(userId).all();
   const tokens = (rows.results || []).map(function (r) { return r.token; });
-  if (!tokens.length) return 0;
+  if (!tokens.length) return { sent: 0, code: "device_not_registered", token_count: 0 };
 
-  let sent = 0;
-  for (const t of tokens) {
-    const msg = {
-      message: {
-        token: t,
-        notification: { title: title, body: body },
-        data: data || {},
-        apns: {
-          payload: {
-            aps: { sound: SOUND, badge: 1 }
-          }
-        }
-      }
-    };
-    try {
-      const r = await fetch(
-        "https://fcm.googleapis.com/v1/projects/" + auth.project + "/messages:send",
-        {
-          method: "POST",
-          headers: {
-            "Authorization": "Bearer " + auth.token,
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify(msg),
-          signal: AbortSignal.timeout(8_000)
-        }
-      );
-      if (r.ok) sent++;
-      else if (r.status === 404) {
-        // その宛先はもう使えない
-        await env.DB.prepare("DELETE FROM push_tokens WHERE token=?").bind(t).run();
-      }
-    } catch (e) {}
+  const messages = tokens.map(function (t) {
+    return { message: {
+      token: t,
+      notification: { title: String(title || "").slice(0, 120), body: String(body || "").slice(0, 1000) },
+      data: Object.fromEntries(Object.entries(data || {}).slice(0, 32).map(([k, v]) => [String(k).slice(0, 64), String(v).slice(0, 512)])),
+      apns: { payload: { aps: { sound: SOUND, badge: 1 } } }
+    }};
+  });
+  const result = await sendPushViaRelay(env, messages);
+  for (const token of result.invalid_tokens || []) {
+    await env.DB.prepare("DELETE FROM push_tokens WHERE token=?").bind(token).run();
   }
-  return sent;
+  return { sent: result.sent, code: result.code, token_count: result.token_count };
+}
+
+async function sendPush(env, userId, title, body, data) {
+  return (await sendPushDetailed(env, userId, title, body, data)).sent;
 }
 
 /** 自分に試しに送る */
@@ -3234,6 +3485,294 @@ async function pushTest(env, me) {
   }
   const n = await sendPush(env, me.id, "spota", "通知はこの音で届きます", { test: "1" });
   return json({ sent: n });
+}
+
+/* ============================================================
+   本番通信モニター
+
+   ユーザーが自分で開始した時だけ、一時的なbot投稿・DM・いいね・
+   フラッシュを作る。PushはFCM受付だけを成功扱いにせず、端末受信・
+   開封・画面上の確認を別々のreceiptとして記録する。
+   ============================================================ */
+
+const MONITOR_BOT_ID = "spota-system-monitor";
+
+async function ensureMonitorBot(env) {
+  const now = Date.now();
+  await env.DB.prepare(`INSERT OR IGNORE INTO users
+    (id,handle,display_name,bio,default_visibility,friend_precision,public_precision,
+     publish_delay_sec,profile_public,created_at,profile_icon)
+    VALUES (?, 'spota_monitor', 'Spotaモニター', '通信確認専用のシステムアカウントです。',
+      'friends','hidden','hidden',0,0,?,'camera')`)
+    .bind(MONITOR_BOT_ID, now).run();
+}
+
+async function monitorArtifact(env, runId, type, id, now) {
+  await env.DB.prepare(`INSERT OR IGNORE INTO communication_monitor_artifacts
+    (run_id,artifact_type,artifact_id,created_at) VALUES (?,?,?,?)`)
+    .bind(runId, type, String(id), now || Date.now()).run();
+}
+
+async function createMonitorArtifacts(env, me, runId) {
+  const now = Date.now(), steps = {
+    post: false, message: false, like: false, flash: false, notification: false
+  };
+  await ensureMonitorBot(env);
+
+  const oldFriendship = await env.DB.prepare(`SELECT id,status FROM friendships
+    WHERE requester_id=? AND addressee_id=?`).bind(MONITOR_BOT_ID, me.id).first();
+  if (oldFriendship) {
+    await env.DB.prepare("UPDATE friendships SET status='accepted',updated_at=? WHERE id=?")
+      .bind(now, oldFriendship.id).run();
+    await monitorArtifact(env, runId, "friendship", oldFriendship.id, now);
+  } else {
+    const friendship = await env.DB.prepare(`INSERT INTO friendships
+      (requester_id,addressee_id,status,created_at,updated_at)
+      VALUES (?,?,'accepted',?,?)`).bind(MONITOR_BOT_ID, me.id, now, now).run();
+    await monitorArtifact(env, runId, "friendship", friendship.meta.last_row_id, now);
+  }
+
+  const postId = uuid();
+  const lat = 35.681236, lng = 139.767125;
+  const [approxLat, approxLng] = snap(lat, lng, 500);
+  const [areaLat, areaLng] = snap(lat, lng, 2000);
+  await env.DB.prepare(`INSERT INTO posts
+    (id,user_id,title,category,tag,place_name,body,lat,lng,approx_lat,approx_lng,
+     area_lat,area_lng,taken_at,created_at,visibility,publish_at,social_announced_at)
+    VALUES (?,?,'通信テスト','試','#通信テスト','Spota通信モニター',
+      'この投稿は通信確認後に自動で消えます。',?,?,?,?,?,?,?,?,'friends',?,?)`)
+    .bind(postId, MONITOR_BOT_ID, lat, lng, approxLat, approxLng, areaLat, areaLng,
+      now, now, now, now).run();
+  await monitorArtifact(env, runId, "post", postId, now);
+
+  const assetResponse = await env.ASSETS.fetch(new Request("https://spota.invalid/icon-192.png"));
+  if (!assetResponse.ok) throw new Error("monitor asset unavailable");
+  const iconBytes = await assetResponse.arrayBuffer();
+  const photoId = uuid();
+  for (const variant of ["orig", "view", "thumb"]) {
+    const key = `monitor/${runId}/${variant}.png`;
+    await env.PHOTOS.put(key, iconBytes, { httpMetadata: { contentType: "image/png" } });
+    await monitorArtifact(env, runId, "r2_object", key, now);
+  }
+  await env.DB.prepare(`INSERT INTO photos
+    (id,post_id,user_id,key_orig,key_view,key_thumb,width,height,sort_order,created_at,
+     moderation_state,moderation_view_state,moderation_thumb_state)
+    VALUES (?,?,?,?,?,?,192,192,0,?,'ok','ok','ok')`)
+    .bind(photoId, postId, MONITOR_BOT_ID, `monitor/${runId}/orig.png`,
+      `monitor/${runId}/view.png`, `monitor/${runId}/thumb.png`, now).run();
+  steps.post = true;
+
+  const pair = directPair(MONITOR_BOT_ID, me.id);
+  let conversation = await env.DB.prepare("SELECT id FROM conversations WHERE pair_key=?")
+    .bind(pair).first();
+  if (!conversation) {
+    conversation = { id: uuid() };
+    await env.DB.prepare(`INSERT INTO conversations(id,pair_key,created_at,updated_at)
+      VALUES (?,?,?,?)`).bind(conversation.id, pair, now, now).run();
+    await monitorArtifact(env, runId, "conversation", conversation.id, now);
+  }
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO conversation_members
+      (conversation_id,user_id,joined_at,last_read_at,last_read_id,hidden_at)
+      VALUES (?,?,?,0,'',NULL)
+      ON CONFLICT(conversation_id,user_id) DO UPDATE SET hidden_at=NULL`)
+      .bind(conversation.id, MONITOR_BOT_ID, now),
+    env.DB.prepare(`INSERT INTO conversation_members
+      (conversation_id,user_id,joined_at,last_read_at,last_read_id,hidden_at)
+      VALUES (?,?,?,0,'',NULL)
+      ON CONFLICT(conversation_id,user_id) DO UPDATE SET hidden_at=NULL`)
+      .bind(conversation.id, me.id, now)
+  ]);
+  const messageId = uuid();
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO messages
+      (id,conversation_id,sender_id,body,client_operation_id,created_at)
+      VALUES (?,?,?,'通信モニターからのテストメッセージです。',?,?)`)
+      .bind(messageId, conversation.id, MONITOR_BOT_ID, `monitor_${runId}`, now),
+    env.DB.prepare("UPDATE conversations SET updated_at=? WHERE id=?").bind(now, conversation.id)
+  ]);
+  await monitorArtifact(env, runId, "message", messageId, now);
+  const messageNotification = uuid();
+  await env.DB.prepare(`INSERT INTO notifications
+    (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+    VALUES (?,?,?,'message','conversation',?,?,?)`)
+    .bind(messageNotification, me.id, MONITOR_BOT_ID, conversation.id,
+      `monitor:${runId}:message`, now).run();
+  await monitorArtifact(env, runId, "notification", messageNotification, now);
+  steps.message = true;
+
+  const targetPost = await env.DB.prepare(`SELECT id FROM posts
+    WHERE user_id=? AND deleted_at IS NULL AND publish_at<=?
+      AND visibility IN ('friends','public') ORDER BY created_at DESC LIMIT 1`)
+    .bind(me.id, now).first();
+  if (targetPost) {
+    // 別利用者が同時に実行しているモニターのいいねを消さない。
+    // 同じ利用者の前回分だけを対象投稿から除いて、今回の操作として作り直す。
+    await env.DB.prepare("DELETE FROM post_likes WHERE post_id=? AND user_id=?")
+      .bind(targetPost.id, MONITOR_BOT_ID).run();
+    await env.DB.prepare("INSERT INTO post_likes(post_id,user_id,created_at) VALUES (?,?,?)")
+      .bind(targetPost.id, MONITOR_BOT_ID, now).run();
+    await monitorArtifact(env, runId, "like", targetPost.id, now);
+    const likeNotification = uuid();
+    await env.DB.prepare(`INSERT INTO notifications
+      (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+      VALUES (?,?,?,'like','post',?,?,?)`)
+      .bind(likeNotification, me.id, MONITOR_BOT_ID, targetPost.id,
+        `monitor:${runId}:like`, now).run();
+    await monitorArtifact(env, runId, "notification", likeNotification, now);
+    steps.like = true;
+  }
+
+  await env.DB.prepare(`INSERT INTO post_flashes(post_id,user_id,recipient_count,created_at)
+    VALUES (?,?,1,?)`).bind(postId, MONITOR_BOT_ID, now).run();
+  await monitorArtifact(env, runId, "flash", postId, now);
+  const flashNotification = uuid();
+  await env.DB.prepare(`INSERT INTO notifications
+    (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+    VALUES (?,?,?,'flash','post',?,?,?)`)
+    .bind(flashNotification, me.id, MONITOR_BOT_ID, postId,
+      `monitor:${runId}:flash`, now).run();
+  await monitorArtifact(env, runId, "notification", flashNotification, now);
+  steps.flash = true;
+
+  const monitorNotification = uuid();
+  await env.DB.prepare(`INSERT INTO notifications
+    (id,user_id,actor_id,kind,entity_type,entity_id,dedupe_key,created_at)
+    VALUES (?,? ,NULL,'monitor','monitor',?,?,?)`)
+    .bind(monitorNotification, me.id, runId, `monitor:${runId}:push`, now).run();
+  await monitorArtifact(env, runId, "notification", monitorNotification, now);
+  steps.notification = true;
+  return { steps, postId, conversationId: conversation.id };
+}
+
+async function runCommunicationMonitor(env, me) {
+  if (!(await socialWriteLimit(env, me, "communication-monitor")) ||
+      !(await userLimit(env, me.id, "communication-monitor-day", dayKey(), 3)))
+    return json({ error: "通信モニターは1日3回までです" }, 429);
+  const active = await env.DB.prepare(`SELECT id FROM communication_monitor_runs
+    WHERE user_id=? AND status IN ('running','push_accepted','received','opened','confirmed','failed')
+      AND expires_at>? LIMIT 1`).bind(me.id, Date.now()).first();
+  if (active) return json({ error: "通信モニターはすでに実行中です", run_id: active.id }, 409);
+  const tokenCount = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM push_tokens WHERE user_id=?"
+  ).bind(me.id).first();
+  if (!Number(tokenCount && tokenCount.n || 0))
+    return json({ error: "この端末の通知先がまだ登録されていません", code: "device_not_registered" }, 409);
+  if (!fcmRelayConfigured(env))
+    return json({ error: "通知サーバーの設定が完了していません", code: "fcm_not_configured" }, 503);
+
+  const id = uuid(), now = Date.now();
+  await env.DB.prepare(`INSERT INTO communication_monitor_runs
+    (id,user_id,status,steps_json,created_at,expires_at)
+    VALUES (?,?,'running','{}',?,?)`).bind(id, me.id, now, now + 15 * 60 * 1000).run();
+  try {
+    const artifacts = await createMonitorArtifacts(env, me, id);
+    const push = await sendPushDetailed(env, me.id, "Spota 通信確認",
+      "投稿・DM・いいね・フラッシュの通信が完了しました",
+      { monitor_run: id, post: artifacts.postId, conversation: artifacts.conversationId });
+    const status = push.sent > 0 ? "push_accepted" : "failed";
+    await env.DB.prepare(`UPDATE communication_monitor_runs
+      SET status=?,steps_json=?,push_accepted_at=?,last_error=?
+      WHERE id=?`).bind(status, JSON.stringify(artifacts.steps),
+        push.sent > 0 ? Date.now() : null, push.sent > 0 ? "" : push.code, id).run();
+    if (!push.sent) return json({ error: "FCMが通知を受理しませんでした", code: push.code, run_id: id }, 502);
+    return json({ ok: true, run_id: id, status, steps: artifacts.steps,
+      push_accepted: push.sent }, 202);
+  } catch (error) {
+    await env.DB.prepare(`UPDATE communication_monitor_runs
+      SET status='failed',last_error=? WHERE id=?`).bind(safeLogError(error), id).run();
+    return json({ error: "通信モニターを完了できませんでした", run_id: id }, 500);
+  }
+}
+
+async function saveMonitorReceipt(request, env, me) {
+  const parsed = await limitedJson(request, 2_000);
+  if (parsed.error) return parsed.error;
+  const runId = String(parsed.value.run_id || "");
+  const event = String(parsed.value.event || "");
+  if (!/^[A-Za-z0-9_-]{8,80}$/.test(runId) || !["received", "opened", "confirmed"].includes(event))
+    return json({ error: "確認内容が不正です" }, 400);
+  const run = await env.DB.prepare(`SELECT id,status,expires_at FROM communication_monitor_runs
+    WHERE id=? AND user_id=?`).bind(runId, me.id).first();
+  if (!run) return json({ error: "通信確認が見つかりません" }, 404);
+  if (run.expires_at < Date.now()) return json({ error: "通信確認の期限が切れています" }, 410);
+  const now = Date.now();
+  await env.DB.prepare(`INSERT OR IGNORE INTO communication_monitor_receipts
+    (run_id,user_id,event,created_at) VALUES (?,?,?,?)`).bind(runId, me.id, event, now).run();
+  if (event === "received") {
+    await env.DB.prepare(`UPDATE communication_monitor_runs
+      SET received_at=COALESCE(received_at,?),status=CASE
+        WHEN status IN ('running','push_accepted') THEN 'received' ELSE status END WHERE id=?`)
+      .bind(now, runId).run();
+  } else if (event === "opened") {
+    await env.DB.prepare(`UPDATE communication_monitor_runs
+      SET opened_at=COALESCE(opened_at,?),status=CASE
+        WHEN status='confirmed' THEN status ELSE 'opened' END WHERE id=?`).bind(now, runId).run();
+  } else {
+    await env.DB.prepare(`UPDATE communication_monitor_runs
+      SET confirmed_at=COALESCE(confirmed_at,?),status='confirmed' WHERE id=?`).bind(now, runId).run();
+  }
+  return json({ ok: true, event });
+}
+
+async function getCommunicationMonitor(id, env, me) {
+  if (!(await socialReadLimit(env, me, "communication-monitor")))
+    return json({ error: "確認回数が多すぎます" }, 429);
+  const run = await env.DB.prepare(`SELECT id,status,steps_json,push_accepted_at,
+      received_at,opened_at,confirmed_at,created_at,expires_at,last_error
+    FROM communication_monitor_runs WHERE id=? AND user_id=?`).bind(id, me.id).first();
+  if (!run) return json({ error: "通信確認が見つかりません" }, 404);
+  let steps = {};
+  try { steps = JSON.parse(run.steps_json || "{}"); } catch (_) { /* fail closed below */ }
+  return json({ id: run.id, status: run.status, steps,
+    push_accepted: !!run.push_accepted_at, received: !!run.received_at,
+    opened: !!run.opened_at, confirmed: !!run.confirmed_at,
+    created_at: run.created_at, expires_at: run.expires_at,
+    error: run.status === "failed" ? run.last_error : "" });
+}
+
+async function cleanupCommunicationMonitors(env) {
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  const runs = await env.DB.prepare(`SELECT r.id FROM communication_monitor_runs r
+    WHERE r.created_at<? AND EXISTS (
+      SELECT 1 FROM communication_monitor_artifacts a WHERE a.run_id=r.id)
+    ORDER BY r.created_at LIMIT 6`).bind(cutoff).all();
+  for (const run of (runs.results || [])) {
+    const artifacts = await env.DB.prepare(`SELECT artifact_type,artifact_id
+      FROM communication_monitor_artifacts WHERE run_id=?
+      ORDER BY CASE artifact_type WHEN 'r2_object' THEN 0 WHEN 'notification' THEN 1
+        WHEN 'like' THEN 2 WHEN 'message' THEN 3 WHEN 'flash' THEN 4
+        WHEN 'post' THEN 5 WHEN 'friendship' THEN 6 ELSE 7 END`)
+      .bind(run.id).all();
+    for (const item of (artifacts.results || [])) {
+      if (item.artifact_type === "r2_object") await env.PHOTOS.delete(item.artifact_id);
+      else if (item.artifact_type === "notification")
+        await env.DB.prepare("DELETE FROM notifications WHERE id=?").bind(item.artifact_id).run();
+      else if (item.artifact_type === "like")
+        await env.DB.prepare("DELETE FROM post_likes WHERE post_id=? AND user_id=?")
+          .bind(item.artifact_id, MONITOR_BOT_ID).run();
+      else if (item.artifact_type === "message")
+        await env.DB.prepare("DELETE FROM messages WHERE id=? AND sender_id=?")
+          .bind(item.artifact_id, MONITOR_BOT_ID).run();
+      else if (item.artifact_type === "flash")
+        await env.DB.prepare("DELETE FROM post_flashes WHERE post_id=? AND user_id=?")
+          .bind(item.artifact_id, MONITOR_BOT_ID).run();
+      else if (item.artifact_type === "post")
+        await env.DB.prepare("DELETE FROM posts WHERE id=? AND user_id=?")
+          .bind(item.artifact_id, MONITOR_BOT_ID).run();
+      else if (item.artifact_type === "friendship")
+        await env.DB.prepare("DELETE FROM friendships WHERE id=? AND requester_id=?")
+          .bind(Number(item.artifact_id), MONITOR_BOT_ID).run();
+    }
+    await env.DB.prepare(`DELETE FROM conversations WHERE pair_key LIKE ?
+      AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=conversations.id)`)
+      .bind("%" + MONITOR_BOT_ID + "%").run();
+    await env.DB.prepare(`UPDATE communication_monitor_runs
+      SET status=CASE WHEN status='confirmed' THEN status ELSE 'expired' END WHERE id=?`)
+      .bind(run.id).run();
+    await env.DB.prepare("DELETE FROM communication_monitor_artifacts WHERE run_id=?")
+      .bind(run.id).run();
+  }
 }
 
 

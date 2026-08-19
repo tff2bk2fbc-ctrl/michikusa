@@ -53,7 +53,7 @@ test('release UI uses authenticated social routes and persisted actions', async 
 test('timeline redraw revokes old photo URLs and aborts stale thumbnail requests', async () => {
   const release = await read('public/release.js');
   const start = release.indexOf('function resetReleasePhotos');
-  const end = release.indexOf('/* 地図用の共有写真', start);
+  const end = release.indexOf('/* 地図用サムネイル', start);
   assert.ok(start >= 0 && end > start);
 
   let resolveResponse;
@@ -106,7 +106,7 @@ test('timeline redraw revokes old photo URLs and aborts stale thumbnail requests
 test('a thumbnail finishing after its image node was replaced is revoked immediately', async () => {
   const release = await read('public/release.js');
   const start = release.indexOf('function resetReleasePhotos');
-  const end = release.indexOf('/* 地図用の共有写真', start);
+  const end = release.indexOf('/* 地図用サムネイル', start);
   let resolveResponse;
   const api = () => new Promise(resolve => { resolveResponse = resolve; });
   const revoked = [];
@@ -264,7 +264,7 @@ test('map photos keep a fallback pin and use screen-distance clustering', async 
   assert.match(map, /'text-field':\['to-string',\['get','photo_count'\]\]/);
   assert.match(map, /'text-font':\['Noto Sans Bold'\]/);
   assert.match(map, /'text-font':\['Noto Sans Regular'\]/);
-  assert.match(map, /const PHOTO_ZOOM=12/);
+  assert.match(map, /const PHOTO_ZOOM=6/);
   assert.match(map, /const PHOTO_FEATURE_LIMIT=1600/);
   assert.match(map, /const PHOTO_ICON_VISIBLE_LIMIT=36/);
   assert.match(map, /const PHOTO_CLUSTER_VISIBLE_LIMIT=24/);
@@ -282,26 +282,171 @@ test('map photos keep a fallback pin and use screen-distance clustering', async 
   assert.match(map, /id:'photo-group-ic'/);
   assert.match(map, /id:'photo-cluster-a'/);
   assert.match(map, /id:'photo-cluster-a-pending'/);
-  assert.match(map, /id:'photo-cluster'[^\n]*minzoom:4,maxzoom:PHOTO_ZOOM/);
-  assert.match(map, /id:'photo-same-cluster'[^\n]*minzoom:4,maxzoom:PHOTO_ZOOM/);
-  assert.match(map, /'circle-radius':23/);
-  assert.match(map, /'circle-stroke-width':3/);
+  assert.match(map, /id:'photo-cluster'[^\n]*minzoom:4/);
+  assert.match(map, /id:'photo-same-cluster'[^\n]*minzoom:4/);
+  assert.match(map, /id:'photo-group-ic'[^\n]*minzoom:4/);
+  assert.match(map, /id:'photo-cluster-a'[^\n]*minzoom:4/);
+  assert.match(map, /id:'photo-cluster-count'[\s\S]*?'visibility':'none'/);
+  assert.match(map, /id:'photo-same-cluster-count'[\s\S]*?'visibility':'none'/);
+  assert.match(map, /id:'photo-cluster'[\s\S]*?'circle-opacity':0,[\s\S]*?'circle-stroke-opacity':0/);
+  assert.match(map, /id:'photo-same-cluster'[\s\S]*?\['==',\['get','ready'\],0\]/);
+  assert.match(map, /'circle-radius':5/);
+  assert.match(map, /'circle-stroke-color':'#F7F7F4'/);
   assert.match(map, /var S=128,H=140,pw=112,ph=120,ring=6,r=26,ox=4,oy=8/);
-  assert.match(map, /x\.font='700 22px -apple-system, BlinkMacSystemFont, sans-serif'/);
+  assert.match(map, /x\.font='760 22px -apple-system, BlinkMacSystemFont, sans-serif'/);
+  assert.match(map, /x\.shadowColor='rgba\(5,5,7,\.30\)';x\.shadowBlur=18;x\.shadowOffsetX=0;x\.shadowOffsetY=4/);
+  assert.match(map, /x\.fillStyle='#F7F7F4';roundRect\(x,-10,-10,20,20,4\)/);
+  assert.match(map, /var bw=Math\.max\(46,Math\.ceil\(x\.measureText\(label\)\.width\)\+24\),bh=46/);
   assert.match(map, /'icon-size':1/);
   assert.doesNotMatch(map, /if\(map\.getZoom\(\)<PHOTO_ZOOM\)return out/);
   assert.doesNotMatch(map, /list=list\.slice\(0,80\)/);
   assert.match(map, /list=list\.slice\(0,PHOTO_FEATURE_LIMIT\)/);
-  assert.match(map, /zoom>=PHOTO_ZOOM&&o\.img&&b\.contains/);
-  assert.match(map, /schedulePhotoIconPrune\(map\.getZoom\(\)<PHOTO_ZOOM\)/);
+  assert.match(map, /\(o\.items\.length>1\|\|zoom>=PHOTO_ZOOM\)&&\(o\.img\|\|o\.p\.server_photo_id\)&&b\.contains/);
+  assert.match(map, /window\.queueMapPhotoThumb\(o\.p\)/);
+  assert.match(map, /schedulePhotoIconPrune\(false\)/);
   assert.match(map, /var ready=desiredPhotoIcons\[key\]&&madeIcons\[key\]\?1:0/);
   assert.match(map, /s\.photo_thumb\|\|s\.photo\|\|''/);
   assert.match(map, /querySourceFeatures\('spota-photo'/);
+  assert.match(map, /if\(!meta\.url&&meta\.record&&meta\.record\.server_photo_id[\s\S]*?window\.queueMapPhotoThumb\(meta\.record\)/);
+  assert.match(map, /if\(row\.meta\.url\)makeRoundIcon\(/);
   assert.match(map, /削除済み・上限外の記録が持っていたData URL参照を残さない/);
   assert.match(place, /getClusterExpansionZoom\(clusterId\)/);
   assert.match(place, /photo-cluster-a/);
   assert.match(place, /photo-same-cluster/);
   assert.match(place, /photo-pending/);
+});
+
+test('map thumbnails are fetched lazily and stay within fixed memory bounds', async () => {
+  const map = await read('public/map.js');
+  const sync = await read('public/sync.js');
+  const release = await read('public/release.js');
+  const syncStart = sync.indexOf('async function syncDown');
+  const syncEnd = sync.indexOf('let others={}', syncStart);
+  const syncDown = sync.slice(syncStart, syncEnd);
+  assert.doesNotMatch(syncDown, /queuePhotoRestore\(/);
+  assert.doesNotMatch(syncDown, /queueSharedPhoto\(/);
+  assert.match(release, /if\(sharedPhotoQueue\.length>=32\)return/);
+  assert.match(release, /let sharedPhotoQueue=/);
+  assert.match(release, /let mapPhotoAuth=null/);
+  assert.match(release, /if\(records\.indexOf\(rec\)<0\)records\.push\(rec\)/);
+  assert.match(release, /var pending=sharedPhotoPending\[id\]/);
+  assert.match(release, /pending\.records\.indexOf\(rec\)<0/);
+  assert.match(release, /while\(sharedPhotoBusy<2&&sharedPhotoQueue\.length\)/);
+  assert.match(release, /while\(sharedPhotoOrder\.length>36\)/);
+  assert.match(map, /const PHOTO_ICON_VISIBLE_LIMIT=36/);
+  assert.match(map, /const PHOTO_CLUSTER_VISIBLE_LIMIT=24/);
+  assert.match(map, /const PHOTO_ICON_CACHE_LIMIT=72/);
+  assert.match(map, /const PHOTO_ICON_CONCURRENCY=3/);
+  assert.match(map, /map\.on\('sourcedata'[\s\S]*sourceId==='spota-photo'&&e\.isSourceLoaded/);
+});
+
+test('the same server thumbnail is fetched once and shared across map records', async () => {
+  const release = await read('public/release.js');
+  const varsStart = release.indexOf('let sharedPhotoQueue');
+  const varsEnd = release.indexOf('function releaseDate', varsStart);
+  const queueStart = release.indexOf('function queueSharedPhoto');
+  const queueEnd = release.indexOf('/* ---------- アルバム', queueStart);
+  assert.ok(varsStart >= 0 && varsEnd > varsStart && queueStart >= 0 && queueEnd > queueStart);
+
+  let resolveResponse, calls = 0;
+  const helpers = Function('apiAs','authIsCurrent','URL','window',
+    release.slice(varsStart, varsEnd) + release.slice(queueStart, queueEnd) +
+    ';return {queueSharedPhoto:queueSharedPhoto,state:function(){return {busy:sharedPhotoBusy,pending:Object.keys(sharedPhotoPending).length,order:sharedPhotoOrder.slice()};}};'
+  )(
+    () => { calls++; return new Promise(resolve => { resolveResponse = resolve; }); },
+    () => true,
+    {createObjectURL(){return 'blob:shared';},revokeObjectURL(){}},
+    {}
+  );
+  const auth = {uid:'u1',scope:'user_u1',seq:1};
+  const a = {server_photo_id:'same-photo'}, b = {server_photo_id:'same-photo'};
+  helpers.queueSharedPhoto(a, auth);
+  helpers.queueSharedPhoto(b, auth);
+  assert.equal(calls, 1, 'duplicate IDs must not start another request');
+  assert.equal(helpers.state().pending, 1);
+  resolveResponse({ok:true,blob:async () => ({})});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(a.photo, 'blob:shared');
+  assert.equal(b.photo, 'blob:shared');
+  assert.equal(a.photo_loading, undefined);
+  assert.equal(b.photo_loading, undefined);
+  assert.deepEqual(helpers.state().order, ['same-photo']);
+});
+
+test('photos remain visible after zoom 6 while decoding stays capped', async () => {
+  const source = await read('public/map.js');
+  const start = source.indexOf('function photoKey');
+  const end = source.indexOf('function refreshPhotoSource', start);
+  assert.ok(start >= 0 && end > start);
+
+  const records = Array.from({length: 50}, (_, i) => ({
+    id: 'post-'+i, server_photo_id: 'photo-'+i, n: '思い出 '+i,
+    lat: 35 + i * .0002, lng: 139 + i * .0002, d: '2026-08-16'
+  }));
+  const madeIcons = {}, makingIcons = {}, photoIconMeta = {};
+  const queued = [], decoded = [];
+  const windowMock = {
+    queueMapPhotoThumb(rec){ queued.push(rec.id); rec.photo='blob:'+rec.server_photo_id; }
+  };
+  let zoom = 6.01;
+  const mapMock = {
+    getZoom(){ return zoom; },
+    getBounds(){ return {contains(){ return true; }}; },
+    getCenter(){ return {lat:35,lng:139}; }
+  };
+  const harness = Function(
+    'map','visibleOwnSpots','visibleOtherSpots','valid','madeIcons','makingIcons','photoIconMeta','window',
+    'PHOTO_FEATURE_LIMIT','PHOTO_ICON_VISIBLE_LIMIT','PHOTO_CLUSTER_VISIBLE_LIMIT','PHOTO_ZOOM','makeRoundIcon',
+    'let desiredPhotoIcons={},livePhotoMetaKeys={};'+source.slice(start,end)+
+    ';return {photoFeatures:photoFeatures,desired:function(){return desiredPhotoIcons;}};'
+  )(
+    mapMock,()=>records,()=>[],()=>true,madeIcons,makingIcons,photoIconMeta,windowMock,
+    1600,36,24,6,function(url,mine,key){decoded.push(key);madeIcons[key]={used:Date.now()};}
+  );
+
+  let features = harness.photoFeatures();
+  assert.equal(features.length, 50, 'all coordinates stay in the clustered source');
+  assert.equal(queued.length, 36, 'only the nearest visible cap is requested');
+  features = harness.photoFeatures();
+  assert.equal(decoded.length, 36, 'only capped photos are decoded');
+  features = harness.photoFeatures();
+  assert.equal(features.filter(f => f.properties.ready === 1).length, 36);
+
+  zoom = 20;
+  features = harness.photoFeatures();
+  assert.equal(features.filter(f => f.properties.ready === 1).length, 36,
+    'already visible photos do not disappear at a larger zoom');
+});
+
+test('low zoom repeated locations use A-style photo plus count instead of a large number circle', async () => {
+  const source = await read('public/map.js');
+  const start = source.indexOf('function photoKey');
+  const end = source.indexOf('function refreshPhotoSource', start);
+  const records = Array.from({length: 4}, (_, i) => ({
+    id: 'same-'+i, server_photo_id: 'same-photo-'+i, n: '同じ場所',
+    lat: 35.681236, lng: 139.767125, d: '2026-08-16'
+  }));
+  const madeIcons = {}, makingIcons = {}, photoIconMeta = {};
+  const windowMock = {queueMapPhotoThumb(rec){rec.photo='blob:'+rec.server_photo_id;}};
+  const mapMock = {
+    getZoom(){ return 4.6; },
+    getBounds(){ return {contains(){ return true; }}; },
+    getCenter(){ return {lat:35.68,lng:139.77}; }
+  };
+  const harness = Function(
+    'map','visibleOwnSpots','visibleOtherSpots','valid','madeIcons','makingIcons','photoIconMeta','window',
+    'PHOTO_FEATURE_LIMIT','PHOTO_ICON_VISIBLE_LIMIT','PHOTO_CLUSTER_VISIBLE_LIMIT','PHOTO_ZOOM','makeRoundIcon',
+    'let desiredPhotoIcons={},livePhotoMetaKeys={};'+source.slice(start,end)+';return {photoFeatures:photoFeatures};'
+  )(
+    mapMock,()=>records,()=>[],()=>true,madeIcons,makingIcons,photoIconMeta,windowMock,
+    1600,36,24,6,function(url,mine,key){madeIcons[key]={used:Date.now()};}
+  );
+  harness.photoFeatures();
+  harness.photoFeatures();
+  const features = harness.photoFeatures();
+  assert.equal(features.length, 1);
+  assert.equal(features[0].properties.photo_count, 4);
+  assert.equal(features[0].properties.ready, 1);
 });
 
 test('daily PhotoKit bridge keeps candidates local until the user accepts', async () => {

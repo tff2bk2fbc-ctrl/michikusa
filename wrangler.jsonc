@@ -10,7 +10,8 @@
     "crons": ["*/15 * * * *", "17 18 * * *"]
   },
   "vars": {
-    "FIREBASE_PROJECT_ID": "michikusa-e34df"
+    "FIREBASE_PROJECT_ID": "michikusa-e34df",
+    "FIREBASE_WEB_API_KEY": "AIzaSyAJFFjRk6zvAA_L9-1O7Y7Q43Yw86QQtxM"
   },
   "observability": {
     "enabled": true,

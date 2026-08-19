@@ -2,7 +2,7 @@
 
 This directory is the source of truth for the small native layer that cannot live in `public/`.
 It contains the one-photo-per-day PhotoKit bridge, its Capacitor registration, the required
-`SceneDelegate`, and an idempotent installer for a generated Capacitor iOS project.
+`AppDelegate`/`SceneDelegate`, and an idempotent installer for a generated Capacitor iOS project.
 
 Apply it after creating or updating the native project:
 
@@ -12,7 +12,7 @@ Apply it after creating or updating the native project:
 
 The installer performs only these scoped changes:
 
-- copies the three reviewed Swift sources into `App/App`;
+- copies the four reviewed Swift sources into `App/App`;
 - registers the two added Swift files in the `App` target without an extra Ruby gem;
 - sets the photo-library explanation;
 - limits iPhone and iPad to portrait orientation.

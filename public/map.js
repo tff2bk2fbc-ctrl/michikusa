@@ -183,13 +183,20 @@ function retint(st){
 // 現在の権限確認が終わる前は日本全体の中立表示だけを使う。
 try{localStorage.removeItem('spota_last_location');}catch(e){}
 var initialMapView={center:[138.2529,36.2048],zoom:4.6};
-var initialMapWaitId=window.SpotaMotion?window.SpotaMotion.beginWait('地図を読み込んでいます'):0;
-var initialMapWaitTimer=setTimeout(finishInitialMapLoad,20000);
+var deferInitialMap=!!(window.__spotaOnboardingActive||window.__spotaNeedsOnboarding);
+var initialMapWaitId=0,initialMapWaitTimer=0,mapStyleStartPromise=null;
+function startInitialMapWait(){
+  if(initialMapWaitId||!window.SpotaMotion)return;
+  initialMapWaitId=window.SpotaMotion.beginWait('地図を読み込んでいます');
+  initialMapWaitTimer=setTimeout(finishInitialMapLoad,20000);
+}
 function finishInitialMapLoad(){
-  clearTimeout(initialMapWaitTimer);
+  if(initialMapWaitTimer)clearTimeout(initialMapWaitTimer);
+  initialMapWaitTimer=0;
   if(initialMapWaitId&&window.SpotaMotion)window.SpotaMotion.endWait(initialMapWaitId);
   initialMapWaitId=0;
 }
+if(!deferInitialMap)startInitialMapWait();
 const map=new maplibregl.Map({
   container:'map',
   /* 以前は「元の色で読む → 色を変えて差し替える」の2段階だった。
@@ -219,18 +226,32 @@ const map=new maplibregl.Map({
 // 後から読む分割ファイルへ、地図インスタンスを明示的に渡す。
 // top-level constの暗黙共有に依存すると、読み込み方によって初期化判定が失敗する。
 window.__michikusaMap=map;
-/* 見た目の元を取ってきて、色を変えてから渡す */
-(async function loadStyle(){
-  try{
-    var t0=performance.now();
-    var r=await fetch(STYLE);
-    baseStyle=await r.json();
-    window.__tStyle=Math.round(performance.now()-t0);
-    mark('見た目を取得');
-    map.setStyle(retint(baseStyle),{diff:false});
-    map.once('style.load',function(){ setTimeout(afterStyle,0); });
-  }catch(e){ showErr('[style] '+dump(e)); hideSplash(); finishInitialMapLoad(); }
-})();
+/* 見た目の元を取ってきて、色を変えてから渡す。
+   初回案内中は外部の地図配信先へ接続せず、規約確認とプロフィール設定が
+   完了した瞬間に初めて開始する。 */
+function startSpotaMapAfterOnboarding(){
+  if(mapStyleStartPromise)return false;
+  deferInitialMap=false;
+  startInitialMapWait();
+  mapStyleStartPromise=(async function loadStyle(){
+    try{
+      var t0=performance.now();
+      var r=await fetch(STYLE);
+      if(!r.ok)throw new Error('map style '+r.status);
+      baseStyle=await r.json();
+      window.__tStyle=Math.round(performance.now()-t0);
+      mark('見た目を取得');
+      map.once('style.load',function(){ setTimeout(afterStyle,0); });
+      map.setStyle(retint(baseStyle),{diff:false});
+      return true;
+    }catch(e){
+      showErr('[style] '+dump(e));hideSplash();finishInitialMapLoad();return false;
+    }
+  })();
+  return true;
+}
+window.startSpotaMapAfterOnboarding=startSpotaMapAfterOnboarding;
+if(!deferInitialMap)startSpotaMapAfterOnboarding();
 /* 最初のタイルだけではまだ地図は未完成。afterStyle後に起動画面を引く。 */
 function applyTint(){
   try{
@@ -306,7 +327,7 @@ function afterStyle(){
   /* 現在地が取れなくても、いま見えている辺りは必ず読む。
      ここを現在地まかせにすると、位置を断った人が空の地図を見ることになる */
   setTimeout(function(){
-    if(typeof window.autoLoad==='function')window.autoLoad(true);
+    if(!window.__spotaOnboardingActive&&!window.__spotaNeedsOnboarding&&typeof window.autoLoad==='function')window.autoLoad(true);
   },1400);
  }catch(e){ showErr('[afterStyle] '+dump(e)); }
 }
@@ -418,7 +439,11 @@ function render(force){
   refreshPhotoSource();
  }catch(e){ showErr('[render] '+dump(e)); }
 }
-map.on('moveend',function(){render();autoLoad();syncDown();});
+map.on('moveend',function(){
+  render();
+  if(window.__spotaOnboardingActive||window.__spotaNeedsOnboarding)return;
+  autoLoad();syncDown();
+});
 
 /* 地図の中にレイヤーを積む */
 function addPlaceLayers(){
@@ -439,6 +464,15 @@ function addPlaceLayers(){
   map.addSource('spota-photo-overlay',{
     type:'geojson',data:{type:'FeatureCollection',features:[]}
   });
+  // GeoJSON のクラスタ計算は Web Worker で完了する。固定時間だけ待つと、
+  // 実機が忙しい時に querySourceFeatures が空のまま終わり、A案が出ない。
+  // source の完了通知を受けてからもう一度代表写真を組み立てる。
+  if(!window.__spotaPhotoSourceWatch){
+    window.__spotaPhotoSourceWatch=1;
+    map.on('sourcedata',function(e){
+      if(e&&e.sourceId==='spota-photo'&&e.isSourceLoaded)schedulePhotoClusterOverlay();
+    });
+  }
 
   // まだ思い出のない場所。
   // 地図が元から描いている店（薄い丸に絵）と、大きさも濃さも揃える
@@ -499,44 +533,48 @@ function addPlaceLayers(){
     'text-color':night?'#FFFFFF':'#000000',
     'text-halo-color':PAL().halo,'text-halo-width':1.8}});
 
-  // 写真同士が重なる場所。件数を一つの数字で示し、押すと中身へ寄る。
-  map.addLayer({id:'photo-cluster',type:'circle',source:'spota-photo',minzoom:4,maxzoom:PHOTO_ZOOM,
+  // A案は別ソースの pending → 写真だけを描画する。
+  // 元クラスタはタップ判定にだけ残し、背後から小丸をはみ出させない。
+  map.addLayer({id:'photo-cluster',type:'circle',source:'spota-photo',minzoom:4,
     filter:['has','point_count'],paint:{
-      'circle-radius':23,
-      'circle-color':'#111111',
-      'circle-stroke-color':'#FFFFFF',
-      'circle-stroke-width':3,
-      'circle-opacity':1
+      'circle-radius':5,
+      'circle-color':'#19191B',
+      'circle-stroke-color':'#F7F7F4',
+      'circle-stroke-width':2,
+      'circle-opacity':0,
+      'circle-stroke-opacity':0
     }});
-  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'spota-photo',minzoom:4,maxzoom:PHOTO_ZOOM,
+  // 既存のクリック判定とレイヤー互換性は残すが、大数字は描画しない。
+  map.addLayer({id:'photo-cluster-count',type:'symbol',source:'spota-photo',minzoom:4,
     filter:['has','point_count'],layout:{
+      'visibility':'none',
       'text-field':['to-string',['get','photo_count']],
       'text-font':['Noto Sans Bold'],'text-size':14,
       'text-allow-overlap':true
     },paint:{'text-color':'#FFFFFF'}});
 
-  // 最大ズームでも同じ座標に重なる写真は、サムネイルを重ねず46pxの数字へまとめる。
-  map.addLayer({id:'photo-same-cluster',type:'circle',source:'spota-photo',minzoom:4,maxzoom:PHOTO_ZOOM,
-    filter:['all',['!',['has','point_count']],['>', ['get','photo_count'],1]],paint:{
-      'circle-radius':23,'circle-color':'#111111','circle-stroke-color':'#FFFFFF',
-      'circle-stroke-width':3,'circle-opacity':1
+  // 同一座標もA案の画像準備中だけ小さな点を残す。
+  map.addLayer({id:'photo-same-cluster',type:'circle',source:'spota-photo',minzoom:4,
+    filter:['all',['!',['has','point_count']],['==',['get','ready'],0],['>', ['get','photo_count'],1]],paint:{
+      'circle-radius':5,'circle-color':'#19191B','circle-stroke-color':'#F7F7F4',
+      'circle-stroke-width':2,'circle-opacity':1
     }});
-  map.addLayer({id:'photo-same-cluster-count',type:'symbol',source:'spota-photo',minzoom:4,maxzoom:PHOTO_ZOOM,
+  map.addLayer({id:'photo-same-cluster-count',type:'symbol',source:'spota-photo',minzoom:4,
     filter:['all',['!',['has','point_count']],['>', ['get','photo_count'],1]],layout:{
+      'visibility':'none',
       'text-field':['to-string',['get','photo_count']],'text-font':['Noto Sans Bold'],
       'text-size':14,'text-allow-overlap':true
     },paint:{'text-color':'#FFFFFF'}});
 
-  // A案: 同じ座標の複数写真は、写真を主役にして右上へ小さく件数を出す。
-  // 画像準備中だけ直下の黒丸がフォールバックとして残る。
-  map.addLayer({id:'photo-group-ic',type:'symbol',source:'spota-photo',minzoom:PHOTO_ZOOM,
+  // A案: 同じ座標の複数写真は、低ズームから代表写真＋右上件数で出す。
+  map.addLayer({id:'photo-group-ic',type:'symbol',source:'spota-photo',minzoom:4,
     filter:['all',['!',['has','point_count']],['==',['get','ready'],1],['>', ['get','photo_count'],1]],layout:{
       'icon-image':['get','icon'],'icon-size':1,'icon-allow-overlap':true,
       'icon-anchor':'bottom','icon-offset':[0,4]
     }});
 
   // 写真本体の読込中でも、地図から記録そのものを消さない。
-  map.addLayer({id:'photo-pending',type:'circle',source:'spota-photo',minzoom:PHOTO_ZOOM,
+  map.addLayer({id:'photo-pending',type:'circle',source:'spota-photo',minzoom:4,
     filter:['all',['!',['has','point_count']],['==',['get','ready'],0]],paint:{
       'circle-radius':5,
       'circle-color':night?'#F4F4F5':'#111111',
@@ -557,13 +595,13 @@ function addPlaceLayers(){
     'text-color':PAL().text,
     'text-halo-color':PAL().halo,'text-halo-width':1.7}});
 
-  // A案: 画面距離でまとめられた写真も、拡大時は代表写真＋右上件数にする。
-  // 低ズームではこのソースを空にし、軽量な黒丸＋数字だけを描く。
-  map.addLayer({id:'photo-cluster-a-pending',type:'circle',source:'spota-photo-overlay',minzoom:PHOTO_ZOOM,
+  // A案: 画面距離でまとまった写真はズーム4から代表写真＋右上件数にする。
+  // 画面内24集合だけを作るため、全国表示でも無制限に画像化しない。
+  map.addLayer({id:'photo-cluster-a-pending',type:'circle',source:'spota-photo-overlay',minzoom:4,
     filter:['==',['get','ready'],0],paint:{'circle-radius':5,
       'circle-color':night?'#F4F4F5':'#111111',
       'circle-stroke-color':night?'#171719':'#FFFFFF','circle-stroke-width':2}});
-  map.addLayer({id:'photo-cluster-a',type:'symbol',source:'spota-photo-overlay',minzoom:PHOTO_ZOOM,
+  map.addLayer({id:'photo-cluster-a',type:'symbol',source:'spota-photo-overlay',minzoom:4,
     filter:['==',['get','ready'],1],
     layout:{'icon-image':['get','icon'],'icon-size':1,'icon-allow-overlap':true,
       'icon-anchor':'bottom','icon-offset':[0,4]}});
@@ -582,7 +620,7 @@ function addPlaceLayers(){
    そこで写真を丸く切り抜いた画像を作り、地図に登録して使う。
    地図の記号と同じ扱いになるので、ずれようがない。
    ============================================================ */
-const PHOTO_ZOOM=12;                 // 通常の市街地ズームから写真を確認できる
+const PHOTO_ZOOM=6;                  // ズーム6以降はクラスタが分かれても単写真を消さない
 const PHOTO_FEATURE_LIMIT=1600;      // 低ズームで地図へ渡すのは座標と件数だけ
 const PHOTO_ICON_VISIBLE_LIMIT=36;   // 一度に画像化する画面内サムネイル
 const PHOTO_CLUSTER_VISIBLE_LIMIT=24;// A案へ置き換える画面内クラスター
@@ -662,8 +700,9 @@ function schedulePhotoClusterOverlay(){
 
 /** 写真を切り抜いて、地図に登録する。
     A案の実寸は写真56×60px、右上の数字11px。2倍密度で描く。 */
-function makeRoundIcon(url,mine,key,count,kind){
-  photoIconMeta[key]={url:url,mine:mine,count:count,kind:kind||'photo'};
+function makeRoundIcon(url,mine,key,count,kind,record){
+  var prior=photoIconMeta[key]||{};
+  photoIconMeta[key]={url:url,mine:mine,count:count,kind:kind||'photo',record:record||prior.record||null};
   if(madeIcons[key]){madeIcons[key].used=Date.now();return;}
   if(makingIcons[key])return;
   makingIcons[key]=1;
@@ -708,18 +747,18 @@ function decodePhotoIcon(job){
       var cv=document.createElement('canvas');
       cv.width=S; cv.height=H;
       var x=cv.getContext('2d',{willReadFrequently:true});
+      x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';
       var iw=pw-ring*2,ih=ph-ring*2;
       var scale=Math.max(iw/im.width,ih/im.height);
       var sw=iw/scale,sh=ih/scale;
 
       // 写真の後ろにある白い尾。
-      x.save();x.translate(ox+pw/2,oy+ph-2);x.rotate(Math.PI/4);
-      x.shadowColor='rgba(29,35,29,.15)';x.shadowBlur=16;x.shadowOffsetX=8;x.shadowOffsetY=8;
-      x.fillStyle='#FFFFFF';x.fillRect(-10,-10,20,20);x.restore();
+      x.save();x.translate(ox+pw/2,oy+ph+4);x.rotate(Math.PI/4);
+      x.fillStyle='#F7F7F4';roundRect(x,-10,-10,20,20,4);x.fill();x.restore();
 
-      // 白枠と、プレビューと同じ控えめな影。
-      x.save();x.shadowColor='rgba(29,35,29,.28)';x.shadowBlur=32;x.shadowOffsetY=12;
-      x.fillStyle='#FFFFFF';
+      // 参照HTMLの 0 2px 9px rgba(5,5,7,.30) を2倍密度でそのまま描く。
+      x.save();x.shadowColor='rgba(5,5,7,.30)';x.shadowBlur=18;x.shadowOffsetX=0;x.shadowOffsetY=4;
+      x.fillStyle='#F7F7F4';
       roundRect(x,ox,oy,pw,ph,r);
       x.fill();
       x.restore();
@@ -734,12 +773,14 @@ function decodePhotoIcon(job){
       // 複数写真の件数は、A案どおり右上の小さな黒い円へ置く。
       if(count>1){
         var label=count>999?'999+':String(count);
-        x.save();x.font='700 22px -apple-system, BlinkMacSystemFont, sans-serif';
+        x.save();x.font='760 22px -apple-system, BlinkMacSystemFont, sans-serif';
         x.textAlign='center';x.textBaseline='middle';
-        var bw=Math.max(46,Math.ceil(x.measureText(label).width)+18),bx=S-bw/2,by=bw/2;
-        x.beginPath();x.arc(bx,by,bw/2,0,Math.PI*2);x.fillStyle='#F7F7F4';x.fill();
-        x.beginPath();x.arc(bx,by,bw/2-4,0,Math.PI*2);x.fillStyle='#19191B';x.fill();
-        x.fillStyle='#F7F7F4';x.fillText(label,bx,by+1);x.restore();
+        var bw=Math.max(46,Math.ceil(x.measureText(label).width)+24),bh=46,bx=S-bw,by=0;
+        x.shadowColor='rgba(5,5,7,.30)';x.shadowBlur=8;x.shadowOffsetY=2;
+        x.fillStyle='#F7F7F4';roundRect(x,bx,by,bw,bh,bh/2);x.fill();
+        x.shadowColor='transparent';
+        x.fillStyle='#19191B';roundRect(x,bx+4,by+4,bw-8,bh-8,(bh-8)/2);x.fill();
+        x.fillStyle='#F7F7F4';x.fillText(label,bx+bw/2,by+bh/2);x.restore();
       }
 
       var dat=x.getImageData(0,0,S,H);
@@ -813,16 +854,18 @@ function photoFeatures(){
   });
   list=list.slice(0,PHOTO_FEATURE_LIMIT);
 
-  // 低ズームは座標と件数だけ。拡大時も画面中央に近い36枚だけ画像化する。
+  // 低ズームは複数写真のA案だけを最大24集合、ズーム6以上は単写真を含め36枚まで。
+  // server_photo_idだけの記録は、この選抜後に初めてサムネイル取得を要求する。
   var candidates=list.filter(function(o){
-    return zoom>=PHOTO_ZOOM&&o.img&&b.contains([o.p.lng,o.p.lat]);
+    return (o.items.length>1||zoom>=PHOTO_ZOOM)&&(o.img||o.p.server_photo_id)&&b.contains([o.p.lng,o.p.lat]);
   }).sort(function(a,x){
     return Math.hypot(a.p.lat-c.lat,a.p.lng-c.lng)-Math.hypot(x.p.lat-c.lat,x.p.lng-c.lng);
-  }).slice(0,PHOTO_ICON_VISIBLE_LIMIT);
+  }).slice(0,zoom>=PHOTO_ZOOM?PHOTO_ICON_VISIBLE_LIMIT:PHOTO_CLUSTER_VISIBLE_LIMIT);
   var nextDesired={};
   candidates.forEach(function(o){
     var count=o.items.length,key=photoKey(o.p,o.mine)+'_c'+count;
     nextDesired[key]=1;
+    if(!o.img&&o.p.server_photo_id&&typeof window.queueMapPhotoThumb==='function')window.queueMapPhotoThumb(o.p);
   });
   desiredPhotoIcons=nextDesired;
 
@@ -830,8 +873,8 @@ function photoFeatures(){
     var count=o.items.length,key=photoKey(o.p,o.mine)+'_c'+count;
     var ready=desiredPhotoIcons[key]&&madeIcons[key]?1:0;
     liveMeta[key]=1;
-    if(o.img)photoIconMeta[key]={url:o.img,mine:o.mine,count:count,kind:'photo'};
-    if(o.img&&!ready&&desiredPhotoIcons[key])makeRoundIcon(o.img,o.mine,key,count,'photo');
+    photoIconMeta[key]={url:o.img||'',mine:o.mine,count:count,kind:'photo',record:o.p};
+    if(o.img&&!ready&&desiredPhotoIcons[key])makeRoundIcon(o.img,o.mine,key,count,'photo',o.p);
     if(ready)madeIcons[key].used=Date.now();
     out.push({type:'Feature',geometry:{type:'Point',coordinates:[o.p.lng,o.p.lat]},
       properties:{rid:String(o.p.id||o.p.server_id||o.p.spot||''),lat:o.p.lat,lng:o.p.lng,
@@ -847,8 +890,8 @@ function photoFeatures(){
 function refreshPhotoSource(){
   if(map.getSource('spota-photo')){
     map.getSource('spota-photo').setData({type:'FeatureCollection',features:photoFeatures()});
-    // 低ズームへ戻ったら、軽量データが反映された直後にGPU上の写真を解放する。
-    schedulePhotoIconPrune(map.getZoom()<PHOTO_ZOOM);
+    // 低ズームでもA案を最大24集合だけ残す。不要画像はLRU上限で解放する。
+    schedulePhotoIconPrune(false);
     schedulePhotoClusterOverlay();
   }
 }
@@ -858,14 +901,13 @@ function clearPhotoClusterOverlay(){
   var source=map.getSource('spota-photo-overlay');
   if(source&&clusterOverlaySig!=='[]')source.setData({type:'FeatureCollection',features:[]});
   clusterOverlaySig='[]';
-  schedulePhotoIconPrune(map.getZoom()<PHOTO_ZOOM);
+  schedulePhotoIconPrune(false);
 }
 
-/** MapLibreの画面距離クラスターを、拡大時だけA案の代表写真へ置き換える。 */
+/** MapLibreの画面距離クラスターを、ズーム4からA案の代表写真へ置き換える。 */
 async function refreshPhotoClusterOverlay(){
   var overlay=map.getSource('spota-photo-overlay'),source=map.getSource('spota-photo');
   if(!overlay||!source)return;
-  if(map.getZoom()<PHOTO_ZOOM){clearPhotoClusterOverlay();return;}
   var generation=++clusterOverlayGeneration,b=map.getBounds(),c=map.getCenter(),seen={},clusters=[];
   try{
     (map.querySourceFeatures('spota-photo',{filter:['has','point_count']})||[]).forEach(function(f){
@@ -883,7 +925,8 @@ async function refreshPhotoClusterOverlay(){
     try{
       var id=Number(f.properties.cluster_id),leaves=await source.getClusterLeaves(id,1,0);
       var leaf=leaves&&leaves[0],base=leaf&&leaf.properties&&leaf.properties.icon;
-      var meta=base&&photoIconMeta[base];if(!meta||!meta.url)return null;
+      var meta=base&&photoIconMeta[base];if(!meta)return null;
+      if(!meta.url&&meta.record&&meta.record.server_photo_id&&typeof window.queueMapPhotoThumb==='function')window.queueMapPhotoThumb(meta.record);
       var count=Number(f.properties.photo_count||f.properties.point_count||2);
       var key='phc_'+id+'_'+count+'_'+String(base).replace(/[^A-Za-z0-9_-]/g,'_').slice(-40);
       return {feature:f,key:key,count:count,meta:meta};
@@ -894,7 +937,7 @@ async function refreshPhotoClusterOverlay(){
   rows.filter(Boolean).forEach(function(row){next[row.key]=1;});
   activeClusterIconKeys=next;
   rows.filter(Boolean).forEach(function(row){
-    makeRoundIcon(row.meta.url,row.meta.mine,row.key,row.count,'cluster');
+    if(row.meta.url)makeRoundIcon(row.meta.url,row.meta.mine,row.key,row.count,'cluster',row.meta.record);
     var ready=madeIcons[row.key]?1:0;
     if(ready)madeIcons[row.key].used=Date.now();
     features.push({type:'Feature',geometry:row.feature.geometry,properties:{

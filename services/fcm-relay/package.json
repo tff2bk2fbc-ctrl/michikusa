@@ -1,0 +1,15 @@
+{
+  "name": "spota-fcm-relay",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test ../../tools/fcm-relay.test.mjs"
+  },
+  "dependencies": {
+    "google-auth-library": "^11.0.2"
+  }
+}

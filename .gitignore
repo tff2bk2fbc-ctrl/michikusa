@@ -12,3 +12,5 @@ generated/address-db/
 
 # Codexの検証画像・D1復元ブックマークなど、端末内だけの作業ファイル。
 work/
+output/playwright/
+.playwright-cli/
