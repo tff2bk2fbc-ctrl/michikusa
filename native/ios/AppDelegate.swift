@@ -26,6 +26,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
                                         object: error)
     }
 
+    // Firebase Messagingへ、バックグラウンドで受け取ったremote notificationを渡す。
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        NotificationCenter.default.post(name: Notification.Name("didReceiveRemoteNotification"),
+                                        object: completionHandler,
+                                        userInfo: userInfo)
+    }
+
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {

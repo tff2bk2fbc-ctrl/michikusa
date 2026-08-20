@@ -19,7 +19,9 @@ function grantedPermission(value){
 
 /** 初回説明画面からだけ呼ぶ。許可を求めることと、実データの取得を分ける。 */
 async function requestSpotaNotificationPermission(){
-  var P=plugin('PushNotifications');
+  // iOSでFCMへ送るには、APNs tokenではなくFirebase Messagingが発行する
+  // FCM registration tokenが必要。通知権限も同じpluginだけで扱う。
+  var P=plugin('FirebaseMessaging');
   if(isApp&&P){
     var state=await P.checkPermissions();
     if(state.receive==='prompt'||state.receive==='prompt-with-rationale')state=await P.requestPermissions();
@@ -232,8 +234,11 @@ async function setupPush(requestPermission){
     return {ok:code==='registered',code:code,message:message||''};
   }
   if(!isApp)return result('not_native','通知の端末登録はiPhoneアプリでのみ利用できます。');
-  var P=plugin('PushNotifications');
-  if(!P)return result('plugin_unavailable','通知機能を読み込めませんでした。アプリを更新して再試行してください。');
+  // @capacitor/push-notifications のiOS registrationイベントが返すのはAPNs
+  // tokenであり、FCM HTTP v1の宛先にはできない。Firebase Messagingから
+  // FCM registration tokenを取得できるビルドだけをサーバー登録する。
+  var P=plugin('FirebaseMessaging');
+  if(!P)return result('plugin_update_required','通知機能をFCM対応版へ更新してください。');
 
   var st;
   try{st=await P.checkPermissions();}
@@ -245,40 +250,40 @@ async function setupPush(requestPermission){
   }
   if(st.receive!=='granted')return result('permission_denied','iPhoneの「設定 → 通知 → spota」で通知を許可してから、もう一度お試しください。');
 
-  if(window.__spotaPushRegistration&&window.__spotaPushRegistration.remove){
-    try{await window.__spotaPushRegistration.remove();}catch(e){}
-  }
-  if(window.__spotaPushRegistrationError&&window.__spotaPushRegistrationError.remove){
-    try{await window.__spotaPushRegistrationError.remove();}catch(e){}
-  }
-  // registerより先にlistenerを置く。即時に返るAPNs tokenを取りこぼさない。
-  var registrationDone,settled=false,timeoutId=0;
-  var registrationReady=new Promise(function(resolve){
-    registrationDone=function(value){
-      if(settled)return;
-      settled=true;
-      if(timeoutId)clearTimeout(timeoutId);
-      resolve(value);
-    };
-  });
-  try{
-    window.__spotaPushRegistration=await P.addListener('registration',async function(t){
-      var token=String(t&&t.value||'');
-      if(!token){registrationDone(result('registration_error','Apple Push通知の端末トークンを取得できませんでした。アプリを再起動して再試行してください。'));return;}
+  async function saveFcmToken(rawToken){
+    var token=String(rawToken||'').trim();
+    if(!token)return result('fcm_token_unavailable','通知はオンですが、FCM通知先を取得できませんでした。アプリを再起動して再試行してください。');
+    var previous=window.__spotaPushToken;
+    if(!previous)try{previous=localStorage.getItem('spota_push_token');}catch(e){}
+    try{
+      var response=await api('/api/push/token',{method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token:token,platform:'ios'})});
+      if(!response.ok)return result('token_save_failed','通知はオンですが、サーバーへの端末登録に失敗しました。通信を確認して再試行してください。');
+      // 旧版が保存したAPNs tokenや、更新前のFCM tokenを残さない。
+      if(previous&&previous!==token){
+        try{await api('/api/push/token',{method:'DELETE',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({token:String(previous)})});}catch(e){}
+      }
       window.__spotaPushToken=token;
       try{localStorage.setItem('spota_push_token',token);}catch(e){}
-      // 設定がオンでも、このサーバー登録が完了しないとモニターは開始できない。
-      try{
-        var response=await api('/api/push/token',{method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({token:token,platform:'ios'})});
-        if(!response.ok){registrationDone(result('token_save_failed','通知はオンですが、サーバーへの端末登録に失敗しました。通信を確認して再試行してください。'));return;}
-        registrationDone(result('registered','通知先の端末登録が完了しました。'));
-      }catch(e){registrationDone(result('token_save_failed','通知はオンですが、サーバーへの端末登録に失敗しました。通信を確認して再試行してください。'));}
-    });
-    // 設定がオンでも、APNsの登録自体が失敗する場合がある（証明書・環境・通信など）。
-    window.__spotaPushRegistrationError=await P.addListener('registrationError',function(error){
-      registrationDone(result('registration_error','通知はオンですが、Apple Push通知への端末登録に失敗しました。アプリを再起動して再試行してください。'));
+      return result('registered','通知先の端末登録が完了しました。');
+    }catch(e){
+      return result('token_save_failed','通知はオンですが、サーバーへの端末登録に失敗しました。通信を確認して再試行してください。');
+    }
+  }
+
+  function notificationData(event){
+    var notification=event&&event.notification||event||{};
+    var data=notification&&notification.data||{};
+    return data&&typeof data==='object'?data:{};
+  }
+
+  try{
+    // FCM tokenは再インストール等で更新される。更新イベントも認証済みAPIへ保存する。
+    if(!window.__spotaFcmTokenReceived)window.__spotaFcmTokenReceived=await P.addListener('tokenReceived',function(event){
+      var token=String(event&&event.token||'').trim();
+      if(token)saveFcmToken(token);
     });
     async function receipt(data,event){
       var run=String(data&&data.monitor_run||'');
@@ -286,36 +291,26 @@ async function setupPush(requestPermission){
       try{await api('/api/monitor/receipt',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({run_id:run,event:event})});}catch(e){}
     }
-    if(!window.__spotaPushReceived)window.__spotaPushReceived=await P.addListener('pushNotificationReceived',function(notification){
-      var data=notification&&notification.data||{};
+    if(!window.__spotaPushReceived)window.__spotaPushReceived=await P.addListener('notificationReceived',function(event){
+      var data=notificationData(event);
       receipt(data,'received');
       if(data.monitor_run)setTip('通信確認の通知を受信しました');
     });
-    if(!window.__spotaPushAction)window.__spotaPushAction=await P.addListener('pushNotificationActionPerformed',function(ev){
+    if(!window.__spotaPushAction)window.__spotaPushAction=await P.addListener('notificationActionPerformed',function(ev){
       // Pushに正確な座標は入れない。通知種別から認証済み画面だけを開く。
-      var d=(ev&&ev.notification&&ev.notification.data)||{};
+      var d=notificationData(ev);
       receipt(d,'opened');
       if(d.conversation&&typeof openConversation==='function')openConversation(String(d.conversation),'メッセージ');
       else if(d.profile&&typeof openPublicProfile==='function')openPublicProfile(String(d.profile));
       else if(d.post&&typeof openSocialHub==='function')openSocialHub('timeline');
     });
-    timeoutId=setTimeout(function(){
-      registrationDone(result('registration_timeout','通知はオンですが、Apple Push通知の端末登録に時間がかかっています。アプリを再起動して再試行してください。'));
-    },8000);
-    try{await P.register();}
-    catch(e){registrationDone(result('registration_error','通知はオンですが、Apple Push通知への端末登録を開始できませんでした。アプリを再起動して再試行してください。'));}
-    var registered=await registrationReady;
-    if(window.__spotaPushRegistration&&window.__spotaPushRegistration.remove){
-      try{await window.__spotaPushRegistration.remove();}catch(e){}
-    }
-    if(window.__spotaPushRegistrationError&&window.__spotaPushRegistrationError.remove){
-      try{await window.__spotaPushRegistrationError.remove();}catch(e){}
-    }
-    window.__spotaPushRegistration=null;
-    window.__spotaPushRegistrationError=null;
-    return registered;
+    var timedOut=new Promise(function(resolve){setTimeout(function(){resolve(null);},8000);});
+    var tokenResult;
+    try{tokenResult=await Promise.race([P.getToken(),timedOut]);}
+    catch(e){return result('fcm_token_error','通知はオンですが、FCM通知先の取得に失敗しました。アプリを再起動して再試行してください。');}
+    if(!tokenResult)return result('registration_timeout','通知はオンですが、FCM通知先の取得に時間がかかっています。アプリを再起動して再試行してください。');
+    return saveFcmToken(tokenResult.token);
   }catch(e){
-    if(timeoutId)clearTimeout(timeoutId);
     return result('registration_setup_failed','通知の端末登録を開始できませんでした。アプリを再起動して再試行してください。');
   }
 }

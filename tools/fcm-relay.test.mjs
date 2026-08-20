@@ -69,3 +69,13 @@ test('relay reports only unregistered tokens for cleanup',async()=>{
   assert.equal(result.sent,1);
   assert.deepEqual(result.invalid_tokens,[token+'-bad']);
 });
+
+test('relay classifies a malformed FCM registration token without exposing the response body',async()=>{
+  const result=await sendFcmMessages([message()],env,
+    async()=>new Response(JSON.stringify({error:{status:'INVALID_ARGUMENT',message:'The registration token is not a valid FCM registration token'}}),{status:400}),
+    async()=> 'adc-token');
+  assert.equal(result.sent,0);
+  assert.equal(result.code,'invalid_registration');
+  assert.deepEqual(result.invalid_tokens,[token]);
+  assert.deepEqual(Object.keys(result).sort(),['code','invalid_tokens','sent']);
+});

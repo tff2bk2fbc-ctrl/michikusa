@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import test from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
-import {createMonitorArtifacts,cleanupCommunicationMonitors,fcmRelayConfigured,relaySignature} from '../src/index.js';
+import {createMonitorArtifacts,cleanupCommunicationMonitors,fcmRelayConfigured,relaySignature,isLegacyApnsToken} from '../src/index.js';
 
 const root=new URL('../',import.meta.url);
 const read=name=>readFileSync(new URL(name,root),'utf8');
@@ -89,7 +89,8 @@ test('communication monitor distinguishes FCM acceptance, receipt, open, and vis
   assert.match(worker,/X-Spota-Signature/);
   assert.match(worker,/relay_rate_limited/);
   for(const event of ['received','opened','confirmed'])assert.match(worker,new RegExp('"'+event+'"'));
-  assert.match(native,/pushNotificationReceived/);
+  assert.match(native,/notificationReceived/);
+  assert.match(native,/notificationActionPerformed/);
   assert.match(native,/receipt\(data,'received'\)/);
   assert.match(native,/receipt\(d,'opened'\)/);
   assert.match(sync,/通知が画面に見えた/);
@@ -97,6 +98,17 @@ test('communication monitor distinguishes FCM acceptance, receipt, open, and vis
   assert.ok(config.vars.FIREBASE_PROJECT_ID);
   assert.doesNotMatch(worker,/monitor_run[^\n]{0,160}\b(lat|lng)\b/i);
   assert.doesNotMatch(worker,/DELETE FROM post_likes WHERE user_id=\?/);
+});
+
+test('iOS APNs device tokens cannot be stored or forwarded as FCM registration tokens',()=>{
+  const worker=read('src/index.js');
+  assert.equal(isLegacyApnsToken('a'.repeat(64),'ios'),true);
+  assert.equal(isLegacyApnsToken('a'.repeat(64),'android'),false);
+  assert.equal(isLegacyApnsToken('fcm-token-'+'x'.repeat(80),'ios'),false);
+  assert.match(worker,/wrong_token_type/);
+  assert.match(worker,/const tokens = await pushTokensForUser\(env, userId\)/);
+  assert.match(worker,/token NOT GLOB '\*\[\^0-9A-Fa-f\]\*'/);
+  assert.match(worker,/DELETE FROM push_tokens WHERE token=\? AND user_id=\?/);
 });
 
 test('FCM relay requires HTTPS and signs a nonce-bound request without a service-account key',async()=>{

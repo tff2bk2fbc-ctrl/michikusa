@@ -87,7 +87,7 @@ async function getAccessToken() {
 function isInvalidRegistration(status, payload) {
   if (status === 404) return true;
   const text = JSON.stringify(payload || "");
-  return /UNREGISTERED|registration-token-not-registered/i.test(text);
+  return /UNREGISTERED|registration-token-not-registered|not a valid FCM registration token/i.test(text);
 }
 
 export async function sendFcmMessages(messages, env, fetchImpl = fetch, tokenProvider = getAccessToken) {
@@ -112,7 +112,8 @@ export async function sendFcmMessages(messages, env, fetchImpl = fetch, tokenPro
   }));
   const sent = results.filter(result => result.ok).length;
   const invalid_tokens = results.filter(result => result.invalid).map(result => result.token);
-  return {sent, code: sent ? "accepted" : "rejected", invalid_tokens};
+  const code = sent ? "accepted" : (invalid_tokens.length ? "invalid_registration" : "rejected");
+  return {sent, code, invalid_tokens};
 }
 
 export async function handleRelayRequest(request, env, options = {}) {

@@ -8,14 +8,31 @@ fi
 
 IOS_ROOT=$1
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+CAP_ROOT=$(CDPATH= cd -- "$IOS_ROOT/.." && pwd)
 APP_DIR="$IOS_ROOT/App/App"
 PROJECT="$IOS_ROOT/App/App.xcodeproj"
 PLIST="$APP_DIR/Info.plist"
+PACKAGE_JSON="$CAP_ROOT/package.json"
 
 if [ ! -d "$PROJECT" ] || [ ! -f "$PLIST" ]; then
   echo "Capacitor iOS project was not found under: $IOS_ROOT" >&2
   exit 2
 fi
+
+ruby -rjson - "$PACKAGE_JSON" <<'RUBY'
+path = ARGV.fetch(0)
+abort "Capacitor package.json was not found: #{path}" unless File.file?(path)
+package = JSON.parse(File.read(path))
+deps = (package["dependencies"] || {}).merge(package["devDependencies"] || {})
+unless deps.key?("@capacitor-firebase/messaging") && !deps.key?("@capacitor/push-notifications")
+  abort <<~MESSAGE
+    Replace the APNs-only iOS token plugin before applying the overlay:
+      cd #{File.dirname(path)}
+      npm uninstall @capacitor/push-notifications
+      npm install @capacitor-firebase/messaging@8.4.0 firebase
+  MESSAGE
+end
+RUBY
 
 cp "$SOURCE_DIR/DailyPhotoPlugin.swift" "$APP_DIR/DailyPhotoPlugin.swift"
 cp "$SOURCE_DIR/SpotaBridgeViewController.swift" "$APP_DIR/SpotaBridgeViewController.swift"
@@ -30,8 +47,16 @@ ARGV.each do |path|
   plugins = config["plugins"] ||= {}
   auth = plugins["FirebaseAuthentication"] ||= {}
   auth["providers"] = ["apple.com", "google.com"]
-  push = plugins["PushNotifications"] ||= {}
-  push["presentationOptions"] = ["badge", "sound", "alert"]
+  # iOSのPushNotifications pluginはAPNs tokenを返すため、FCM HTTP v1の
+  # 宛先登録にはFirebaseMessaging pluginを使用する。
+  plugins.delete("PushNotifications")
+  messaging = plugins["FirebaseMessaging"] ||= {}
+  messaging["presentationOptions"] = ["badge", "sound", "alert"]
+  experimental = config["experimental"] ||= {}
+  ios = experimental["ios"] ||= {}
+  spm = ios["spm"] ||= {}
+  options = spm["packageOptions"] ||= {}
+  options["@capacitor-firebase/messaging"] = {"symlink" => true}
   File.write(path, JSON.pretty_generate(config) + "\n")
 end
 RUBY
@@ -42,6 +67,11 @@ if ! "$PLIST_BUDDY" -c "Set :NSPhotoLibraryUsageDescription 選択した写真�
 fi
 if ! "$PLIST_BUDDY" -c "Set :UIRequiresFullScreen true" "$PLIST" 2>/dev/null; then
   "$PLIST_BUDDY" -c "Add :UIRequiresFullScreen bool true" "$PLIST"
+fi
+# 初回説明で利用者が通知を許可する前に、FCM identifierを自動発行・送信しない。
+# FirebaseMessaging.getToken()は、許可後の明示操作でauto-initを再度有効にする。
+if ! "$PLIST_BUDDY" -c "Set :FirebaseMessagingAutoInitEnabled false" "$PLIST" 2>/dev/null; then
+  "$PLIST_BUDDY" -c "Add :FirebaseMessagingAutoInitEnabled bool false" "$PLIST"
 fi
 "$PLIST_BUDDY" -c "Delete :UISupportedInterfaceOrientations" "$PLIST" 2>/dev/null || true
 "$PLIST_BUDDY" -c "Add :UISupportedInterfaceOrientations array" "$PLIST"
@@ -106,4 +136,4 @@ end
 File.write(path, text)
 RUBY
 
-echo "Applied Spota PhotoKit bridge, Apple Sign In, push presentation, and portrait-only configuration to $IOS_ROOT"
+echo "Applied Spota PhotoKit bridge, Apple Sign In, Firebase Messaging, push presentation, and portrait-only configuration to $IOS_ROOT"

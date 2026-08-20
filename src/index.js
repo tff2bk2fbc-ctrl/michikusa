@@ -60,7 +60,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-44"
+          build: "api-45"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
@@ -2893,7 +2893,7 @@ async function geocode(request, env) {
 // 実運用と同じSQL経路をローカル統合テストから直接検証する。
 export { friendRequest, geocode, putLike, deleteLike, listComments, createComment, flashPost,
   createReport, createMonitorArtifacts, cleanupCommunicationMonitors, processAccountDeletion,
-  fcmRelayConfigured, relaySignature };
+  fcmRelayConfigured, relaySignature, isLegacyApnsToken };
 
 async function reverseGeocode(request, env) {
   if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);
@@ -3336,6 +3336,28 @@ async function moderatePhotoRows(env, me, rows) {
   return true;
 }
 
+/** iOSのAPNs device tokenはFCM HTTP v1のmessage.tokenには使用できない。 */
+function isLegacyApnsToken(token, platform) {
+  return platform === "ios" && /^[0-9a-f]{64}$/i.test(String(token || ""));
+}
+
+async function pushTokensForUser(env, userId) {
+  const rows = await env.DB.prepare(
+    "SELECT token,platform FROM push_tokens WHERE user_id=? ORDER BY updated_at DESC LIMIT 8"
+  ).bind(userId).all();
+  const valid = [], legacy = [];
+  for (const row of rows.results || []) {
+    const token = String(row.token || "");
+    if (isLegacyApnsToken(token, row.platform)) legacy.push(token);
+    else if (token && token.length <= 4096 && !/\s/.test(token)) valid.push(token);
+  }
+  // 旧iOS版が誤って保存したAPNs形状の行だけを整理する。
+  for (const token of legacy)
+    await env.DB.prepare("DELETE FROM push_tokens WHERE token=? AND user_id=?")
+      .bind(token, userId).run();
+  return valid;
+}
+
 /** 通知の宛先を預かる */
 async function saveToken(request, env, me) {
   const parsed = await limitedJson(request, 8_000);
@@ -3343,15 +3365,24 @@ async function saveToken(request, env, me) {
   const b = parsed.value;
   const t = String(b.token || "").trim();
   if (!t || t.length > 4096 || /\s/.test(t)) return json({ error: "宛先が不正です" }, 400);
+  const platform = ["ios", "android", "web"].includes(b.platform) ? b.platform : "ios";
+  if (isLegacyApnsToken(t, platform))
+    return json({ error: "このアプリの通知登録方式を更新してください", code: "wrong_token_type" }, 400);
   if (!(await userLimit(env, me.id, "push-token-hour", hourKey(), 20))) {
     return json({ error: "登録回数が多すぎます" }, 429);
   }
-  const platform = ["ios", "android", "web"].includes(b.platform) ? b.platform : "ios";
   await env.DB.prepare(`
     INSERT INTO push_tokens (token, user_id, platform, updated_at)
     VALUES (?,?,?,?)
-    ON CONFLICT(token) DO UPDATE SET user_id=excluded.user_id, updated_at=excluded.updated_at
+    ON CONFLICT(token) DO UPDATE SET user_id=excluded.user_id,
+      platform=excluded.platform,updated_at=excluded.updated_at
   `).bind(t, me.id, platform, Date.now()).run();
+  // 正しいFCM token登録時に、同じ利用者の旧APNs形状tokenを除去する。
+  if (platform === "ios") await env.DB.prepare(`
+    DELETE FROM push_tokens
+     WHERE user_id=? AND platform='ios' AND token<>? AND length(token)=64
+       AND token NOT GLOB '*[^0-9A-Fa-f]*'
+  `).bind(me.id, t).run();
   // 1アカウント8端末まで。古い宛先を残してfan-outを増幅させない。
   await env.DB.prepare(`
     DELETE FROM push_tokens WHERE user_id=?1 AND token NOT IN (
@@ -3453,10 +3484,7 @@ async function sendPushDetailed(env, userId, title, body, data) {
     return { sent: 0, code: "rate_limited", token_count: 0 };
   if (!fcmRelayConfigured(env)) return { sent: 0, code: "fcm_not_configured", token_count: 0 };
 
-  const rows = await env.DB
-    .prepare("SELECT token FROM push_tokens WHERE user_id=? ORDER BY updated_at DESC LIMIT 8")
-    .bind(userId).all();
-  const tokens = (rows.results || []).map(function (r) { return r.token; });
+  const tokens = await pushTokensForUser(env, userId);
   if (!tokens.length) return { sent: 0, code: "device_not_registered", token_count: 0 };
 
   const messages = tokens.map(function (t) {
@@ -3469,7 +3497,9 @@ async function sendPushDetailed(env, userId, title, body, data) {
   });
   const result = await sendPushViaRelay(env, messages);
   for (const token of result.invalid_tokens || []) {
-    await env.DB.prepare("DELETE FROM push_tokens WHERE token=?").bind(token).run();
+    // 送信待ちの間にtokenが別アカウントへ再登録されても、現在の所有者を消さない。
+    await env.DB.prepare("DELETE FROM push_tokens WHERE token=? AND user_id=?")
+      .bind(token, userId).run();
   }
   return { sent: result.sent, code: result.code, token_count: result.token_count };
 }
@@ -3653,10 +3683,8 @@ async function runCommunicationMonitor(env, me) {
     WHERE user_id=? AND status IN ('running','push_accepted','received','opened','confirmed','failed')
       AND expires_at>? LIMIT 1`).bind(me.id, Date.now()).first();
   if (active) return json({ error: "通信モニターはすでに実行中です", run_id: active.id }, 409);
-  const tokenCount = await env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM push_tokens WHERE user_id=?"
-  ).bind(me.id).first();
-  if (!Number(tokenCount && tokenCount.n || 0))
+  const registeredTokens = await pushTokensForUser(env, me.id);
+  if (!registeredTokens.length)
     return json({ error: "この端末の通知先がまだ登録されていません", code: "device_not_registered" }, 409);
   if (!fcmRelayConfigured(env))
     return json({ error: "通知サーバーの設定が完了していません", code: "fcm_not_configured" }, 503);

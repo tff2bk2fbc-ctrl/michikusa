@@ -446,3 +446,14 @@ AIセキュリティ部署がリリースコミットを読み取り専用で再
 - 改行を含むSecret Manager値の回帰テストを追加し、relayテスト5/5、`npm audit --omit=dev`脆弱性0件、`git diff --check`成功。AIセキュリティ部署はCloud Runホットフィックスを`APPROVE`した。
 - Cloud Run revision `spota-fcm-relay-00003-fvs`を`asia-northeast1`へデプロイし、100%のトラフィックを切り替えた。旧URLとサービスURLの`/health`は200、署名なし`/send`は401、trimしたSecret Manager値による署名付き診断は200となった。
 - 実機で通知モニターを再実行し、FCM受付、端末受信、開封、画面上の目視確認を行う必要がある。ホットフィックスのGitHub pushは、このMacのGitHub CLI認証が未設定のためGitHub Desktopから行う。
+
+## 2026-08-19 FCM iOS token緊急対策本部
+
+- Cloud Run HMAC修正後も実機表示が変わらなかったため、本番通信・iOS端末・Google/Firebaseの三班と主担当で緊急調査した。
+- 最新D1 runは`relay_error`ではなく`rejected`、同時刻のCloud Run `/send`は200だった。通知先は値を表示せず形状だけ確認し、iOS、64文字、16進数のみだった。FCM `validate_only`は400 `INVALID_ARGUMENT`で、FCM registration tokenではないと判定した。
+- `@capacitor/push-notifications`はiOSでAPNs device tokenを返すが、旧`public/native.js`はそれをFCM tokenとして保存していた。三班がコード、実機D1、本番ログ、Firebase設定から同じ原因を独立に確定した。
+- iOSを`@capacitor-firebase/messaging@8.4.0`へ完全置換し、`getToken()`、`tokenReceived`、`notificationReceived`、`notificationActionPerformed`を使用するよう変更した。旧Push pluginとの併用を再現スクリプトで禁止し、AppDelegateへbackground通知転送を追加した。
+- Workerは64文字16進のiOS APNs形状tokenを保存拒否・送信除外・本人行だけ整理する。relayはFCMの無効registration token応答を機微情報なしで`invalid_registration`へ分類する。
+- ローカルXcodeプロジェクトへ依存置換、overlay、Capacitor syncを適用した。SwiftPMにFirebase Messagingが存在し旧Push pluginがないこと、Web資産3箇所が一致することを確認した。
+- 通知・認証・セキュリティ関連20件、relay 6/6、Xcode Simulator Debug buildが成功した。Web資産は`v124`、Worker healthは`api-45`へ更新した。
+- 実機でFCM受付・受信・開封・目視確認が成功するまでは、最終push／本番公開を保留する。詳細は`docs/SECURITY_PREFLIGHT_2026-08-19_FCM_TOKEN.md`に記録した。

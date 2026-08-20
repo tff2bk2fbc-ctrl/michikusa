@@ -23,7 +23,7 @@ test('初回案内は指定順で、現在版の規約同意だけを再利用�
   ]);
   assert.match(html,/id="onboarding" hidden/);
   assert.match(html,/id="onboarding-legal"/);
-  assert.ok(html.indexOf('/sync.js?v=123') < html.indexOf('/onboarding.js?v=123'));
+  assert.ok(html.indexOf('/sync.js?v=124') < html.indexOf('/onboarding.js?v=124'));
   assert.match(boot,/SPOTA_ONBOARDING_VERSION='2026-08-17\.1'/);
   const expected=['welcome()','permissionScreen(\'notification\'','permissionScreen(\'media\'',
     'permissionScreen(\'location\'','terms()','login()','profile()'];
@@ -55,8 +55,12 @@ test('OS権限と地図通信は説明後にだけ開始し、位置は規約同
   assert.match(sync,/async function syncDown\(\)\{\s*if\(window\.__spotaOnboardingActive\|\|window\.__spotaNeedsOnboarding\)return;/);
   assert.match(onboarding,/mapWasDeferred=window\.startSpotaMapAfterOnboarding\(\)/);
   const push=native.slice(native.indexOf('async function setupPush'),native.indexOf('\/\* ============================================================\n   起動したら'));
+  assert.doesNotMatch(native,/plugin\('PushNotifications'\)/);
   assert.match(push,/if\(!requestPermission\)return result\('permission_prompt'/);
-  assert.match(push,/registrationError/);
+  assert.match(push,/plugin\('FirebaseMessaging'\)/);
+  assert.match(push,/P\.getToken\(\)/);
+  assert.match(push,/tokenReceived/);
+  assert.doesNotMatch(push,/plugin\('PushNotifications'\)/);
   assert.match(push,/permission_denied/);
   assert.match(push,/token_save_failed/);
   assert.match(push,/registration_timeout/);
@@ -146,11 +150,27 @@ test('Appleログイン失敗時は秘密情報を出さず、再試行できる
   assert.doesNotMatch(onboarding,/error\.message/);
 });
 
-test('通知設定オンとAPNs/D1端末登録を分けてモニターへ伝える', async () => {
-  const [native,sync] = await Promise.all([read('public/native.js'),read('public/sync.js')]);
+test('通知設定オンとFCM/D1端末登録を分けてモニターへ伝える', async () => {
+  const [native,sync,installer,delegate] = await Promise.all([
+    read('public/native.js'),read('public/sync.js'),read('native/ios/apply-to-capacitor.sh'),
+    read('native/ios/AppDelegate.swift')
+  ]);
   const setup=native.slice(native.indexOf('async function setupPush'),native.indexOf('window.setupSpotaPush=setupPush'));
   assert.match(setup,/code==='registered'/);
-  assert.match(setup,/registration_error/);
+  assert.match(setup,/fcm_token_error/);
+  assert.match(setup,/tokenReceived/);
+  assert.match(setup,/notificationReceived/);
+  assert.match(setup,/notificationActionPerformed/);
+  assert.match(setup,/tokenResult\.token/);
+  assert.doesNotMatch(setup,/addListener\('registration'/);
+  assert.match(setup,/setTimeout\(function\(\)\{resolve\(null\);\},8000\)/);
+  assert.match(installer,/npm uninstall @capacitor\/push-notifications/);
+  assert.match(installer,/npm install @capacitor-firebase\/messaging@8\.4\.0 firebase/);
+  assert.match(installer,/plugins\.delete\("PushNotifications"\)/);
+  assert.match(installer,/options\["@capacitor-firebase\/messaging"\]/);
+  assert.match(installer,/FirebaseMessagingAutoInitEnabled false/);
+  assert.match(delegate,/didReceiveRemoteNotification userInfo/);
+  assert.match(delegate,/Notification\.Name\("didReceiveRemoteNotification"\)/);
   assert.match(setup,/token_save_failed/);
   assert.match(setup,/通知はオンですが/);
   assert.match(sync,/var push=window\.setupSpotaPush&&await window\.setupSpotaPush\(true\)/);
