@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Spota Data Atlas</title>
+  </head>
+  <body>
+    <main id="atlas-root" class="atlas-shell">
+      <header class="atlas-header">
+        <div>
+          <p class="atlas-kicker">SPOTA DATA ATLAS</p>
+          <h1>データの状態を静かに確認する</h1>
+          <p class="atlas-lead">写真と位置情報の品質を、個別データを表示せずに確認できます。</p>
+        </div>
+        <button id="refresh-button" class="atlas-button" type="button">更新</button>
+      </header>
+
+      <p id="mode-note" class="atlas-note">サンプル集計を表示しています。本番データには接続していません。</p>
+      <p id="atlas-status" class="atlas-status" role="status" aria-atomic="true">読み込み中です。</p>
+
+      <section aria-labelledby="summary-heading">
+        <div class="section-heading">
+          <h2 id="summary-heading">概要</h2>
+          <span id="generated-at" class="atlas-meta">更新日時を確認中</span>
+        </div>
+        <dl id="summary-grid" class="summary-grid" aria-busy="true"></dl>
+      </section>
+
+      <section aria-labelledby="details-heading">
+        <div class="section-heading">
+          <h2 id="details-heading">地域とデータソース</h2>
+          <span class="atlas-meta">集計値のみ</span>
+        </div>
+        <div id="details-content" class="details-grid" aria-busy="true">
+          <p class="atlas-placeholder">詳細を読み込んでいます。</p>
+        </div>
+      </section>
+
+      <p class="atlas-footnote">この画面は運営者向けの読み取り専用PoCです。写真原本、EXIF、正確な座標、ユーザー識別子は扱いません。</p>
+    </main>
+    <script type="module" src="/src/mcp-app.ts"></script>
+  </body>
+</html>

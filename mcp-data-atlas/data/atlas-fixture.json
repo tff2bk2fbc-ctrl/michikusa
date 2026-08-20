@@ -1,0 +1,41 @@
+{
+  "mode": "fixture",
+  "generatedAt": "2026-08-20T00:00:00.000Z",
+  "summary": {
+    "photoRecords": 1240,
+    "publicLocationRecords": 980,
+    "missingLocationRecords": 44,
+    "uploadFailures": 3,
+    "moderationPending": 12
+  },
+  "regions": [
+    { "label": "北海道", "records": 180, "qualityAlerts": 4 },
+    { "label": "関東", "records": 620, "qualityAlerts": 11 },
+    { "label": "中部", "records": 220, "qualityAlerts": 6 },
+    { "label": "近畿", "records": 140, "qualityAlerts": 3 },
+    { "label": "九州・沖縄", "records": 80, "qualityAlerts": 2 }
+  ],
+  "sources": [
+    {
+      "id": "mlit-n03",
+      "name": "行政区域 N03",
+      "status": "ready",
+      "license": "CC BY 4.0",
+      "lastChecked": "2026-08-19"
+    },
+    {
+      "id": "digital-agency-abr",
+      "name": "アドレス・ベース・レジストリ",
+      "status": "ready",
+      "license": "CC BY 4.0",
+      "lastChecked": "2026-08-19"
+    },
+    {
+      "id": "railway-n02",
+      "name": "鉄道 N02",
+      "status": "review",
+      "license": "年度別確認",
+      "lastChecked": "2026-08-18"
+    }
+  ]
+}
