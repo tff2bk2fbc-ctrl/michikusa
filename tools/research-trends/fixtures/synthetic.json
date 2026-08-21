@@ -1,0 +1,64 @@
+{
+  "places": [
+    {
+      "place_id": "fixture-place-a",
+      "name": "合成スポットA",
+      "normalized_name": "synthetic-spot-a",
+      "prefecture": "合成県",
+      "municipality": "合成市",
+      "category": "scenic",
+      "coarse_lat": 35.6,
+      "coarse_lng": 139.7,
+      "source_id": "fixture-place-master",
+      "license_version": "synthetic-v1",
+      "generated_at": "2026-08-21T00:00:00.000Z",
+      "expires_at": "2026-08-28T00:00:00.000Z"
+    },
+    {
+      "place_id": "fixture-place-b",
+      "name": "合成スポットB",
+      "normalized_name": "synthetic-spot-b",
+      "prefecture": "合成県",
+      "municipality": "試験町",
+      "category": "museum",
+      "coarse_lat": 36.1,
+      "coarse_lng": 140.1,
+      "source_id": "fixture-place-master",
+      "license_version": "synthetic-v1",
+      "generated_at": "2026-08-21T00:00:00.000Z",
+      "expires_at": "2026-08-28T00:00:00.000Z"
+    }
+  ],
+  "news": [
+    {
+      "coarse_region": "synthetic-region-a",
+      "topic_key": "synthetic-topic-a",
+      "bucket_start": "2026-08-20T00:00:00.000Z",
+      "bucket_end": "2026-08-21T00:00:00.000Z",
+      "article_count": 42,
+      "sample_size": 70,
+      "tone_average": 4.2,
+      "cause_category": "event_signal",
+      "confidence": "medium",
+      "source_id": "fixture-gdelt-aggregate",
+      "license_version": "synthetic-v1",
+      "generated_at": "2026-08-21T00:00:00.000Z",
+      "expires_at": "2026-08-28T00:00:00.000Z"
+    }
+  ],
+  "search_interest": [
+    {
+      "keyword_key": "synthetic-keyword-a",
+      "coarse_region": "synthetic-region-a",
+      "time_bucket": "2026-W34",
+      "interest_value": 73.5,
+      "interest_scale": "provider_relative",
+      "sample_size": 80,
+      "confidence": "medium",
+      "source_id": "fixture-search-interest",
+      "license_version": "synthetic-v1",
+      "generated_at": "2026-08-21T00:00:00.000Z",
+      "expires_at": "2026-08-28T00:00:00.000Z"
+    }
+  ]
+}
