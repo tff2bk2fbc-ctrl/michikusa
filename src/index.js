@@ -75,6 +75,11 @@ export default {
         return respond(await getSharedPhoto(sharedPhotoRoute[1], sharedPhotoRoute[2], sharedPhotoRoute[3], request, env));
       if (p.startsWith("/api/share/") && request.method === "GET")
         return respond(await resolveShareLink(p.slice("/api/share/".length), request, env));
+      // 運営者が手動確認して公開した、地図検索用の短い急上昇ワードだけを返す。
+      // 外部のトレンド画面・利用者情報・監査情報は一切ここから返さない。
+      if (p === "/api/public/map-trends" && request.method === "GET")
+        return respond(await publicMapTrends(env));
+      if (p === "/api/public/map-trends") return respond(json({ error: "GETだけです" }, 405));
 
       // 認証処理より前にmethodを固定し、非POST bodyで申請処理へ到達させない。
       if (p === "/api/friends" && request.method !== "GET")
@@ -85,6 +90,16 @@ export default {
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
       if (!me) return respond(json({ error: "ログインが必要です" }, 401));
+
+      // 運営者用の入口は、表示を隠すだけでなく必ずサーバーでUID許可リストを照合する。
+      // 認可済みユーザーだけが、公開中の急上昇ワードの読み書きに到達できる。
+      if (p === "/api/admin/map-trends") {
+        if (!(await isMapTrendEditor(env, me)))
+          return respond(json({ error: "運営者権限が必要です" }, 403));
+        if (request.method === "GET") return respond(await getMapTrendEditorTerms(env));
+        if (request.method === "PUT") return respond(await replaceMapTrendTerms(request, env, me));
+        return respond(json({ error: "GETまたはPUTだけです" }, 405));
+      }
 
       if (p === "/api/wiki/search" && request.method === "POST")
         return respond(await wikipediaSearch(request, env, me));
@@ -381,8 +396,9 @@ async function authenticate(request, env) {
     .bind(provider, uid).first();
 
   if (found) {
-    return await env.DB.prepare("SELECT * FROM users WHERE id=? AND deleted_at IS NULL")
+    const user = await env.DB.prepare("SELECT * FROM users WHERE id=? AND deleted_at IS NULL")
       .bind(found.user_id).first();
+    return attachFirebaseUid(user, uid);
   }
 
   // Firebase削除直後も、発行済みID tokenは最大1時間ほど端末に残り得る。
@@ -405,7 +421,19 @@ async function authenticate(request, env) {
       "INSERT INTO identities (user_id, provider, provider_uid, email, phone, created_at) VALUES (?,?,?,?,?,?)"
     ).bind(userId, provider, uid, payload.email || null, payload.phone_number || null, now)
   ]);
-  return await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(userId).first();
+  return attachFirebaseUid(await env.DB.prepare("SELECT * FROM users WHERE id=?").bind(userId).first(), uid);
+}
+
+/**
+ * Firebase UIDは権限照合のためだけに、サーバー内のユーザー行へ付与する。
+ * enumerable にしないことで、既存のレスポンスで誤ってシリアライズされない。
+ */
+function attachFirebaseUid(user, firebaseUid) {
+  if (!user || !firebaseUid) return user || null;
+  Object.defineProperty(user, "_firebase_uid", {
+    value: String(firebaseUid), enumerable: false, configurable: false, writable: false
+  });
+  return user;
 }
 
 
@@ -452,6 +480,136 @@ async function getMe(env, me) {
       profile_public:     !!me.profile_public
     }
   };
+}
+
+/* ============================================================
+   運営者が手動公開する「急上昇ワード」
+
+   Google Trendsなどの画面を自動取得しない。運営者が確認した最大3件を
+   D1に保存し、公開読み取りと編集読み書きを別経路にする。
+   ============================================================ */
+
+const MAP_TREND_LIMIT = 3;
+
+function mapTrendText(value, max) {
+  const text = String(value == null ? "" : value).trim().replace(/\s+/g, " ");
+  if (!text || text.length > max || /[\u0000-\u001f\u007f]/.test(text)) return null;
+  return text;
+}
+
+function validTrendDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(value + "T00:00:00Z");
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function normalizeMapTrendTerms(value) {
+  if (!Array.isArray(value)) return { error: "急上昇ワードの形式が不正です" };
+  if (value.length > MAP_TREND_LIMIT) return { error: "急上昇ワードは3件までです" };
+
+  const terms = [];
+  const seen = new Set();
+  for (let index = 0; index < value.length; index++) {
+    const raw = value[index];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+      return { error: "急上昇ワードの形式が不正です" };
+    const label = mapTrendText(raw.label, 48);
+    const query = mapTrendText(raw.query, 80);
+    const sourceLabel = mapTrendText(raw.source_label || "Google Trends 手動確認", 48);
+    const observedOn = mapTrendText(raw.observed_on || "", 10);
+    const completelyBlank = !String(raw.label || "").trim() && !String(raw.query || "").trim() &&
+      !String(raw.observed_on || "").trim();
+    if (completelyBlank) continue;
+    if (!label || !query || !sourceLabel || !observedOn || !validTrendDate(observedOn))
+      return { error: "表示名・検索語・確認日を正しく入力してください" };
+    const key = label.normalize("NFKC").toLocaleLowerCase("ja-JP");
+    if (seen.has(key)) return { error: "同じ表示名は1回だけ登録できます" };
+    seen.add(key);
+    terms.push({ label, query, source_label: sourceLabel, observed_on: observedOn });
+  }
+  return { value: terms };
+}
+
+/** Firebase ID tokenから得たUIDを、D1の明示許可リストで二次照合する。 */
+async function isMapTrendEditor(env, me) {
+  const firebaseUid = me && me._firebase_uid;
+  if (!firebaseUid) return false;
+  try {
+    const row = await env.DB.prepare(`
+      SELECT role FROM trend_admins
+       WHERE firebase_uid=? AND enabled=1 AND revoked_at IS NULL
+       LIMIT 1
+    `).bind(firebaseUid).first();
+    return !!(row && row.role === "trend_editor");
+  } catch (_) {
+    // migration未適用時を含め、権限を推測して許可しない。
+    return false;
+  }
+}
+
+async function publicMapTrends(env) {
+  try {
+    const rows = await env.DB.prepare(`
+      SELECT slot,label,query FROM map_trend_terms
+       ORDER BY slot ASC LIMIT ?
+    `).bind(MAP_TREND_LIMIT).all();
+    const terms = (rows.results || []).map(function (row) {
+      return { slot: Number(row.slot), label: String(row.label), query: String(row.query) };
+    });
+    return publicJson({ terms });
+  } catch (_) {
+    // 公開帯を隠すだけで、地図本体や位置情報の表示を止めない。
+    return publicJson({ terms: [] });
+  }
+}
+
+async function getMapTrendEditorTerms(env) {
+  try {
+    const rows = await env.DB.prepare(`
+      SELECT slot,label,query,source_label,observed_on,updated_at
+        FROM map_trend_terms ORDER BY slot ASC LIMIT ?
+    `).bind(MAP_TREND_LIMIT).all();
+    return json({ terms: rows.results || [] });
+  } catch (error) {
+    console.error("map trend editor read failed", safeLogError(error));
+    return json({ error: "運営者データを読み込めませんでした" }, 503);
+  }
+}
+
+async function replaceMapTrendTerms(request, env, me) {
+  const parsed = await limitedJson(request, 4_000);
+  if (parsed.error) return parsed.error;
+  const normalized = normalizeMapTrendTerms(parsed.value.terms);
+  if (normalized.error) return json({ error: normalized.error }, 400);
+  if (!(await userLimit(env, me.id, "map-trend-editor-hour", hourKey(), 20)))
+    return json({ error: "保存回数が多すぎます。少し待ってから再試行してください" }, 429);
+
+  const now = Date.now();
+  const terms = normalized.value;
+  const statements = [env.DB.prepare("DELETE FROM map_trend_terms")];
+  terms.forEach(function (term, index) {
+    statements.push(env.DB.prepare(`
+      INSERT INTO map_trend_terms
+        (slot,label,query,source_label,observed_on,updated_by_firebase_uid,updated_at)
+      VALUES (?,?,?,?,?,?,?)
+    `).bind(index + 1, term.label, term.query, term.source_label, term.observed_on,
+      me._firebase_uid, now));
+  });
+  statements.push(env.DB.prepare(`
+    INSERT INTO map_trend_audit (id,firebase_uid,action,entry_count,created_at)
+    VALUES (?,?,?,?,?)
+  `).bind(uuid(), me._firebase_uid, "replace", terms.length, now));
+
+  try {
+    await env.DB.batch(statements);
+    return json({ ok: true, terms: terms.map(function (term, index) {
+      return { slot: index + 1, label: term.label, query: term.query,
+        source_label: term.source_label, observed_on: term.observed_on, updated_at: now };
+    }) });
+  } catch (error) {
+    console.error("map trend editor write failed", safeLogError(error));
+    return json({ error: "運営者データを保存できませんでした" }, 503);
+  }
 }
 
 async function patchMe(request, env, me) {
@@ -2752,6 +2910,14 @@ function json(obj, status) {
   });
 }
 
+/** 公開してよい少量データだけを短時間キャッシュする。認証済みレスポンスには使わない。 */
+function publicJson(obj) {
+  const res = json(obj);
+  const headers = new Headers(res.headers);
+  headers.set("Cache-Control", "public, max-age=300, s-maxage=300, stale-while-revalidate=60");
+  return new Response(res.body, { status: res.status, headers });
+}
+
 function cors(res, request) {
   const h = new Headers(res.headers);
   const origin = request.headers.get("Origin");
@@ -2950,7 +3116,9 @@ async function geocode(request, env) {
 // 実運用と同じSQL経路をローカル統合テストから直接検証する。
 export { friendRequest, geocode, putLike, deleteLike, listComments, createComment, flashPost,
   createReport, createMonitorArtifacts, cleanupCommunicationMonitors, processAccountDeletion,
-  fcmRelayConfigured, relaySignature, isLegacyApnsToken, wikipediaApiEnabled };
+  fcmRelayConfigured, relaySignature, isLegacyApnsToken, wikipediaApiEnabled,
+  isMapTrendEditor, normalizeMapTrendTerms, publicMapTrends, getMapTrendEditorTerms,
+  replaceMapTrendTerms };
 
 async function reverseGeocode(request, env) {
   if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);

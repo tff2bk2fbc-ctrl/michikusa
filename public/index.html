@@ -42,6 +42,11 @@
 
 <div id="map"></div>
 
+<section class="map-trend-strip" id="map-trend-strip" aria-label="急上昇ワード" hidden>
+  <span class="map-trend-caption">急上昇</span>
+  <div class="map-trend-list" id="map-trend-list"></div>
+</section>
+
 <div class="top">
   <div class="q">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>
@@ -143,12 +148,13 @@
 <script src="/motion.js?v=124"></script>  <!-- 待機表示・写真・現在地の動き -->
 <script src="/map.js?v=124"></script>     <!-- 地図・配色・ピン -->
 <script src="/place.js?v=124"></script>   <!-- 場所のシート・写真を開く -->
-<script src="/data.js?v=124"></script>    <!-- 自前DBの取り込み・明示的な地名検索 -->
+<script src="/data.js?v=125"></script>    <!-- 自前DBの取り込み・明示的な地名検索 -->
 <script src="/native.js?v=124"></script>  <!-- カメラ・現在地・通知 -->
 <script src="/post.js?v=124"></script>    <!-- 記録する・思い出アルバム -->
 <script src="/sync.js?v=124"></script>    <!-- サーバー保存・タグ・ログイン -->
 <script src="/onboarding.js?v=124"></script><!-- 初回起動・権限・規約・ログイン -->
 <script src="/release.js?v=124"></script> <!-- 公開地図・アルバム・タイムライン・プロフィール -->
+<script src="/operator.js?v=125"></script><!-- 許可済み運営者だけの急上昇ワード編集 -->
 <script src="/ui.js?v=124"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
 </body>
 </html>

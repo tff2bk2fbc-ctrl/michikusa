@@ -66,6 +66,52 @@ async function loadOurs(){
 const qEl=document.getElementById('q'),resEl=document.getElementById('results'),
       qx=document.getElementById('qx');
 let qT=null;
+
+/* 地図の検索欄の上に出す、運営者が手動確認した急上昇ワード。
+   外部トレンド画面を端末から読まず、公開用の小さな読み取りAPIだけを使う。 */
+const mapTrendStrip=document.getElementById('map-trend-strip'),
+      mapTrendList=document.getElementById('map-trend-list');
+let mapTrendTerms=[];
+
+function mapTrendFlame(){
+  var ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg'),path=document.createElementNS(ns,'path');
+  svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');
+  svg.setAttribute('stroke-width','1.9');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');
+  svg.setAttribute('aria-hidden','true');svg.setAttribute('focusable','false');
+  path.setAttribute('d','M12 21c4 0 6.5-2.7 6.5-6.4 0-3-1.8-5-4.4-7.5.2 2.5-1 4.1-2.6 5.1.1-3-1.3-5-3.4-6.7.2 4-4.2 5.6-4.2 10.1C3.9 18.9 7.1 21 12 21Z');
+  svg.appendChild(path);return svg;
+}
+
+function drawMapTrends(terms){
+  if(!mapTrendStrip||!mapTrendList)return;
+  mapTrendTerms=(Array.isArray(terms)?terms:[]).filter(function(term){
+    return term&&typeof term.label==='string'&&typeof term.query==='string'&&term.label.trim()&&term.query.trim();
+  }).slice(0,3);
+  mapTrendList.replaceChildren();
+  mapTrendTerms.forEach(function(term){
+    var button=document.createElement('button'),label=document.createElement('span');
+    button.type='button';button.className='map-trend-chip';button.setAttribute('aria-label','急上昇ワード「'+term.label.trim()+'」を検索');
+    button.appendChild(mapTrendFlame());label.textContent=term.label.trim();button.appendChild(label);
+    button.onclick=function(){
+      var query=term.query.trim();if(!query)return;
+      qEl.value=query;qx.style.display='block';resEl.classList.remove('on');qEl.blur();search(query,true);
+    };
+    mapTrendList.appendChild(button);
+  });
+  mapTrendStrip.hidden=!mapTrendTerms.length;
+  document.body.classList.toggle('has-map-trends',!!mapTrendTerms.length);
+}
+
+async function loadMapTrends(){
+  if(!mapTrendStrip||!mapTrendList)return;
+  try{
+    var response=await fetch(SERVER+'/api/public/map-trends',{headers:{'Accept':'application/json'}});
+    if(!response.ok)throw new Error('map trends '+response.status);
+    var data=await response.json();drawMapTrends(data&&data.terms);
+  }catch(e){drawMapTrends([]);}
+}
+void loadMapTrends();
+
 qEl.oninput=function(){
   qx.style.display=qEl.value?'block':'none';
   clearTimeout(qT); var v=qEl.value.trim();

@@ -1165,6 +1165,7 @@ function openMe(){
     '<div class="me-section">アカウント</div>'+
     '<button class="me-row" id="communication-monitor">通信モニター<small>投稿・DM・通知を確認　›</small></button>'+
     '<button class="me-row" id="push-test">通知を試す<small>›</small></button>'+
+    '<div id="trend-operator-entry" hidden></div>'+
     '<button class="me-row" id="account-delete" style="color:var(--warn)">アカウントを削除<small>›</small></button>'+
     '<button class="me-row" id="out" style="color:var(--warn)">ログアウト</button></div></div>';
 
@@ -1177,6 +1178,7 @@ function openMe(){
   s.querySelector('#out').onclick=function(){ doLogout(); closeSheet(); };
   s.querySelector('#account-delete').onclick=function(){closeSheet();openAccountDeletion();};
   s.querySelector('#communication-monitor').onclick=function(){closeSheet();openCommunicationMonitor();};
+  if(typeof window.mountTrendOperatorEntry==='function')window.mountTrendOperatorEntry(s);
   var pt=s.querySelector('#push-test');
   if(pt)pt.onclick=async function(){
     pt.textContent='送っています…';
