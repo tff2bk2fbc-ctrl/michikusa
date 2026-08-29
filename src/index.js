@@ -19,6 +19,12 @@
  */
 
 import { fetchWikipediaPlaceSearch, WikipediaApiError } from "./lib/wikipedia.js";
+import {
+  MAP_PLACE_ATTRIBUTIONS,
+  MAX_MAP_PLACE_BOUNDS_DEGREES,
+  MAX_MAP_PLACE_RESULTS,
+  queryOpenMapPlaces
+} from "./lib/map-places.js";
 
 const JWKS = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const POSTAL_CODE_API = "https://jp-postal-code-api.ttskch.com/api/v1/";
@@ -62,12 +68,15 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-46"
+          build: "api-47"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
         return respond(await nearbyPlaces(request, env));
       if (p === "/api/places") return respond(json({ error: "POSTだけです" }, 405));
+      if (p === "/api/map/places" && request.method === "POST")
+        return respond(await openMapPlaces(request, env));
+      if (p === "/api/map/places") return respond(json({ error: "POSTだけです" }, 405));
       if (p === "/api/geocode")   return respond(await geocode(request, env));
       if (p === "/api/reverse")   return respond(await reverseGeocode(request, env));
       const sharedPhotoRoute = /^\/api\/share\/([A-Za-z0-9_-]{20,120})\/photo\/([A-Za-z0-9_-]{8,80})\/(thumb|view)$/.exec(p);
@@ -2824,6 +2833,13 @@ async function burstLimit(env, bindingName, key) {
   }
 }
 
+/** 公開・高コスト経路はbinding欠落時も通さず、設定漏れをfail closedにする。 */
+async function requiredBurstLimit(env, bindingName, key) {
+  const binding = env[bindingName];
+  if (!binding || typeof binding.limit !== "function") return false;
+  return burstLimit(env, bindingName, key);
+}
+
 function socialReadLimit(env, me, scope) {
   return burstLimit(env, "SOCIAL_READ_RATE_LIMITER", `${me.id}:${scope}`);
 }
@@ -2860,6 +2876,8 @@ async function cleanupTransientConfig(env) {
       .bind("reverse_global_day_" + today),
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'places_global_day_%' AND k<>?")
       .bind("places_global_day_" + today),
+    env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'map_places_global_day_%' AND k<>?")
+      .bind("map_places_global_day_" + today),
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'friend_request_global_day_%' AND k<>?")
       .bind("friend_request_global_day_" + today),
     env.DB.prepare("DELETE FROM app_config WHERE k LIKE 'friend_accept_global_day_%' AND k<>?")
@@ -3365,6 +3383,46 @@ async function nearbyPlaces(request, env) {
     };
   });
   return json({ count: out.length, places: out });
+}
+
+/**
+ * ダウンロード済みの公開オープンデータだけを返す地図用経路。
+ * 利用者投稿や由来未確認のlegacy placesは混ぜず、Google Driveも直接読まない。
+ */
+async function openMapPlaces(request, env) {
+  const parsed = await limitedJson(request, 512);
+  if (parsed.error) return parsed.error;
+  const body = parsed.value;
+  const bounds = { s: Number(body.s), w: Number(body.w), n: Number(body.n), e: Number(body.e) };
+  const { s, w, n, e } = bounds;
+  if (![s, w, n, e].every(Number.isFinite) ||
+      s < -90 || n > 90 || w < -180 || e > 180 || s > n || w > e ||
+      n - s > MAX_MAP_PLACE_BOUNDS_DEGREES || e - w > MAX_MAP_PLACE_BOUNDS_DEGREES) {
+    return json({ error: "地図の表示範囲が不正です" }, 400);
+  }
+  const client = await clientRateId(request);
+  // D1カウンターへ書く前にclient/global双方の瞬間burstを止める。
+  if (!(await requiredBurstLimit(env, "MAP_PLACES_RATE_LIMITER", client)) ||
+      !(await requiredBurstLimit(env, "MAP_PLACES_GLOBAL_RATE_LIMITER", "map-places-global")) ||
+      !(await userLimit(env, client, "map-places-hour", hourKey(), 600)) ||
+      !(await userLimit(env, client, "map-places-day", dayKey(), 5000)) ||
+      !(await atomicLimit(env, "map_places_global_day_" + dayKey(), 200_000, 1))) {
+    return json({ error: "地図データの読み込み回数が多すぎます" }, 429);
+  }
+  const requested = Number(body.limit || 120);
+  const limit = Number.isFinite(requested)
+    ? Math.max(1, Math.min(MAX_MAP_PLACE_RESULTS, Math.trunc(requested))) : 120;
+  const result = await queryOpenMapPlaces(env, bounds, limit);
+  const response = json({
+    version: "2026-08-29",
+    count: result.places.length,
+    truncated: result.truncated,
+    places: result.places,
+    attributions: MAP_PLACE_ATTRIBUTIONS
+  });
+  const headers = new Headers(response.headers);
+  headers.set("Cache-Control", "private, no-store");
+  return new Response(response.body, { status: response.status, headers });
 }
 
 /* ============================================================

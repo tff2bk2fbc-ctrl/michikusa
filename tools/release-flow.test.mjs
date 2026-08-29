@@ -471,13 +471,34 @@ test('daily PhotoKit bridge keeps candidates local until the user accepts', asyn
 
 test('iOS native overlay is reproducible from the GitHub checkout', async () => {
   const scene = await read('native/ios/SceneDelegate.swift');
+  const bridge = await read('native/ios/SpotaBridgeViewController.swift');
+  const boot = await read('public/boot.js');
   const installer = await read('native/ios/apply-to-capacitor.sh');
   assert.match(scene, /rootViewController = SpotaBridgeViewController\(\)/);
+  assert.match(bridge, /UIImage\(named: "Splash"\)/);
+  assert.match(bridge, /evaluateJavaScript\("Boolean\(window\.__spotaNativeVisualReady\)"\)/);
+  assert.match(bridge, /scheduleStartupPoll\(for: webView\)/);
+  assert.match(bridge, /DispatchWorkItem \{ \[weak self\]/);
+  assert.match(bridge, /\.now\(\) \+ 12/);
+  assert.match(bridge, /UIAccessibility\.isReduceMotionEnabled/);
+  assert.match(bridge, /isUserInteractionEnabled = true/);
+  assert.match(bridge, /isAccessibilityElement = true/);
+  assert.match(bridge, /accessibilityLabel = "Spotaを読み込んでいます"/);
+  assert.match(bridge, /accessibilityViewIsModal = true/);
+  assert.match(bridge, /UIAccessibility\.post\(notification: \.screenChanged/);
+  assert.doesNotMatch(bridge, /navigationDelegate\s*=/);
+  assert.match(boot, /window\.__spotaNativeVisualReady=false/);
+  assert.match(boot, /requestAnimationFrame\(function\(\)\{[\s\S]*requestAnimationFrame\(function\(\)\{[\s\S]*__spotaNativeVisualReady=true/);
   assert.match(installer, /DailyPhotoPlugin\.swift/);
   assert.match(installer, /SpotaBridgeViewController\.swift/);
   assert.match(installer, /UIInterfaceOrientationPortrait/);
   assert.match(installer, /PBXSourcesBuildPhase/);
   assert.match(installer, /File\.write\(path, text\)/);
+  assert.match(installer, /config\["appId"\] == "com\.damo\.michikusa"/);
+  assert.match(installer, /config\["webDir"\] == "public"/);
+  assert.match(installer, /FIREBASE_CONFIG="\$APP_DIR\/GoogleService-Info\.plist"/);
+  assert.match(installer, /if \[ ! -f "\$FIREBASE_CONFIG" \]/);
+  assert.match(installer, /rsync -a --delete "\$WEB_SOURCE\/" "\$CAP_ROOT\/public\/"/);
   assert.doesNotMatch(installer, /require ['"]xcodeproj['"]/);
 });
 

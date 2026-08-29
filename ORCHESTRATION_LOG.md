@@ -466,3 +466,20 @@ AIセキュリティ部署がリリースコミットを読み取り専用で再
 - Wikipedia通信は認証、回数制限、応答上限、固定接続先を備えるが、公開時の `WIKIPEDIA_API_STATE` は `disabled` とした。調査アダプターは本番アプリから自動実行されず、外部APIキーをリポジトリへ保存しない。
 - `npm run check` は121/121成功、FCM relayの本番依存監査は脆弱性0件、`git diff --check`、秘密情報・危険DOM sinkの追加差分検査、Wrangler 4.127.1 dry-run（39 assets、Worker bindings解決）が成功した。
 - セキュリティ判定は `APPROVE`。`main` のfast-forward、GitHub push、Cloudflare公開後に、公開トレンド200、管理API未認証401、Wikipedia無効化、本番healthを再確認する。
+
+## 2026-08-29 iOS起動・地図オープンデータ緊急確認
+
+- iOS起動、地理データ棚卸、地図接続・セキュリティの3担当へ分割し、主担当が本番D1の読み取り値、実装、Simulator、remote previewを再検証した。
+- 最新ソースはXcode 26.4／iPhone 17 Simulatorでbuild、install、launch、WebView main frame読込に成功し、クラッシュを再現しなかった。実機の既存ログはWebKit補助プロセス停止とLTE経路のTLS証明書不一致を示し、署名・provisioning・capabilityの起動阻害は確認されなかった。
+- Xcode側に古いWeb資産が残る手順不備を修正し、リポジトリ`public/`の完全同期、Firebase早期初期化、通知音Resources、表示名正規化を自動化した。実際のXcodeプロジェクトにも適用済み。
+- Wikipediaは未投入ではなく、本番9地域D1に117,571件が存在した。全地域で生成予定件数と一致したが、従来の表示APIが読んでいなかったため地図に出ていなかった。
+- 利用者投稿・legacyデータ・Google Driveを除外した`POST /api/map/places`を追加し、Wikipedia、国交省N02駅、GeoNamesを範囲・件数・地域D1・回数制限付きで返す。東京・札幌・那覇の本番D1 remote previewは3/3成功。
+- 生成済みWikipedia 117,571座標を全走査し、地域D1選択の未カバー0件を確認。クライアントは最大48セル・1,200地点へ制限し、安定IDと緯度経度を含む重複判定へ修正した。
+- OSM 2.5GB PBF、Wikivoyage、追加分類ダンプ、JAPAN 47 GOは未接続。原本の直接配信はせず、ライセンス・非公開地点・重複・容量を検査する軽量変換後に段階導入する。
+- 詳細は`docs/MAP_DATA_AND_IOS_VALIDATION_2026-08-29.md`。この時点ではGitHub pushとCloudflare本番deployは行っていない。
+- セキュリティ二次監査で、D1前の短時間burst制限不足をHigh、未知providerの誤帰属とiOS同期対象の未照合をMediumとして一度BLOCKした。client/global Rate Limiting binding、binding欠落時fail-closed、SQL/mapper二重allowlist、期限切れcounter cleanup、Capacitor appId/webDir preflightを追加し、独立再監査でCritical/High/Medium 0の`APPROVE`へ更新した。
+- 初回調査ではWebView navigation完了後、初期画面の描画前にネイティブ画面を外して白画面が入ることを1・3・6・10秒撮影で再現した。`estimatedProgress`だけでは表示準備を判定できないため、その試作を採用せずやり直した。
+- 最終実装はLaunchScreenと同じ画像をネイティブで保持し、`boot.js`がparser完了後に2回の描画機会を終えた合図を返してから外す。12秒のfail-safe、0.1秒間隔の短期poll、Reduce Motion対応を実装した。
+- 独立再監査で、不透明な起動画面の背後へタッチとVoiceOver焦点が抜ける操作安全上のMediumを検出して公開を停止した。起動画面自身が入力を消費するmodalなアクセシビリティ要素となり、読み込み状態を読み上げ、解除後にWebViewへフォーカスを移すよう修正した。
+- 再度クリーンインストールと再起動を時系列撮影し、ネイティブ起動画面→HTML起動画面→初回設定の間に白画面が入らないこと、PID生存、WebView main frame読込、Firebase初期化順警告なしを確認した。署名なしDebug SimulatorでアプリUIより前に出たOS側の黒画面は、署名付き実機で別途再計測する。
+- 起動カバーの操作安全修正後にXcode 26.4／iPhone 17 Simulatorで再ビルド・再インストール・再起動し、`BUILD SUCCEEDED`、初回設定画面到達、PID生存を確認した。全129テスト、FCM中継の依存監査、差分検査に合格し、独立セキュリティ再監査はCritical／High／Mediumすべて0件で`APPROVE`とした。

@@ -182,4 +182,9 @@ test('native Apple Sign In and foreground push presentation are reproducible',()
   assert.match(appDelegate,/capacitorDidRegisterForRemoteNotifications/);
   assert.match(appDelegate,/didFailToRegisterForRemoteNotificationsWithError/);
   assert.match(appDelegate,/capacitorDidFailToRegisterForRemoteNotifications/);
+  assert.match(appDelegate,/private static let firebaseConfiguration: Void/);
+  assert.match(appDelegate,/willFinishLaunchingWithOptions/);
+  assert.doesNotMatch(appDelegate,/override init\(\)/);
+  assert.equal((appDelegate.match(/FirebaseApp\.configure\(\)/g)||[]).length,1);
+  assert.doesNotMatch(appDelegate,/FirebaseApp\.(app|allApps)/);
 });

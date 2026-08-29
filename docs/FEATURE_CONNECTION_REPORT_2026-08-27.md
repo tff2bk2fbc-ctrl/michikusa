@@ -1,5 +1,15 @@
 # Spota 新機能・外部サービス接続状況レポート（2026-08-27）
 
+## 追補（2026-08-29: 地図D1とiOS起動の再検証）
+
+- 本番9地域D1を読み取り確認し、`wikipedia_places`は合計117,571件、全地域で生成SQLの予定件数と一致していた。本文・画像・編集履歴はD1へ保存していない。
+- 旧`/api/places`は主D1の由来未確定`places`を読むため、新規データを混在させない。Wikipedia、国交省N02駅、GeoNamesだけを返す`POST /api/map/places`を別経路として実装した。
+- 新経路はJSON本文512 bytes、表示範囲0.35度、最大200件、地域D1選択、client/global burst制限と3段階D1回数上限を持ち、Google Drive／Google One原本・利用者投稿・秘密情報を読まない。未知providerはSQLとmapperで拒否する。
+- 本番D1を使うCloudflare remote previewで東京・札幌・那覇が200を返し、3提供元の実データを確認した。本番Workerへのdeploy・GitHub pushはまだ行っていない。
+- OSM 2.5GB PBFは原本のままで、軽量索引がないためアプリ未接続。OpenFreeMap基図と明示検索時のNominatimは従来通り別経路である。
+- 最新Web資産をXcodeへ自動同期するようiOS overlayを修正した。FirebaseをUIApplicationのdelegate確立後かつStoryboard／Capacitor pluginより先に初期化し、通知音をResourcesへ登録した。Xcode 26.4／iPhone 17 Simulatorでクリーンビルド・インストール・複数回起動・WebView読込が成功した。さらに、HTMLの初回描画合図までネイティブ起動画面を維持し、途中の白画面を解消した。
+- 実機の既存失敗ログは、ビルド／署名クラッシュではなくWebKit補助プロセスの長時間停止とLTE経路のTLS証明書不一致だった。実機は削除せず、再起動、VPN等停止、正常Wi-Fi、USB接続で再確認する。
+
 ## 追補（2026-08-28）
 
 Google Trends alphaはユーザーから承認済みとの連絡を受けたが、専用の限定ドキュメント、endpoint、資格情報がこの作業環境では確認できていないため、接続ゲートは引き続き無効にしている。Wikipedia Action APIは公式仕様に基づくWorker側のステージング接続を追加した。
@@ -8,7 +18,7 @@ Google Trends alphaはユーザーから承認済みとの連絡を受けたが�
 
 今回の確認では、外部サービスを無条件に本番アプリへ直結せず、データ収集・保管・アプリ配信を分離する方針を維持する。OpenStreetMapを含む地図原本はローカル検証済みで、Google One（Drive）へ非公開バックアップを進めている。住所関連データのDrive保存は完了し、OSMを含む参照データはアップロード継続中である。
 
-アプリから直接使える状態になっているのは、既存のCloudflare Worker/D1/R2、Firebase認証・通知基盤、既存の住所・行政区域・自然地名の索引である。Wikipediaの座標索引はローカル生成とSQL検証まで完了したが、D1本番投入はまだ行っていない。今回取得したOSM PBFや新規のトレンドAPIも、まだアプリの公開経路へ接続していない。
+アプリから直接使える状態になっているのは、既存のCloudflare Worker/D1/R2、Firebase認証・通知基盤、住所・行政区域・自然地名の索引である。Wikipedia座標索引117,571件は9地域D1への本番投入を確認済みで、今回、国交省N02駅・GeoNamesとともに新しい地図表示経路へ接続した。ただし本差分のGitHub push／Worker本番deployはまだ行っていない。OSM PBFや新規トレンドAPIはアプリの公開経路へ接続していない。
 
 今回、外部APIの誤接続を防ぐ `tools/feature-connectors/` の接続レジストリを追加した。これはネットワークを発生させず、既存経路・バックアップ・オフライン索引・承認待ち・接続禁止をコード上で区別する安全ゲートである。テストは7/7成功し、SerpApiやTikTokなど承認前のサービスが `allowLive=true` を渡されても有効化されないことを確認した。
 

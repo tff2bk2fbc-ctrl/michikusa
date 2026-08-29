@@ -3,7 +3,34 @@
    ============================================================ */
 let busy=false;
 const cells={};
+let cellOrder=[];
+const MAX_MAP_DATA_CELLS=48,MAX_MAP_DATA_POIS=1200;
 let loadLog={run:0,ours:0,err:'',skip:''};
+
+function placeKey(p){
+  if(p&&p.id)return 'id:'+String(p.id);
+  return String(p&&p.n||'').normalize('NFKC').toLowerCase()+'|'+
+    Number(p&&p.lat).toFixed(4)+','+Number(p&&p.lng).toFixed(4);
+}
+
+function rememberMapCell(cell){
+  var at=cellOrder.indexOf(cell);if(at>=0)cellOrder.splice(at,1);
+  cells[cell]=1;cellOrder.push(cell);
+  while(cellOrder.length>MAX_MAP_DATA_CELLS){
+    var old=cellOrder.shift();delete cells[old];
+    pois=pois.filter(function(p){return !p.mapData||p._cell!==old;});
+  }
+}
+
+function pruneMapDataPois(center){
+  var dynamic=pois.filter(function(p){return p.mapData;});
+  if(dynamic.length<=MAX_MAP_DATA_POIS)return;
+  dynamic.sort(function(a,b){
+    return Math.hypot(a.lat-center.lat,a.lng-center.lng)-Math.hypot(b.lat-center.lat,b.lng-center.lng);
+  });
+  var keep=new Set(dynamic.slice(0,MAX_MAP_DATA_POIS).map(placeKey));
+  pois=pois.filter(function(p){return !p.mapData||keep.has(placeKey(p));});
+}
 
 /* この辺りのデータを取りに行く。
    同じところを何度も叩かないよう、約1km四方の区画で覚えておく。
@@ -22,12 +49,13 @@ async function autoLoad(force){
     var c=map.getCenter(), cell=c.lat.toFixed(2)+','+c.lng.toFixed(2);
     if(!force&&cells[cell]){ loadLog.skip='この辺りは取得済み'; return; }
 
-    cells[cell]=1; busy=true; loadLog.run++; loadLog.skip='';
+    busy=true; loadLog.run++; loadLog.skip='';
 
     // 起動や地図移動だけでは、現在地を第三者サービスへ送らない。
     // 国交省・デジタル庁などから作った自前DBだけを読む。
     var mine=0;
-    try{ mine=await loadOurs(); }catch(e){ loadLog.err='自前: '+e; }
+    try{ mine=await loadOurs(cell);rememberMapCell(cell); }
+    catch(e){ loadLog.err='自前: '+String(e&&e.message||e); }
     loadLog.ours+=mine;
 
     var t=mine;
@@ -37,27 +65,28 @@ async function autoLoad(force){
   finally{ busy=false; }
 }
 
-function dedupe(){var s={};pois.forEach(function(p){s[p.n+p.lat.toFixed(4)]=1;});return s;}
+function dedupe(){var s={};pois.forEach(function(p){s[placeKey(p)]=1;});return s;}
 
 
 /* 自分たちで貯めた場所。外に頼らず、ここから返せる分 */
-async function loadOurs(){
-  try{
+async function loadOurs(cell){
     var b=map.getBounds();
-    var r=await fetch(SERVER+'/api/places',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({s:b.getSouth(),w:b.getWest(),n:b.getNorth(),e:b.getEast(),limit:400})});
-    if(!r.ok)return 0;
+    var r=await fetch(SERVER+'/api/map/places',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({s:b.getSouth(),w:b.getWest(),n:b.getNorth(),e:b.getEast(),limit:200})});
+    if(!r.ok)throw new Error('地図データ '+r.status);
     var j=await r.json();
     var seen=dedupe(), n=0;
     (j.places||[]).forEach(function(p){
       if(!isFinite(p.lat)||!isFinite(p.lng))return;
-      var k=p.n+p.lat.toFixed(4); if(seen[k])return; seen[k]=1;
-      pois.push({n:p.n,c:p.c||'景',lat:p.lat,lng:p.lng,
-        gname:p.gname||'',budget:p.budget||'',addr:p.addr||'',src:'db'});
+      var item={id:p.id,n:p.name,c:p.category||'景',lat:Number(p.lat),lng:Number(p.lng),
+        gname:p.detail||'',budget:'',addr:'',src:(p.sources&&p.sources[0]&&p.sources[0].provider)||'公開データ',
+        sources:p.sources||[],mapData:1,_cell:cell};
+      var k=placeKey(item);if(seen[k])return;seen[k]=1;
+      pois.push(item);
       n++;
     });
+    pruneMapDataPois(map.getCenter());
     return n;
-  }catch(e){ return 0; }
 }
 
 /* ============================================================

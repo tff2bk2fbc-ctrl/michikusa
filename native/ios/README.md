@@ -18,6 +18,10 @@ cd /absolute/path/to/michikusa-app
 npx cap sync ios
 ```
 
+`apply-to-capacitor.sh` first mirrors this repository's current `public/` into the
+Capacitor root `public/`, including removal of obsolete web files. This prevents Xcode
+from silently packaging stale JavaScript when the GitHub source has changed.
+
 Do not install `@capacitor/push-notifications` and `@capacitor-firebase/messaging` together.
 The former returns an APNs token on iOS, while Spota's relay sends through FCM HTTP v1 and
 therefore must register the FCM token returned by Firebase Messaging.
@@ -25,14 +29,21 @@ therefore must register the FCM token returned by Firebase Messaging.
 The installer performs only these scoped changes:
 
 - checks that Firebase Messaging replaced the incompatible Push Notifications plugin;
+- stops before changing files when `GoogleService-Info.plist` is missing;
+- mirrors the reviewed repository `public/` into the Capacitor web directory;
 - copies the four reviewed Swift sources into `App/App`;
 - registers the two added Swift files in the `App` target without an extra Ruby gem;
 - sets the photo-library explanation;
 - configures Firebase Messaging presentation and SwiftPM symlink mode;
 - disables Firebase Messaging auto-init until the user grants notification permission;
+- configures the default Firebase app before Capacitor plugins start;
+- keeps the native launch artwork above the WebView until `boot.js` reports that the
+  first visual frame has been prepared, with a 12-second fail-safe so a broken page
+  cannot trap the user on the cover;
+- registers `spota.caf` as an app resource when that sound file is present;
 - limits iPhone and iPad to portrait orientation.
 
-After `npx cap sync ios`, run `npx cap copy ios` whenever web assets change and build the
-`App` scheme. The daily candidate
+After applying the overlay, run `npx cap sync ios` and build the `App` scheme. Re-run the
+same two commands whenever web assets change. The daily candidate
 preview never permits an iCloud download. Only the explicit “use” action can retrieve the
 full asset, through a one-use opaque token enforced by native code.

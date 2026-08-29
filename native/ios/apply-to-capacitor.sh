@@ -8,31 +8,55 @@ fi
 
 IOS_ROOT=$1
 SOURCE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SOURCE_DIR/../.." && pwd)
 CAP_ROOT=$(CDPATH= cd -- "$IOS_ROOT/.." && pwd)
 APP_DIR="$IOS_ROOT/App/App"
 PROJECT="$IOS_ROOT/App/App.xcodeproj"
 PLIST="$APP_DIR/Info.plist"
+FIREBASE_CONFIG="$APP_DIR/GoogleService-Info.plist"
 PACKAGE_JSON="$CAP_ROOT/package.json"
+CAP_CONFIG="$CAP_ROOT/capacitor.config.json"
+WEB_SOURCE="$REPO_ROOT/public"
 
 if [ ! -d "$PROJECT" ] || [ ! -f "$PLIST" ]; then
   echo "Capacitor iOS project was not found under: $IOS_ROOT" >&2
   exit 2
 fi
+if [ ! -f "$FIREBASE_CONFIG" ]; then
+  echo "Firebase iOS configuration was not found: $FIREBASE_CONFIG" >&2
+  exit 2
+fi
 
-ruby -rjson - "$PACKAGE_JSON" <<'RUBY'
-path = ARGV.fetch(0)
-abort "Capacitor package.json was not found: #{path}" unless File.file?(path)
-package = JSON.parse(File.read(path))
+ruby -rjson - "$PACKAGE_JSON" "$CAP_CONFIG" <<'RUBY'
+package_path = ARGV.fetch(0)
+config_path = ARGV.fetch(1)
+abort "Capacitor package.json was not found: #{package_path}" unless File.file?(package_path)
+abort "Capacitor config was not found: #{config_path}" unless File.file?(config_path)
+package = JSON.parse(File.read(package_path))
+config = JSON.parse(File.read(config_path))
 deps = (package["dependencies"] || {}).merge(package["devDependencies"] || {})
 unless deps.key?("@capacitor-firebase/messaging") && !deps.key?("@capacitor/push-notifications")
   abort <<~MESSAGE
     Replace the APNs-only iOS token plugin before applying the overlay:
-      cd #{File.dirname(path)}
+      cd #{File.dirname(package_path)}
       npm uninstall @capacitor/push-notifications
       npm install @capacitor-firebase/messaging@8.4.0 firebase
   MESSAGE
 end
+unless config["appId"] == "com.damo.michikusa" && config["webDir"] == "public"
+  abort "Refusing to replace web assets: expected appId=com.damo.michikusa and webDir=public"
+end
 RUBY
+
+if [ ! -d "$WEB_SOURCE" ]; then
+  echo "Repository web assets were not found under: $WEB_SOURCE" >&2
+  exit 2
+fi
+
+# GitHub側のpublic/を唯一のWeb資産ソースとし、削除済みの古いJSも残さない。
+# npx cap sync ios はCAP_ROOT/publicしか見ないため、その直前に必ず揃える。
+mkdir -p "$CAP_ROOT/public"
+rsync -a --delete "$WEB_SOURCE/" "$CAP_ROOT/public/"
 
 cp "$SOURCE_DIR/DailyPhotoPlugin.swift" "$APP_DIR/DailyPhotoPlugin.swift"
 cp "$SOURCE_DIR/SpotaBridgeViewController.swift" "$APP_DIR/SpotaBridgeViewController.swift"
@@ -80,8 +104,9 @@ fi
 "$PLIST_BUDDY" -c "Add :UISupportedInterfaceOrientations~ipad array" "$PLIST"
 "$PLIST_BUDDY" -c "Add :UISupportedInterfaceOrientations~ipad:0 string UIInterfaceOrientationPortrait" "$PLIST"
 
-ruby - "$PROJECT/project.pbxproj" <<'RUBY'
+ruby - "$PROJECT/project.pbxproj" "$APP_DIR/spota.caf" <<'RUBY'
 path = ARGV.fetch(0)
+sound_path = ARGV.fetch(1)
 text = File.read(path)
 
 unless text.include?("DailyPhotoPlugin.swift in Sources")
@@ -133,7 +158,23 @@ unless text.include?("com.apple.Push")
   replacement = marker + "\n\t\t\t\t\t\t\tcom.apple.Push = { enabled = 1; };"
   abort "Apple Sign In capability marker was not found" unless text.sub!(marker, replacement)
 end
+
+if File.file?(sound_path) && !text.include?("spota.caf in Resources")
+  build_file = "\t\tA10D0006301F500000000001 /* spota.caf in Resources */ = {isa = PBXBuildFile; fileRef = A10D0007301F500000000001 /* spota.caf */; };\n"
+  file_ref = "\t\tA10D0007301F500000000001 /* spota.caf */ = {isa = PBXFileReference; lastKnownFileType = file; path = spota.caf; sourceTree = \"<group>\"; };\n"
+  abort "PBXBuildFile section was not found" unless text.sub!("/* Begin PBXBuildFile section */\n", "/* Begin PBXBuildFile section */\n#{build_file}")
+  abort "PBXFileReference section was not found" unless text.sub!("/* Begin PBXFileReference section */\n", "/* Begin PBXFileReference section */\n#{file_ref}")
+
+  group_pattern = /(\t\t[0-9A-F]+ \/\* App \*\/ = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n)/
+  abort "App PBXGroup was not found" unless text.sub!(group_pattern) { Regexp.last_match(1) + "\t\t\t\tA10D0007301F500000000001 /* spota.caf */,\n" }
+
+  resources_pattern = /(\t\t[0-9A-F]+ \/\* Resources \*\/ = \{\n\t\t\tisa = PBXResourcesBuildPhase;\n\t\t\tbuildActionMask = [0-9]+;\n\t\t\tfiles = \(\n)/
+  abort "App Resources phase was not found" unless text.sub!(resources_pattern) { Regexp.last_match(1) + "\t\t\t\tA10D0006301F500000000001 /* spota.caf in Resources */,\n" }
+end
+
+# Xcodeの画面名欄へ誤って貼り付けられた改行付きコマンドを除去する。
+text.gsub!(/^(\s*)INFOPLIST_KEY_CFBundleDisplayName = .*;$/, '\\1INFOPLIST_KEY_CFBundleDisplayName = spota;')
 File.write(path, text)
 RUBY
 
-echo "Applied Spota PhotoKit bridge, Apple Sign In, Firebase Messaging, push presentation, and portrait-only configuration to $IOS_ROOT"
+echo "Synchronized current web assets and applied Spota native configuration to $IOS_ROOT"

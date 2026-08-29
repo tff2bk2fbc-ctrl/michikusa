@@ -4,7 +4,7 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v124';
+var BUILD='v125';
 var SPOTA_ONBOARDING_VERSION='2026-08-17.1';
 var onboardingSaved='';
 try{onboardingSaved=localStorage.getItem('spota_onboarding_complete')||'';}catch(e){}
@@ -48,6 +48,17 @@ if(splashIcon&&!splashIconReady){
 }
 function mark(n){ TT.push([n, Math.round(performance.now()-T0)]); }
 mark('開始');
+/*
+  WKWebViewのnavigation完了は、後続の同期スクリプトが初期画面を組み立てるより
+  先に通知される場合がある。parserと2回の描画機会が終わった時だけ、
+  ネイティブ起動画面を外してよい合図を出す。
+*/
+window.__spotaNativeVisualReady=false;
+requestAnimationFrame(function(){
+  requestAnimationFrame(function(){
+    setTimeout(function(){ window.__spotaNativeVisualReady=true; },0);
+  });
+});
 /* 地図が出そろったら起動画面を引く。念のため時間でも消す */
 function hideSplash(force){
   splashHidePending=true;

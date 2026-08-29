@@ -1,10 +1,24 @@
 import UIKit
 import Capacitor
+import FirebaseCore
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    // Swiftのstatic letはプロセス内で一度だけ、thread-safeに初期化される。
+    // このリポジトリでFirebase default appを構成する唯一の入口にする。
+    private static let firebaseConfiguration: Void = {
+        FirebaseApp.configure()
+    }()
+
+    func application(_ application: UIApplication,
+                     willFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // UIApplicationがdelegateを保持した後、Scene／Capacitor plugin生成前に構成する。
+        // init内で構成するとFirebaseのAppDelegate proxyがnilを見て無効になる。
+        _ = Self.firebaseConfiguration
+        return true
+    }
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {

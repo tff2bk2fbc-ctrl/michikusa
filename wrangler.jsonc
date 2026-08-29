@@ -53,6 +53,16 @@
       "name": "GEOCODE_RATE_LIMITER",
       "namespace_id": "10006",
       "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "MAP_PLACES_RATE_LIMITER",
+      "namespace_id": "10007",
+      "simple": { "limit": 60, "period": 60 }
+    },
+    {
+      "name": "MAP_PLACES_GLOBAL_RATE_LIMITER",
+      "namespace_id": "10008",
+      "simple": { "limit": 2000, "period": 60 }
     }
   ],
   "d1_databases": [
