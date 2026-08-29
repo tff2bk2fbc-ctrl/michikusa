@@ -1,6 +1,6 @@
 # 位置・住所関連データの提供元
 
-更新確認日: 2026-08-07
+更新確認日: 2026-08-27
 
 原本ファイルは容量と再配布条件のため `data/reference-source/` に保存し、GitHubには追加しない。
 この文書には、取得元とライセンス判断を再現できる情報だけを残す。
@@ -95,15 +95,63 @@
 - ライセンス: 記事名・記事リンク・記事由来テキストを再利用する場合はCC BY-SA 4.0等の適用条件に従う。画像はファイルごとにライセンスが異なるため、今回のダンプから画像本体を取り込まない
 - 解析結果: 全座標314,386件、earthの主座標168,305件、日本概略範囲内121,632ページ、通常名前空間の非リダイレクト記事119,873件
 - N03行政区域内へ確定した取込件数: 117,571件。国外・海上・行政区域外2,302件は除外
+- ローカル生成SQL: 9地域、合計15,315,341 bytes。各ファイルを一時SQLiteへ読み込み、構文・行投入を検証済み。D1本番投入は未実施
 - 地域別件数: 北海道5,907、東北11,210、東京11,215、南関東8,817、北関東9,715、中部26,211、近畿19,248、中国・四国12,492、九州・沖縄12,756
 - 本番D1投入後の合計DB容量: 969,326,592 bytes。最大は中部259,055,616 bytesで、無料枠500MB未満
 - 用途: 周辺記事の軽量索引。D1には記事ID、記事名、整数座標、種別、格子だけを保持し、本文・画像本体は保存しない
 - 注意: 日本概略外接矩形に含まれる周辺国などは、N03行政区域面とのpoint-in-polygon判定で除外済み
 
+### 日本語版Wikipedia 分類・別名・Wikidata対応ダンプ（今回追加）
+
+- 取得基準日: 2026-08-01（ダンプの基準日。`latest`から取得し、公式SHA-1で内容を固定。次回更新時は新しい日付とハッシュを別版として保存する）
+- 公式配布: https://dumps.wikimedia.org/jawiki/latest/
+- 用途: 座標付き記事を観光地・景勝地・店舗・施設などのカテゴリで分類し、リダイレクトを正規タイトルへ統合する。`page_props`の`wikibase_item`は将来のWikidata（CC0構造化データ）との対応に使う
+- 保存先: `data/reference-source/wikimedia/`（Git管理対象外）
+- 取得ファイルと検査結果:
+  - `jawiki-latest-category.sql.gz`: 4,617,838 bytes、SHA-1 `8789a6de6df2d8020caf12164641027075750303`、SHA-256 `579c000c3e114f8fa1e4d81bbecb5a32dbebff7e4e4238c3a22f06947ee890b8`
+  - `jawiki-latest-categorylinks.sql.gz`: 175,320,273 bytes、SHA-1 `cdb76797e3e23c65a2a3b35bfd0ef9cacadfe169`、SHA-256 `d05fd9c135254ba02ee6ea6d19a9ef453a6a8a72e1787fc5c08e6a3224bf59d1`
+  - `jawiki-latest-redirect.sql.gz`: 13,986,329 bytes、SHA-1 `c8b21875f059df38c7309931b3ff29a95e140f3e`、SHA-256 `eb2f93c8e31ea587de968813e60ee754a66d68e1830ad2d7e62fd122602fe39c`
+  - `jawiki-20260801-page_props.sql.gz`: 59,626,394 bytes、SHA-1 `a7a121c88267d43a776f8536c24d392434e925b4`、SHA-256 `9001c07fa2663a25e7ae07711f7e7f6cd6fe92bf11a2f2a8dd71afbb12fb92eb`
+- 公式SHA-1照合・gzip整合性検査: 4ファイルすべて合格
+- 追加分の圧縮容量: 253,550,834 bytes（約241.8 MiB）。既存の座標・記事名ダンプを再取得していないため重複ダウンロードなし
+- ライセンス: カテゴリ・記事名・リダイレクト・プロパティはWikipediaのデータ利用条件（CC BY-SA 4.0等）に従う。`page_props`から参照するWikidata構造化データ自体はCC0だが、Wikidataを別途取得・表示する場合は同データの利用条件と出典を確認する。画像・本文はこの収集では保存しない
+- 個人情報・不要な本文: 利用者名、編集履歴、記事本文、画像本体は地図インデックスへ取り込まない
+
+### 日本語版Wikivoyage 観光記事索引
+
+- 提供者: Wikimedia Foundation / 日本語版Wikivoyageの各執筆者
+- 公式配布: https://dumps.wikimedia.org/jawikivoyage/latest/
+- ダンプ基準日: 2026-08-01
+- 保存先: `data/reference-source/wikivoyage/`（Git管理対象外）
+- 取得ファイル: `category.sql.gz`（12,988 bytes）、`categorylinks.sql.gz`（196,749 bytes）、`geo_tags.sql.gz`（18,115 bytes）、`page.sql.gz`（217,018 bytes）、`page_props.sql.gz`（189,281 bytes）、`redirect.sql.gz`（11,514 bytes）、`jawikivoyage-20260801-sha1sums.txt`（3,238 bytes）
+- 圧縮容量: 648,903 bytes。各ダンプは公式SHA-1一覧と照合し、gzip検査に合格
+- 用途: 観光ルート・地域記事の候補名、カテゴリ、座標、別名をWikipedia記事とは別の観光文脈で補完する。本文・画像・編集者情報は保存しない
+- ライセンス: Wikivoyage記事由来のデータはWikimediaの利用条件（原則CC BY-SA等）に従い、アプリ内に提供元・ダンプ日・記事リンクを表示する。画像は個別ライセンスが異なるため取得しない
+
 表示例:
 
 ```text
 Wikipediaの記事名・位置情報を加工して利用（CC BY-SA 4.0）。各記事の執筆者・履歴・ライセンスは記事リンクから確認できます。
+```
+
+### OpenStreetMap日本（Geofabrik抽出）
+
+- 提供者: OpenStreetMap contributors。Geofabrikが日本範囲を抽出・配布
+- 公式配布ページ: https://download.geofabrik.de/asia/japan.html
+- ファイル: `japan-260824.osm.pbf`
+- 取得日: 2026-08-27（Geofabrik更新日時: 2026-08-25 03:36:57 GMT）
+- 保存先: `data/reference-source/openstreetmap/`（Git管理対象外）
+- 容量: 2,502,520,532 bytes
+- MD5: `14d74648e3dee67bb0249c380e97c5cc`
+- SHA-256: `55b1f06f3bbdcac08196d9183c91b37dfe8db1dcb944607b90cf90fa10ee9813`
+- 形式検査: OpenStreetMap Protocolbuffer Binary Format（PBF）として合格。公式MD5とファイルサイズを照合済み
+- 用途: `amenity`（店舗・飲食店等）、`shop`、`tourism`、`natural`などのタグから、地図上の観光・店舗・景観候補を抽出する原本。原本はDrive/R2に保管し、アプリには必要属性だけを軽量化して配信する
+- ライセンス: Open Database License (ODbL) 1.0。派生データの公開時はOpenStreetMapへの帰属、変更の明示、ODbLのデータベース共有条件を確認する。原本に含まれるタグ・Geometryを第三者データと混同せず、各索引行へ出典を保持する
+
+表示例:
+
+```text
+© OpenStreetMap contributors（データ提供: Geofabrik、ODbL 1.0）。加工して作成。
 ```
 
 ## 今回取得しないもの
