@@ -62,7 +62,7 @@ export default {
       if (p === "/api/health") {
         return respond(json({
           ok: true,
-          build: "api-45"
+          build: "api-46"
         }));
       }
       if (p === "/api/places" && request.method === "POST")
