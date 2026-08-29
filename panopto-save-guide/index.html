@@ -48,7 +48,7 @@
           <form id="share-form" novalidate>
             <div class="field">
               <label for="share-url">Panoptoの共有URL <span class="required">（必須）</span></label>
-              <p class="hint" id="share-hint">例: https://example.panopto.com/Panopto/Pages/Viewer.aspx?id=…</p>
+              <p class="hint" id="share-hint">共有URLまたはPanopto公式のダウンロードURLを入力できます。</p>
               <input id="share-url" name="share-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" required aria-describedby="share-hint share-error">
               <p class="field-error" id="share-error"></p>
             </div>
@@ -59,7 +59,7 @@
             </label>
             <p class="field-error" id="authorization-error"></p>
 
-            <button class="primary-button" type="submit">公式ページを開く <span aria-hidden="true">↗</span></button>
+            <button class="primary-button" type="submit">リンクを確認して進む <span aria-hidden="true">→</span></button>
           </form>
 
           <p class="status" id="share-status" role="status"></p>
