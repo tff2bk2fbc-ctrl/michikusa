@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import worker, { friendRequest, geocode } from "../src/index.js";
+import worker, { friendRequest, geocode, wikipediaApiEnabled } from "../src/index.js";
 
 function requestJson(path, body) {
   return new Request("https://spota.test" + path, {
@@ -48,6 +48,13 @@ function friendEnv(options = {}) {
   };
   return { env, friendshipWrites: () => friendshipWrites };
 }
+
+test("Wikipediaの外部接続はサーバー側の明示状態がないと無効", () => {
+  assert.equal(wikipediaApiEnabled({}), false);
+  assert.equal(wikipediaApiEnabled({ WIKIPEDIA_API_STATE: "disabled" }), false);
+  assert.equal(wikipediaApiEnabled({ WIKIPEDIA_API_STATE: "staging" }), true);
+  assert.equal(wikipediaApiEnabled({ WIKIPEDIA_API_STATE: "live" }), true);
+});
 
 test("friend routes reject unsupported HTTP methods before authentication", async () => {
   const cases = [

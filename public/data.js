@@ -101,6 +101,26 @@ async function search(v,remote){
         sub:p.display_name,lat:Number(p.lat),lng:Number(p.lng||p.lon)});});
   }catch(e){}
 
+  // 認証済みの明示検索だけ、Worker経由でWikipediaの公開座標候補を補う。
+  // 端末からWikipediaへ直結せず、記事本文・画像・利用者情報も取得しない。
+  try{
+    if(typeof api==='function' && typeof fbUser!=='undefined' && fbUser){
+      var rw=await api('/api/wiki/search',{method:'POST',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify({q:v,limit:4})});
+      if(rw.ok){
+        var jw=await rw.json();
+        (jw.results||[]).forEach(function(p){
+          var c=p&&p.coordinates,lat=Number(c&&c.lat),lng=Number(c&&c.lng);
+          if(!p||!p.title||!isFinite(lat)||!isFinite(lng))return;
+          var duplicate=out.some(function(x){return x.n===p.title&&Math.abs(Number(x.lat)-lat)<1e-5&&Math.abs(Number(x.lng)-lng)<1e-5;});
+          if(duplicate)return;
+          out.push({k:'Wikipedia',n:p.title,sub:'Wikipedia（公開座標）',lat:lat,lng:lng,
+            wiki:{url:p.url||'',pageid:p.pageid||null}});
+        });
+      }
+    }
+  }catch(e){}
+
   draw(out,null);
 }
 function draw(list,note){
@@ -121,7 +141,8 @@ function draw(list,note){
       map.easeTo({center:[r.lng,r.lat],zoom:17,duration:750});
       if(r.p&&!r.mine&&r.p.src&&!pois.some(function(p){
         return p.n===r.p.n&&Math.abs(p.lat-r.p.lat)<1e-5;})){pois.push(r.p);}
-      setTimeout(function(){ if(r.p)openPlace(r.p,!!r.mine);
+      setTimeout(function(){ if(r.wiki)startPlacing(r.lat,r.lng,{known:r.n,gname:'Wikipedia'});
+        else if(r.p)openPlace(r.p,!!r.mine);
         else startPlacing(r.lat,r.lng,{}); render(); },800);
     };
   });

@@ -26,7 +26,7 @@ async function write(stream, value) {
   });
 }
 
-export async function buildWikipedia() {
+export async function buildWikipedia({ n03 = N03, output = OUTPUT } = {}) {
   const candidates = await loadCandidates();
   const cells = new Map();
   for (const candidate of candidates.values()) {
@@ -35,18 +35,18 @@ export async function buildWikipedia() {
     cells.get(key).push(candidate);
   }
 
-  await mkdir(OUTPUT, { recursive: true });
+  await mkdir(output, { recursive: true });
   const streams = new Map(), reports = new Map();
   const table = "CREATE TABLE IF NOT EXISTS wikipedia_places(page_id INTEGER PRIMARY KEY,title TEXT NOT NULL,type TEXT NOT NULL DEFAULT '',lat_e6 INTEGER NOT NULL,lng_e6 INTEGER NOT NULL,grid_lat INTEGER NOT NULL,grid_lng INTEGER NOT NULL,source TEXT NOT NULL DEFAULT 'jawiki');\n";
   for (const [shard] of SHARDS) {
-    const stream = createWriteStream(join(OUTPUT, `${shard}.wikipedia.sql`));
+    const stream = createWriteStream(join(output, `${shard}.wikipedia.sql`));
     streams.set(shard, stream); reports.set(shard, { articles: 0 });
     await write(stream, `BEGIN;\n${table}DELETE FROM wikipedia_places WHERE source='jawiki';\n`);
   }
 
   const temporary = await mkdtemp(join(tmpdir(), "michikusa-wikipedia-"));
   try {
-    const extracted = spawnSync("unzip", ["-qq", "-j", N03, "N03-20260101.shp", "N03-20260101.dbf", "-d", temporary], { encoding: "utf8" });
+    const extracted = spawnSync("unzip", ["-qq", "-j", n03, "N03-20260101.shp", "N03-20260101.dbf", "-d", temporary], { encoding: "utf8" });
     if (extracted.status !== 0) throw new Error(extracted.stderr || "N03を展開できません");
     const rows = readDbf(join(temporary, "N03-20260101.dbf"));
     const assigned = new Set(); let shapeIndex = 0;
@@ -75,7 +75,7 @@ export async function buildWikipedia() {
     for (const [shard, stream] of streams) {
       await write(stream, "CREATE INDEX IF NOT EXISTS wikipedia_places_grid ON wikipedia_places(grid_lat,grid_lng);\nCOMMIT;\nPRAGMA optimize;\n");
       await new Promise((resolve, reject) => stream.end((error) => error ? reject(error) : resolve()));
-      reports.get(shard).bytes = (await stat(join(OUTPUT, `${shard}.wikipedia.sql`))).size;
+      reports.get(shard).bytes = (await stat(join(output, `${shard}.wikipedia.sql`))).size;
     }
     return { candidates: candidates.size, assigned: assigned.size, excluded: candidates.size - assigned.size, shards: Object.fromEntries(reports) };
   } finally {

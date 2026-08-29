@@ -18,6 +18,8 @@
  *      （ずらすだけだと、繰り返し観測して平均を取れば真の位置が割れる）
  */
 
+import { fetchWikipediaPlaceSearch, WikipediaApiError } from "./lib/wikipedia.js";
+
 const JWKS = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const POSTAL_CODE_API = "https://jp-postal-code-api.ttskch.com/api/v1/";
 const CURRENT_TERMS_VERSION = "2026-08-17.1";
@@ -83,6 +85,10 @@ export default {
       // ---- ここから先はログインが必要 ----
       const me = await authenticate(request, env);
       if (!me) return respond(json({ error: "ログインが必要です" }, 401));
+
+      if (p === "/api/wiki/search" && request.method === "POST")
+        return respond(await wikipediaSearch(request, env, me));
+      if (p === "/api/wiki/search") return respond(json({ error: "POSTだけです" }, 405));
 
       // ユーザーに紐づく通知・タグ操作は必ず認証後に置く。
       if (p === "/api/postal-code" && request.method === "POST")
@@ -262,6 +268,57 @@ async function getJwks() {
   jwksCache = JSON.parse(text);
   jwksAt = now;
   return jwksCache;
+}
+
+/* ============================================================
+   Wikipedia公開メタデータ検索
+
+   ブラウザからWikipediaへ直接接続させず、認証済みのWorkerで
+   検索語・件数・応答サイズ・利用回数を制限する。本文・画像・利用者情報は取得しない。
+   ============================================================ */
+async function wikipediaSearch(request, env, me) {
+  // 接続レジストリの承認をサーバー設定でも強制する。未設定・disabledの
+  // 本番Workerからは、認証済みでも外部APIへ一切接続しない。
+  if (!wikipediaApiEnabled(env)) return json({ error: "Wikipedia検索は準備中です" }, 503);
+  const parsed = await limitedJson(request, 512);
+  if (parsed.error) return parsed.error;
+  const q = String(parsed.value.q || "").trim();
+  if (!q || q.length > 80 || /[\u0000-\u001f\u007f]/.test(q)) {
+    return json({ error: "検索語が不正です" }, 400);
+  }
+  const limit = Math.min(5, Math.max(1, Number.parseInt(String(parsed.value.limit || "5"), 10) || 5));
+  const rateKey = await shortHash(me.id);
+  if (!(await burstLimit(env, "SOCIAL_READ_RATE_LIMITER", `wiki:${rateKey}`)) ||
+      !(await userLimit(env, me.id, "wiki-search-hour", hourKey(), 60)) ||
+      !(await atomicLimit(env, "wiki_search_day_" + dayKey(), 5_000, 1))) {
+    return json({ error: "Wikipedia検索が混み合っています" }, 429);
+  }
+
+  const key = "wikipedia/search/" + await shortHash(q.toLocaleLowerCase("ja")) + "/" + limit;
+  return cachedNominatim(key, 600, async function () {
+    try {
+      const payload = await fetchWikipediaPlaceSearch(q, { limit });
+      const response = json(payload);
+      const headers = new Headers(response.headers);
+      headers.set("Cache-Control", "public, max-age=600, stale-while-revalidate=3600");
+      return new Response(response.body, { status: response.status, headers });
+    } catch (error) {
+      if (error instanceof WikipediaApiError && error.code === "invalid_query") {
+        return json({ error: "検索語が不正です" }, 400);
+      }
+      if (error instanceof WikipediaApiError && error.code === "rate_limited") {
+        const response = json({ error: "Wikipedia検索が混み合っています" }, 503);
+        if (error.retryAfter) response.headers.set("Retry-After", error.retryAfter);
+        return response;
+      }
+      return json({ error: "Wikipedia検索を利用できません" }, 502);
+    }
+  });
+}
+
+function wikipediaApiEnabled(env) {
+  const state = String(env?.WIKIPEDIA_API_STATE || "").trim().toLowerCase();
+  return state === "staging" || state === "live";
 }
 
 function b64url(s) {
@@ -2893,7 +2950,7 @@ async function geocode(request, env) {
 // 実運用と同じSQL経路をローカル統合テストから直接検証する。
 export { friendRequest, geocode, putLike, deleteLike, listComments, createComment, flashPost,
   createReport, createMonitorArtifacts, cleanupCommunicationMonitors, processAccountDeletion,
-  fcmRelayConfigured, relaySignature, isLegacyApnsToken };
+  fcmRelayConfigured, relaySignature, isLegacyApnsToken, wikipediaApiEnabled };
 
 async function reverseGeocode(request, env) {
   if (request.method !== "POST") return json({ error: "POSTだけです" }, 405);

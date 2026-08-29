@@ -519,10 +519,16 @@ test('external place providers and image proxy are not callable at runtime', asy
   const worker = await read('src/index.js');
   const data = await read('public/data.js');
   const map = await read('public/map.js');
-  for (const route of ['/api/img','/api/hotpepper','/api/rakuten','/api/wiki','/api/gsearch']) {
+  for (const route of ['/api/img','/api/hotpepper','/api/rakuten','/api/gsearch']) {
     assert.doesNotMatch(worker, new RegExp(route.replaceAll('/', '\\/')));
     assert.doesNotMatch(data, new RegExp(route.replaceAll('/', '\\/')));
   }
+  // Wikipediaは認証済みWorkerの限定ルートだけを許可し、端末から公式APIへ直結しない。
+  assert.match(worker, /\/api\/wiki\/search/);
+  assert.match(worker, /wikipediaApiEnabled\(env\)/);
+  assert.match(worker, /WIKIPEDIA_API_STATE/);
+  assert.match(data, /api\('\/api\/wiki\/search'/);
+  assert.doesNotMatch(data, /ja\.wikipedia\.org\/w\/api\.php/);
   assert.doesNotMatch(map, /SERVER\+'\/api\/img/);
 });
 

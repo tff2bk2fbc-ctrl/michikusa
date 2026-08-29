@@ -10,8 +10,11 @@
     "places:build": "node tools/places/build.mjs",
     "wikimedia:analyze": "node tools/wikimedia/analyze.mjs",
     "wikimedia:build": "node tools/wikimedia/build.mjs",
+    "wikimedia:api:test": "node tools/wikimedia/api-test.mjs",
+    "tiktok:trend:test": "node --test tools/tiktok-trends/test.mjs",
+    "tiktok:trend:fixture": "node tools/tiktok-trends/run.mjs tools/tiktok-trends/fixtures/synthetic.json",
     "fcm-relay:test": "node --test tools/fcm-relay.test.mjs",
     "address:test": "node --test tools/address-db/build.test.mjs",
-    "check": "node --check src/index.js && node --check public/core.js && node --check public/motion.js && node --check public/map.js && node --check public/place.js && node --check public/native.js && node --check public/post.js && node --check public/sync.js && node --check public/onboarding.js && node --check public/release.js && node --check public/ui.js && node --check services/fcm-relay/server.mjs && node --test tools/address-db/build.test.mjs tools/admin-boundary/build.test.mjs tools/photo-flow.test.mjs tools/release-flow.test.mjs tools/motion-flow.test.mjs tools/onboarding-flow.test.mjs tools/security-flow.test.mjs tools/social-actions.test.mjs tools/social-schema.test.mjs tools/account-safety-monitor.test.mjs tools/fcm-relay.test.mjs"
+    "check": "node --check src/index.js && node --check public/core.js && node --check public/motion.js && node --check public/map.js && node --check public/place.js && node --check public/native.js && node --check public/post.js && node --check public/sync.js && node --check public/onboarding.js && node --check public/release.js && node --check public/ui.js && node --check services/fcm-relay/server.mjs && node --check tools/tiktok-trends/index.mjs && node --check tools/tiktok-trends/run.mjs && node --test tools/address-db/build.test.mjs tools/admin-boundary/build.test.mjs tools/photo-flow.test.mjs tools/release-flow.test.mjs tools/motion-flow.test.mjs tools/onboarding-flow.test.mjs tools/security-flow.test.mjs tools/social-actions.test.mjs tools/social-schema.test.mjs tools/account-safety-monitor.test.mjs tools/fcm-relay.test.mjs tools/tiktok-trends/test.mjs"
   }
 }
