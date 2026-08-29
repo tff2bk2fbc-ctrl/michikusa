@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="theme-color" content="#f4f7f9" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#11181c" media="(prefers-color-scheme: dark)">
+    <meta name="description" content="権限を持ち、ダウンロードが許可されたPanopto動画を公式ページから保存するための案内ツールです。">
+    <title>Panopto 保存ガイド — 許可された動画だけ</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">メインコンテンツへ移動</a>
+
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="Panopto 保存ガイド ホーム">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>Panopto 保存ガイド</span>
+      </a>
+      <span class="privacy-note">入力内容は送信されません</span>
+    </header>
+
+    <main id="main">
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">AUTHORIZED DOWNLOADS ONLY</p>
+        <h1 id="page-title">許可された動画を、<br>公式の手順で保存する。</h1>
+        <p class="lead">共有URLからPanoptoの公式ページを開きます。ダウンロードが許可されている場合だけ、公式ページに表示される操作を使って保存してください。</p>
+
+        <div class="boundary" aria-labelledby="boundary-title">
+          <h2 id="boundary-title">このツールがしないこと</h2>
+          <ul>
+            <li>ログインやアクセス制御の回避</li>
+            <li>DRMやダウンロード禁止設定の解除</li>
+            <li>非公開の動画URLや配信先の解析・抽出</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="workspace" aria-labelledby="workspace-title">
+        <div class="step-number" aria-hidden="true">01</div>
+        <div class="workspace-content">
+          <h2 id="workspace-title">共有URLを確認</h2>
+          <p class="section-intro">あなたが正当にアクセスできるPanoptoの共有URLを入力してください。</p>
+
+          <form id="share-form" novalidate>
+            <div class="field">
+              <label for="share-url">Panoptoの共有URL <span class="required">（必須）</span></label>
+              <p class="hint" id="share-hint">例: https://example.panopto.com/Panopto/Pages/Viewer.aspx?id=…</p>
+              <input id="share-url" name="share-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" required aria-describedby="share-hint share-error">
+              <p class="field-error" id="share-error"></p>
+            </div>
+
+            <label class="consent">
+              <input id="authorization" name="authorization" type="checkbox" required aria-describedby="authorization-error">
+              <span>私はこの動画への正当なアクセス権を持ち、提供者からダウンロードを許可されています。</span>
+            </label>
+            <p class="field-error" id="authorization-error"></p>
+
+            <button class="primary-button" type="submit">公式ページを開く <span aria-hidden="true">↗</span></button>
+          </form>
+
+          <p class="status" id="share-status" role="status"></p>
+        </div>
+      </section>
+
+      <section class="instructions" aria-labelledby="instructions-title">
+        <div class="step-number" aria-hidden="true">02</div>
+        <div>
+          <h2 id="instructions-title">公式ページで保存</h2>
+          <ol class="instruction-list">
+            <li>
+              <span class="instruction-title">所属組織の方法でログイン</span>
+              <span>Panoptoが求める場合は、通常の認証を完了します。</span>
+            </li>
+            <li>
+              <span class="instruction-title">公式の「ダウンロード」を選択</span>
+              <span>動画の設定やメニューにダウンロード項目が表示される場合だけ進みます。</span>
+            </li>
+            <li>
+              <span class="instruction-title">表示されなければ終了</span>
+              <span>禁止設定を変更したり、別の取得方法を試したりせず、動画の所有者へ確認します。</span>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <details class="advanced">
+        <summary>公式ページから取得したダウンロードURLを使う</summary>
+        <div class="advanced-inner">
+          <p>Panoptoの公式操作によってダウンロードURLが表示・コピーされた場合だけ使えます。このツールがURLを抽出することはありません。</p>
+          <form id="download-form" novalidate>
+            <div class="field">
+              <label for="download-url">公式のダウンロードURL <span class="required">（必須）</span></label>
+              <p class="hint" id="download-hint">共有URLと同じPanoptoサイトのHTTPS URLを入力してください。</p>
+              <input id="download-url" name="download-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" required aria-describedby="download-hint download-error">
+              <p class="field-error" id="download-error"></p>
+            </div>
+            <button class="secondary-button" type="submit">公式URLから保存を開始 <span aria-hidden="true">↓</span></button>
+          </form>
+          <p class="status" id="download-status" role="status"></p>
+        </div>
+      </details>
+
+      <section class="privacy" aria-labelledby="privacy-title">
+        <h2 id="privacy-title">プライバシー</h2>
+        <p>入力したURLはブラウザ内だけで処理されます。サーバーへの送信、履歴の保存、アクセス解析は行いません。ただし、公式ページを開いた後の通信はPanoptoサイトとの間で行われます。</p>
+      </section>
+    </main>
+
+    <footer>
+      <p>非公式の案内ツールです。Panoptoおよび各組織の利用規約・著作権・授業ルールに従ってください。</p>
+    </footer>
+  </body>
+</html>
