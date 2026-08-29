@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Panopto 保存ガイド</title>
+  <circle cx="32" cy="32" r="30" fill="#11181c"/>
+  <path fill="#fff" d="M23 17h12.5C43 17 48 21.4 48 28.2 48 35.6 42.8 40 35.1 40H30v9h-7V17Zm7 6v11h4.7c4.1 0 6.3-1.9 6.3-5.6 0-3.5-2.3-5.4-6.3-5.4H30Z"/>
+</svg>
