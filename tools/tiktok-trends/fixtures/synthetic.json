@@ -1,0 +1,97 @@
+{
+  "generated_at": "2026-08-21T00:00:00.000Z",
+  "expires_in_days": 7,
+  "samples": [
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-north",
+      "topic_key": "demo-topic-sunrise",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-12T00:00:00.000Z",
+      "like_count": 120,
+      "share_count": 8,
+      "view_count": 900,
+      "signal_keys": ["demo-signal-season"]
+    },
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-north",
+      "topic_key": "demo-topic-sunrise",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-20T00:00:00.000Z",
+      "like_count": 480,
+      "share_count": 42,
+      "view_count": 4200,
+      "signal_keys": ["demo-signal-season", "demo-signal-audio"]
+    },
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-south",
+      "topic_key": "demo-topic-market",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-20T00:00:00.000Z",
+      "like_count": 90,
+      "share_count": 5,
+      "view_count": 700,
+      "signal_keys": ["demo-signal-event"]
+    },
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-south",
+      "topic_key": "demo-topic-market",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-20T00:00:00.000Z",
+      "like_count": 110,
+      "share_count": 6,
+      "view_count": 800,
+      "signal_keys": ["demo-signal-event"]
+    },
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-south",
+      "topic_key": "demo-topic-market",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-20T00:00:00.000Z",
+      "like_count": 140,
+      "share_count": 7,
+      "view_count": 1000,
+      "signal_keys": ["demo-signal-event"]
+    },
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-south",
+      "topic_key": "demo-topic-market",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-20T00:00:00.000Z",
+      "like_count": 160,
+      "share_count": 9,
+      "view_count": 1200,
+      "signal_keys": ["demo-signal-event"]
+    },
+    {
+      "source_id": "fixture-source",
+      "license_version": "synthetic-v1",
+      "coarse_region": "demo-region-south",
+      "topic_key": "demo-topic-market",
+      "bucket_start": "2026-08-10T00:00:00.000Z",
+      "bucket_end": "2026-08-24T00:00:00.000Z",
+      "created_at": "2026-08-20T00:00:00.000Z",
+      "like_count": 180,
+      "share_count": 10,
+      "view_count": 1300,
+      "signal_keys": ["demo-signal-event"]
+    }
+  ]
+}
