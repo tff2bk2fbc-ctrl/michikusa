@@ -457,3 +457,12 @@ AIセキュリティ部署がリリースコミットを読み取り専用で再
 - ローカルXcodeプロジェクトへ依存置換、overlay、Capacitor syncを適用した。SwiftPMにFirebase Messagingが存在し旧Push pluginがないこと、Web資産3箇所が一致することを確認した。
 - 通知・認証・セキュリティ関連20件、relay 6/6、Xcode Simulator Debug buildが成功した。Web資産は`v124`、Worker healthは`api-45`へ更新した。
 - 実機でFCM受付・受信・開封・目視確認が成功するまでは、最終push／本番公開を保留する。詳細は`docs/SECURITY_PREFLIGHT_2026-08-19_FCM_TOKEN.md`に記録した。
+
+## 2026-08-29 運営者トレンド管理・調査機能の本番公開判定
+
+- `research/trend-source-scan` の8コミットを `main` へ公開する前に、運営者専用トレンド編集、公開トレンド表示、Wikipedia検索、調査用オフラインツール、関連ドキュメントを差分単位で再監査した。
+- 本番D1を `work/d1-backup/pre-operator-trends-20260829.sql` へ退避し、SHA-256を記録した後、`0006_operator_map_trends.sql` を適用した。コピー済みFirebase UIDは値をログへ出さず、`trend_editor` として1件だけ登録した。外部キー違反0件、公開トレンド初期値0件を確認した。
+- 公開APIは枠・表示名・検索語だけを返す。編集APIはFirebase認証後にD1の完全一致UID、enabled、失効日時、`trend_editor` 権限を検査し、3件上限、長さ、日付、重複、回数制限を検証する。運営者UID、監査情報、接続情報は公開しない。
+- Wikipedia通信は認証、回数制限、応答上限、固定接続先を備えるが、公開時の `WIKIPEDIA_API_STATE` は `disabled` とした。調査アダプターは本番アプリから自動実行されず、外部APIキーをリポジトリへ保存しない。
+- `npm run check` は121/121成功、FCM relayの本番依存監査は脆弱性0件、`git diff --check`、秘密情報・危険DOM sinkの追加差分検査、Wrangler 4.127.1 dry-run（39 assets、Worker bindings解決）が成功した。
+- セキュリティ判定は `APPROVE`。`main` のfast-forward、GitHub push、Cloudflare公開後に、公開トレンド200、管理API未認証401、Wikipedia無効化、本番healthを再確認する。
