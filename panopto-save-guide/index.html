@@ -87,9 +87,10 @@
         </div>
       </section>
 
-      <details class="advanced">
-        <summary>公式ページから取得したダウンロードURLを使う</summary>
+      <section class="advanced" aria-labelledby="download-title">
         <div class="advanced-inner">
+          <p class="eyebrow">AUTHORIZED DOWNLOAD</p>
+          <h2 id="download-title">公式URLから動画をダウンロード</h2>
           <p>Panoptoの公式操作によってダウンロードURLが表示・コピーされた場合だけ使えます。このツールがURLを抽出することはありません。</p>
           <form id="download-form" novalidate>
             <div class="field">
@@ -98,11 +99,12 @@
               <input id="download-url" name="download-url" type="url" inputmode="url" autocomplete="off" spellcheck="false" required aria-describedby="download-hint download-error">
               <p class="field-error" id="download-error"></p>
             </div>
-            <button class="secondary-button" type="submit">公式URLから保存を開始 <span aria-hidden="true">↓</span></button>
+            <button class="secondary-button" type="submit">ダウンロードURLを確認 <span aria-hidden="true">→</span></button>
           </form>
           <p class="status" id="download-status" role="status"></p>
+          <a class="download-button" id="download-link" href="#" target="_blank" rel="noopener noreferrer" download hidden>動画をダウンロード <span aria-hidden="true">↓</span></a>
         </div>
-      </details>
+      </section>
 
       <section class="privacy" aria-labelledby="privacy-title">
         <h2 id="privacy-title">プライバシー</h2>
