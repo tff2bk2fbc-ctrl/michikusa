@@ -13,6 +13,7 @@
   const downloadInput = document.querySelector('#download-url');
   const downloadError = document.querySelector('#download-error');
   const downloadStatus = document.querySelector('#download-status');
+  const downloadLink = document.querySelector('#download-link');
 
   function parseHttpsUrl(value) {
     try {
@@ -70,6 +71,8 @@
   downloadForm.addEventListener('submit', function (event) {
     event.preventDefault();
     downloadStatus.textContent = '';
+    downloadLink.hidden = true;
+    downloadLink.removeAttribute('href');
     const shareUrl = parseHttpsUrl(shareInput.value);
     const downloadUrl = parseHttpsUrl(downloadInput.value);
     let message = '';
@@ -90,11 +93,15 @@
       return;
     }
 
-    downloadStatus.textContent = '公式のダウンロードURLを新しいタブで開きました。ブラウザの案内に従って保存してください。';
-    window.open(downloadUrl.href, '_blank', 'noopener,noreferrer');
+    downloadLink.href = downloadUrl.href;
+    downloadLink.hidden = false;
+    downloadStatus.textContent = '公式URLを確認しました。下の「動画をダウンロード」を選び、ブラウザの案内に従って保存してください。';
+    downloadLink.focus();
   });
 
   downloadInput.addEventListener('input', function () {
     setFieldError(downloadInput, downloadError, '');
+    downloadLink.hidden = true;
+    downloadLink.removeAttribute('href');
   });
 })();
