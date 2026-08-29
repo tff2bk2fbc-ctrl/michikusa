@@ -31,6 +31,28 @@
     return hostLooksLikePanopto && pathLooksLikeViewer;
   }
 
+  function isPanoptoDownloadUrl(url) {
+    if (!url) return false;
+    const hostLooksLikePanopto = url.hostname.toLowerCase().endsWith('.panopto.com');
+    const pathLooksLikeDownload = /\/panopto\/(podcast|pages\/viewer)\/download\b/i.test(url.pathname);
+    return hostLooksLikePanopto && pathLooksLikeDownload;
+  }
+
+  function isPanoptoEntryUrl(url) {
+    return isPanoptoShareUrl(url) || isPanoptoDownloadUrl(url);
+  }
+
+  function triggerOfficialDownload(url) {
+    const link = document.createElement('a');
+    link.href = url.href;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }
+
   function setFieldError(input, output, message) {
     input.setAttribute('aria-invalid', message ? 'true' : 'false');
     output.textContent = message ? `エラー: ${message}` : '';
@@ -42,8 +64,8 @@
     const url = parseHttpsUrl(shareInput.value);
     const urlMessage = !url
       ? 'HTTPSで始まる完全なURLを入力してください。'
-      : !isPanoptoShareUrl(url)
-        ? 'panopto.com配下の公式なViewer、Embed、またはSessions URLを入力してください。'
+      : !isPanoptoEntryUrl(url)
+        ? 'panopto.com配下の公式な共有URLまたはダウンロードURLを入力してください。'
         : '';
     const authMessage = authorization.checked
       ? ''
@@ -57,7 +79,13 @@
       return;
     }
 
-    shareStatus.textContent = 'Panoptoの公式ページを新しいタブで開きました。ダウンロード項目が表示される場合だけ保存してください。';
+    if (isPanoptoDownloadUrl(url)) {
+      shareStatus.textContent = 'Panopto公式のダウンロードURLを確認しました。ブラウザの案内に従って保存してください。';
+      triggerOfficialDownload(url);
+      return;
+    }
+
+    shareStatus.textContent = '共有URLのためPanopto公式ページを新しいタブで開きました。ダウンロード項目が表示される場合だけ保存してください。';
     window.open(url.href, '_blank', 'noopener,noreferrer');
   });
 
@@ -77,8 +105,8 @@
     const downloadUrl = parseHttpsUrl(downloadInput.value);
     let message = '';
 
-    if (!shareUrl || !isPanoptoShareUrl(shareUrl)) {
-      message = '先に有効なPanopto共有URLを入力してください。';
+    if (!shareUrl || !isPanoptoEntryUrl(shareUrl)) {
+      message = '先に有効なPanopto共有URLまたは公式ダウンロードURLを入力してください。';
     } else if (!authorization.checked) {
       message = '先にアクセス権とダウンロード許可を確認してください。';
     } else if (!downloadUrl) {
