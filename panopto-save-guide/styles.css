@@ -77,13 +77,14 @@ input[aria-invalid="true"] { border-color: var(--danger); background: var(--dang
 .instruction-list li::before { content: counter(steps, decimal-leading-zero); color: var(--accent); font-size: 0.8rem; font-weight: 800; }
 .instruction-title { color: var(--ink); font-weight: 750; }
 
-.advanced { margin-top: 2rem; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
-.advanced summary { min-height: 4rem; padding: 1rem 0; display: flex; align-items: center; justify-content: space-between; gap: 1rem; font-size: 1.1rem; font-weight: 750; cursor: pointer; }
-.advanced summary::after { content: "+"; font-size: 1.6rem; font-weight: 400; }
-.advanced[open] summary::after { content: "−"; }
-.advanced summary::marker, .advanced summary::-webkit-details-marker { display: none; }
-.advanced-inner { padding: 0 0 2rem; max-width: 50rem; }
-.advanced-inner > p:first-child { color: var(--muted); }
+.advanced { margin-top: 2rem; padding: clamp(2rem, 5vw, 4rem) 0; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+.advanced h2 { margin: 0 0 0.75rem; font-size: clamp(1.75rem, 4vw, 2.8rem); line-height: 1.1; letter-spacing: -0.035em; }
+.advanced .eyebrow { margin-bottom: 1rem; }
+.advanced-inner { max-width: 50rem; }
+#download-title + p { color: var(--muted); }
+.download-button { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 3.25rem; margin-top: 0.75rem; padding: 0.8rem 1.15rem; color: #ffffff; background: var(--accent); border: 2px solid var(--accent); border-radius: var(--radius); font-weight: 800; text-decoration: none; }
+.download-button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.download-button[hidden] { display: none; }
 .privacy { margin-top: 5rem; display: grid; grid-template-columns: 1fr 2fr; gap: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--line-strong); }
 .privacy h2 { font-size: 1.5rem; }
 .privacy p { margin: 0; color: var(--muted); }
@@ -111,6 +112,7 @@ footer { max-width: var(--max); margin: 0 auto; padding: 2rem clamp(1.25rem, 4vw
 @media (prefers-color-scheme: dark) {
   :root { color-scheme: dark; --canvas: #11181c; --surface: #192227; --ink: #edf4f5; --muted: #b9c6ca; --line: #46555c; --line-strong: #84939a; --accent: #66d2d0; --accent-hover: #99e4e2; --accent-soft: #163f40; --danger: #ffaaa3; --danger-soft: #40211f; --focus: #ffcb63; }
   .primary-button { color: #071617; background: var(--accent); }
+  .download-button { color: #071617; }
   .brand-mark { background: var(--ink); color: var(--canvas); }
   .skip-link { background: var(--ink); color: var(--canvas); }
 }
