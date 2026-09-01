@@ -130,14 +130,26 @@ async function putRemotePhoto(img,photoId,screen,kind){
   if(!img||!photoId||!screen||!screen.isConnected)return;
   var generation=screen.__photoGeneration||0;
   var controller=typeof AbortController!=='undefined'?new AbortController():null;
+  var u='';
   if(controller)(screen.__photoControllers||(screen.__photoControllers=[])).push(controller);
   try{
     var r=await api('/api/photo/'+encodeURIComponent(photoId)+'/'+(kind||'thumb'),controller?{signal:controller.signal}:undefined);
     if(!r.ok)throw new Error('photo '+r.status);
-    var u=URL.createObjectURL(await r.blob());
+    u=URL.createObjectURL(await r.blob());
     if(!screen.isConnected||!img.isConnected||generation!==screen.__photoGeneration){URL.revokeObjectURL(u);return;}
-    screen.__urls.push(u);img.src=u;img.classList.add('loaded');
-  }catch(e){if(e&&e.name!=='AbortError'&&img.isConnected&&img.closest('[data-photo]'))img.closest('[data-photo]').classList.add('photo-failed');}
+    img.src=u;
+    if(typeof img.decode==='function')await img.decode();
+    else if(!img.complete||!img.naturalWidth)await new Promise(function(resolve,reject){
+      img.addEventListener('load',resolve,{once:true});img.addEventListener('error',reject,{once:true});
+    });
+    if(!screen.isConnected||!img.isConnected||generation!==screen.__photoGeneration){URL.revokeObjectURL(u);return;}
+    screen.__urls.push(u);u='';img.classList.add('loaded');
+    // 認証済みレスポンスを受け取り、画像の復号まで完了した時だけ知らせる。
+    if(window.SpotaMotion)window.SpotaMotion.sharedPhotoReveal(img);
+  }catch(e){if(u)URL.revokeObjectURL(u);if(e&&e.name!=='AbortError'&&img.isConnected){
+    if(img.closest('[data-photo]'))img.closest('[data-photo]').classList.add('photo-failed');
+    if(window.SpotaMotion)window.SpotaMotion.photoError(img);
+  }}
   finally{
     if(controller){var at=(screen.__photoControllers||[]).indexOf(controller);if(at>=0)screen.__photoControllers.splice(at,1);}
   }
@@ -220,10 +232,34 @@ function albumMonthLabel(key){
   var m=/^(\d{4})-(\d{2})/.exec(key||'');
   return m?Number(m[1])+'年'+Number(m[2])+'月':'日付のない思い出';
 }
+var ALBUM_REORDER_LIMIT=120;
+function albumSpotId(p){return String(p&&((p.id||p.server_id||p.server_photo_id||p.photo_id)||''));}
+function albumCanReorder(list){
+  if(!Array.isArray(list)||!list.length||list.length>ALBUM_REORDER_LIMIT)return false;
+  var seen=Object.create(null);
+  return list.every(function(p){var id=albumSpotId(p);if(!id||id.length>256||seen[id])return false;seen[id]=1;return true;});
+}
+function albumOrderRows(list,key,scope){return list.map(function(p,index){
+  return {id:albumSpotId(p),owner_scope:scope,month_key:key,order:index};
+});}
+function albumOrderValue(p){
+  var value=Number(p&&p.album_order);
+  return isFinite(value)&&value>=0?value:null;
+}
+function albumCompare(a,b){
+  var ao=albumOrderValue(a),bo=albumOrderValue(b);
+  if(ao!==null||bo!==null){
+    if(ao===null)return 1;if(bo===null)return -1;
+    if(ao!==bo)return ao-bo;
+  }
+  var date=String(b&&b.d||'').localeCompare(String(a&&a.d||''));
+  return date||albumSpotId(a).localeCompare(albumSpotId(b));
+}
 function renderAlbumHome(screen,host){
   var withPhoto=spots.filter(function(p){return p.photo_thumb||p.photo;})
-    .slice().sort(function(a,b){return String(b.d||'').localeCompare(String(a.d||''));});
+    .slice();
   var groups={};withPhoto.forEach(function(p){var key=String(p.d||'').slice(0,7)||'none';(groups[key]||(groups[key]=[])).push(p);});
+  Object.keys(groups).forEach(function(key){groups[key].sort(albumCompare);});
   var keys=Object.keys(groups).sort().reverse();
   host.innerHTML='<section class="memory-intro"><p class="release-kicker">自分の地図</p>'+
     '<h1>思い出を、場所と時間で。</h1><p>写真は自分の地図に必ず残り、公開を選んだものだけがみんなの地図にも現れます。</p>'+
@@ -231,20 +267,137 @@ function renderAlbumHome(screen,host){
     '<section class="daily-view"><div><p class="release-kicker">1日1枚</p><b>今日の思い出</b><span>'+(dailyEnabled()?'毎日ランダムな時間に、端末内で候補を選びます':'許可した写真から1枚だけ候補にします')+'</span></div>'+
       '<button type="button" id="daily-toggle">'+(dailyEnabled()?'停止':'はじめる')+'</button></section>'+
     (keys.length?keys.map(function(key){
-      return '<section class="album-section"><div class="album-heading"><h2>'+albumMonthLabel(key)+'</h2><span>'+groups[key].length+'枚</span></div>'+
-        '<div class="album-grid">'+groups[key].map(function(p,i){
-          return '<button type="button" data-album="'+esc(key)+'" data-index="'+i+'" aria-label="'+esc(p.n||'思い出')+'を開く">'+
-            '<img src="'+esc(p.photo_thumb||p.photo)+'" alt="" loading="lazy"><span>'+esc(p.n||'')+'</span></button>';
-        }).join('')+'</div></section>';
+      var canReorder=albumCanReorder(groups[key]);
+      return '<section class="album-section" data-album-section="'+esc(key)+'"><div class="album-heading"><h2>'+albumMonthLabel(key)+'</h2><div class="album-heading-actions"><span>'+groups[key].length+'枚</span><button type="button" class="album-edit" data-album-edit="'+esc(key)+'"'+(canReorder?'':' disabled')+' aria-label="'+(canReorder?'並べ替え':'並べ替え（120枚まで）')+'">'+(canReorder?'並べ替え':'120枚まで')+'</button></div></div>'+
+        '<div class="album-sort-toolbar" data-album-toolbar="'+esc(key)+'" hidden><p>写真をドラッグ、または「前へ」「後へ」で順番を変更</p><div><button type="button" data-album-cancel="'+esc(key)+'">キャンセル</button><button type="button" class="album-save" data-album-save="'+esc(key)+'">保存</button></div></div>'+
+        '<p class="album-sort-status sr-only" data-album-status="'+esc(key)+'" role="status" aria-atomic="true"></p>'+
+        '<div class="album-grid" data-album-grid="'+esc(key)+'">'+groups[key].map(function(p,i){return albumCardMarkup(p,key,i,false);}).join('')+'</div></section>';
     }).join(''):'<div class="release-empty"><b>まだ写真がありません</b><span>写真を選ぶと、撮影場所と日付から最初のアルバムを作れます。</span></div>');
-  host.querySelector('#album-import').onclick=function(){closeReleaseScreen();chooseAlbumPhotos();};
-  host.querySelector('#daily-toggle').onclick=async function(){var button=this;button.disabled=true;var changed=await setDailyPhotoEnabled(!dailyEnabled());if(changed)renderAlbumHome(screen,host);else button.disabled=false;};
-  Array.prototype.forEach.call(host.querySelectorAll('[data-album]'),function(button){
-    button.onclick=function(){
-      var list=groups[button.dataset.album]||[],idx=Number(button.dataset.index)||0,p=list[idx]||{};
-      openViewer(list.map(function(x){return x.photo||x.photo_thumb;}),idx,'じぶん',p.place||p.n,p.tag||'',p.d||'',[],list.map(function(x){return x.server_photo_id||null;}));
-    };
-  });
+  var albumImport=host.querySelector('#album-import');if(albumImport)albumImport.onclick=function(){closeReleaseScreen();chooseAlbumPhotos();};
+  var dailyToggle=host.querySelector('#daily-toggle');if(dailyToggle)dailyToggle.onclick=async function(){var button=this;button.disabled=true;var changed=await setDailyPhotoEnabled(!dailyEnabled());if(changed)renderAlbumHome(screen,host);else button.disabled=false;};
+  function findAlbumNode(root,attribute,value){var nodes=root.querySelectorAll('['+attribute+']'),wanted=String(value);for(var i=0;i<nodes.length;i++)if(nodes[i].getAttribute(attribute)===wanted)return nodes[i];return null;}
+  function announce(key,message){var status=findAlbumNode(host,'data-album-status',key);if(status)status.textContent=message;}
+  function renderGrid(key,list,editing,state){
+    var grid=findAlbumNode(host,'data-album-grid',key);if(!grid)return;
+    grid.innerHTML=list.map(function(p,i){return albumCardMarkup(p,key,i,editing);}).join('');
+    bindGrid(key,list,editing,state);
+  }
+  function bindGrid(key,list,editing,state){
+    var grid=findAlbumNode(host,'data-album-grid',key);if(!grid)return;
+    Array.prototype.forEach.call(grid.querySelectorAll('[data-album-photo]'),function(button){button.onclick=function(){
+      if(state)return;
+      var current=list.filter(function(p){return albumSpotId(p)===button.dataset.spotId;})[0]||{};
+      var index=list.indexOf(current);
+      openViewer(list.map(function(x){return x.photo||x.photo_thumb;}),Math.max(0,index),'じぶん',current.place||current.n,current.tag||'',current.d||'',[],list.map(function(x){return x.server_photo_id||null;}));
+    };});
+    if(!editing||!state)return;
+    Array.prototype.forEach.call(grid.querySelectorAll('.album-card'),function(card){
+      function endDrag(event,cancel){
+        var drag=state.drag;if(!drag||drag.card!==card)return;
+        if(event&&event.pointerId!==undefined&&drag.pointerId!==event.pointerId)return;
+        state.drag=null;card.classList.remove('is-dragging');
+        try{if(card.hasPointerCapture&&card.hasPointerCapture(drag.pointerId))card.releasePointerCapture(drag.pointerId);}catch(e){}
+        if(cancel){applyOrder(state,drag.origin);announce(key,'移動を取り消しました');}
+        else if(drag.moved)announce(key,'写真の仮の順番を変更しました。保存で確定します');
+      }
+      card.addEventListener('keydown',function(event){
+        var index=state.order.findIndex(function(p){return albumSpotId(p)===card.dataset.spotId;});
+        if(index<0)return;
+        var target=-1;
+        if(event.key==='ArrowLeft')target=index-1;
+        else if(event.key==='ArrowRight')target=index+1;
+        else if(event.key==='Home')target=0;
+        else if(event.key==='End')target=state.order.length-1;
+        else return;
+        event.preventDefault();if(target<0||target>=state.order.length||target===index)return;
+        var next=state.order.slice(),item=next.splice(index,1)[0];next.splice(target,0,item);applyOrder(state,next);
+        announce(key,(item.n||'写真')+'を'+(target+1)+'番目に移動しました');
+        var focus=findAlbumNode(grid,'data-spot-id',albumSpotId(item));if(focus)focus.focus();
+      });
+      card.addEventListener('pointerdown',function(event){
+        if(event.target.closest&&event.target.closest('.album-reorder-controls'))return;
+        if(state.drag||event.isPrimary===false||(event.button!==undefined&&event.button!==0))return;
+        state.drag={card:card,pointerId:event.pointerId,origin:state.order.slice(),moved:false,startX:event.clientX,startY:event.clientY};
+        card.classList.add('is-dragging');
+        try{card.setPointerCapture(event.pointerId);}catch(e){}
+      });
+      card.addEventListener('pointermove',function(event){
+        var drag=state.drag;if(!drag||drag.pointerId!==event.pointerId)return;
+        if(!drag.moved&&Math.hypot(event.clientX-drag.startX,event.clientY-drag.startY)<6)return;
+        drag.moved=true;
+        var target=document.elementFromPoint(event.clientX,event.clientY),other=target&&target.closest&&target.closest('.album-card');
+        if(!other||other===card||other.parentNode!==grid)return;
+        var order=state.order.slice(),from=order.findIndex(function(p){return albumSpotId(p)===card.dataset.spotId;}),to=order.findIndex(function(p){return albumSpotId(p)===other.dataset.spotId;});
+        if(from<0||to<0||from===to)return;
+        var item=order.splice(from,1)[0],rect=other.getBoundingClientRect(),insert=event.clientY>rect.top+rect.height/2?to+1:to;
+        if(from<insert)insert--;if(insert<0)insert=0;if(insert>order.length)insert=order.length;
+        order.splice(insert,0,item);if(order.map(albumSpotId).join('|')!==state.order.map(albumSpotId).join('|'))applyOrder(state,order);
+      });
+      card.addEventListener('pointerup',function(event){
+        endDrag(event,false);
+      });
+      card.addEventListener('pointercancel',function(event){
+        endDrag(event,true);
+      });
+      card.addEventListener('lostpointercapture',function(event){endDrag(event,true);});
+      Array.prototype.forEach.call(card.querySelectorAll('[data-album-move]'),function(button){button.onclick=function(event){
+        event.stopPropagation();var index=state.order.findIndex(function(p){return albumSpotId(p)===card.dataset.spotId;}),nextIndex=index+(button.dataset.albumMove==='next'?1:-1);
+        if(index<0||nextIndex<0||nextIndex>=state.order.length)return;
+        var next=state.order.slice(),item=next.splice(index,1)[0];next.splice(nextIndex,0,item);applyOrder(state,next);announce(key,(item.n||'写真')+'を'+(nextIndex+1)+'番目に移動しました');
+        var focus=findAlbumNode(grid,'data-spot-id',albumSpotId(item));if(focus)focus.focus();
+      };});
+    });
+  }
+  function applyOrder(state,next){
+    var grid=state.grid,first=new Map();Array.prototype.forEach.call(grid.children,function(card){first.set(card.dataset.spotId,card.getBoundingClientRect());});
+    next.forEach(function(p){var card=Array.prototype.find.call(grid.children,function(node){return node.dataset.spotId===albumSpotId(p);});if(card)grid.appendChild(card);});
+    state.order=next.slice();
+    var reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(reduce)return;
+    requestAnimationFrame(function(){Array.prototype.forEach.call(grid.children,function(card){var from=first.get(card.dataset.spotId);if(!from)return;var to=card.getBoundingClientRect(),dx=from.left-to.left,dy=from.top-to.top;if(Math.abs(dx)+Math.abs(dy)<1)return;card.animate([{transform:'translate3d('+dx+'px,'+dy+'px,0)'},{transform:'none'}],{duration:360,easing:'cubic-bezier(.22,.61,.36,1)'});});});
+  }
+  function startReorder(key){
+    var list=groups[key]||[];if(!albumCanReorder(list))return;
+    var section=findAlbumNode(host,'data-album-section',key),grid=findAlbumNode(host,'data-album-grid',key);if(!section||!grid)return;
+    var state={key:key,grid:grid,order:list.slice(),before:list.slice(),drag:null,scope:activeSpotScope,scopeSwitch:spotScopeSwitch};
+    section.__albumReorder=state;section.classList.add('is-editing');
+    section.querySelector('[data-album-edit]').hidden=true;section.querySelector('[data-album-toolbar]').hidden=false;
+    renderGrid(key,state.order,true,state);state.grid=grid;announce(key,'並べ替えモード。ドラッグ、前へ・後へ、左右キーで順番を変更できます');
+    var first=grid.querySelector('.album-card');if(first)first.focus();
+  }
+  function finishReorder(key,cancel){
+    var section=findAlbumNode(host,'data-album-section',key),state=section&&section.__albumReorder;if(!section||!state)return;
+    if(cancel){applyOrder(state,state.before);groups[key]=state.before.slice();}
+    section.classList.remove('is-editing');section.__albumReorder=null;renderGrid(key,groups[key],false);
+    var edit=section.querySelector('[data-album-edit]');if(edit){edit.hidden=false;edit.focus();}
+    section.querySelector('[data-album-toolbar]').hidden=true;
+    announce(key,cancel?'並べ替えをキャンセルしました':'並べ替えを保存しました');
+  }
+  async function saveReorder(key){
+    var section=findAlbumNode(host,'data-album-section',key),state=section&&section.__albumReorder;if(!state)return;
+    if(state.scope!==activeSpotScope||state.scopeSwitch!==spotScopeSwitch){finishReorder(key,true);setTip('アカウントが変わったため保存を中止しました','error');return;}
+    var save=section.querySelector('[data-album-save]');if(save)save.disabled=true;
+    var scope=state.scope,before=state.before.slice(),rows=albumOrderRows(state.order,key,scope);
+    if(typeof dbPutAlbumOrdersAtomic!=='function'||!(await dbPutAlbumOrdersAtomic(rows,scope))){if(save)save.disabled=false;setTip(dbFailureReason?dbFailureReason():'順番を保存できませんでした','error');announce(key,'保存に失敗しました。順番は保持されています');return;}
+    if(scope!==activeSpotScope||state.scopeSwitch!==spotScopeSwitch)return;
+    state.order.forEach(function(p,index){p.album_order=index;});groups[key]=state.order.slice();
+    finishReorder(key,false);setTip('アルバムの順番を保存しました','success');
+    if(window.SpotaMotion&&typeof window.SpotaMotion.showUndo==='function')window.SpotaMotion.showUndo('アルバムの順番を保存しました',async function(){
+      if(scope!==activeSpotScope||state.scopeSwitch!==spotScopeSwitch)throw new Error('アカウントが変わったため元に戻せません');
+      if(!(await dbPutAlbumOrdersAtomic(albumOrderRows(before,key,scope),scope)))throw new Error(dbFailureReason?dbFailureReason():'元の順番へ戻せませんでした');
+      if(scope!==activeSpotScope||state.scopeSwitch!==spotScopeSwitch)throw new Error('アカウントが変わったため元に戻せません');
+      before.forEach(function(p,index){p.album_order=index;});groups[key]=before.slice();
+      if(screen.isConnected)renderAlbumHome(screen,host);setTip('元の順番へ戻しました','success');
+    });
+  }
+  Array.prototype.forEach.call(host.querySelectorAll('[data-album-edit]'),function(button){button.onclick=function(){startReorder(button.dataset.albumEdit);};});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-album-cancel]'),function(button){button.onclick=function(){finishReorder(button.dataset.albumCancel,true);};});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-album-save]'),function(button){button.onclick=function(){saveReorder(button.dataset.albumSave);};});
+  keys.forEach(function(key){bindGrid(key,groups[key],false);});
+}
+function albumCardMarkup(p,key,index,editing){
+  var id=albumSpotId(p),label=p.n||p.place||'思い出';
+  return '<div class="album-card" data-spot-id="'+esc(id)+'"'+(editing?' tabindex="0" role="group" aria-label="'+esc(label)+'。左右キーで移動"':'')+'><button type="button" class="album-photo" data-album-photo="'+esc(key)+'" data-spot-id="'+esc(id)+'" aria-label="'+esc(label)+'を開く"'+(editing?' disabled aria-hidden="true"':'')+'><img src="'+esc(p.photo_thumb||p.photo)+'" alt="" loading="lazy"><span>'+esc(p.n||'')+'</span></button>'+(editing?'<div class="album-reorder-controls"><button type="button" data-album-move="prev" aria-label="'+esc(label)+'を前へ">前へ</button><button type="button" data-album-move="next" aria-label="'+esc(label)+'を後へ">後へ</button></div>':'')+'</div>';
 }
 
 /* ---------- タイムライン / 通知 / チャット ---------- */
@@ -300,7 +453,7 @@ function openPostReport(post){
   };
 }
 function bindFeedCards(screen,host,posts,timelineState){
-  Array.prototype.forEach.call(host.querySelectorAll('[data-profile]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){if(b.dataset.profile)openPublicProfile(b.dataset.profile);};});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-profile]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){if(b.dataset.profile)openPublicProfile(b.dataset.profile,b);};});
   Array.prototype.forEach.call(host.querySelectorAll('[data-map]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){openTimelineMap(posts[Number(b.dataset.map)]);};});
   Array.prototype.forEach.call(host.querySelectorAll('.timeline-photo'),function(b){
     if(b.__releaseBound)return;b.__releaseBound=1;
@@ -313,7 +466,6 @@ function bindFeedCards(screen,host,posts,timelineState){
         clearTimeout(openTimer);lastTap=0;
         var like=b.closest('.timeline-card').querySelector('[data-like]');
         if(like&&like.getAttribute('aria-pressed')!=='true')like.click();
-        else if(window.SpotaMotion)window.SpotaMotion.restartClass(b,'like-burst',1000);
       }else{lastTap=now;openTimer=setTimeout(openPhoto,340);}
     };
   });
@@ -325,13 +477,14 @@ function bindFeedCards(screen,host,posts,timelineState){
       if(window.SpotaMotion)window.SpotaMotion.rollNumber(b.querySelector('b'),p.like_count);
       else b.querySelector('b').innerHTML='<span>'+p.like_count+'</span>';
       b.setAttribute('aria-label','いいね '+p.like_count+'件');}
-    b.disabled=true;paint(next,wasCount+(next?1:-1));
-    if(window.SpotaMotion){
-      if(next){window.SpotaMotion.restartClass(b,'flash',820);window.SpotaMotion.restartClass(photo,'like-burst',1000);}
-      else window.SpotaMotion.restartClass(b,'unlike-settle',300);
+    b.disabled=true;
+    try{var j=await socialJson('/api/posts/'+encodeURIComponent(p.id)+'/like',{method:next?'PUT':'DELETE'});paint(j.liked,j.count);
+      if(window.SpotaMotion){
+        if(j.liked&&!wasLiked){window.SpotaMotion.restartClass(b,'flash',820);window.SpotaMotion.restartClass(photo,'like-burst',1000);}
+        else if(!j.liked&&wasLiked)window.SpotaMotion.restartClass(b,'unlike-settle',300);
+      }
     }
-    try{var j=await socialJson('/api/posts/'+encodeURIComponent(p.id)+'/like',{method:next?'PUT':'DELETE'});paint(j.liked,j.count);}
-    catch(e){paint(wasLiked,wasCount);setTip(e.message);}b.disabled=false;
+    catch(e){paint(wasLiked,wasCount);setTip(e.message,'error');}b.disabled=false;
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-comments]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){
     var state=timelineState||{};state={query:state.query||'',mode:state.mode||'recommended',scrollY:screen.scrollTop||0};
@@ -347,25 +500,33 @@ function bindFeedCards(screen,host,posts,timelineState){
       b.setAttribute('aria-label','フラッシュ '+p.flash_count+'件');b.querySelector('b').textContent=p.flash_count;
       setTimeout(function(){b.classList.remove('flash-burst');},520);
       setTip(Number(j.recipient_count)?Number(j.recipient_count)+'人へフラッシュしました':'フラッシュしました');
-    }catch(e){b.disabled=false;setTip(e.message||'フラッシュできませんでした');}
+    }catch(e){b.disabled=false;setTip(e.message||'フラッシュできませんでした','error');}
   };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-follow]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
     var p=posts[Number(b.dataset.follow)],previous=!!p.following,next=!previous,handle=p.author&&p.author.handle;if(!handle)return;
     function paint(value){p.following=!!value;b.classList.toggle('on',p.following);b.setAttribute('aria-pressed',String(p.following));b.setAttribute('aria-label',p.following?'フォロー中':'フォロー');}
-    b.disabled=true;paint(next);if(next&&window.SpotaMotion)window.SpotaMotion.restartClass(b,'follow-confirm',620);
-    try{await socialJson('/api/follows/'+encodeURIComponent(handle),{method:next?'PUT':'DELETE'});}
-    catch(e){paint(previous);setTip(e.message);}b.disabled=false;
+    b.disabled=true;
+    try{await socialJson('/api/follows/'+encodeURIComponent(handle),{method:next?'PUT':'DELETE'});paint(next);if(next&&window.SpotaMotion)window.SpotaMotion.restartClass(b,'follow-confirm',620);}
+    catch(e){paint(previous);setTip(e.message,'error');}b.disabled=false;
   };});
-  Array.prototype.forEach.call(host.querySelectorAll('[data-share]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){sharePost(posts[Number(b.dataset.share)]);};});
+  Array.prototype.forEach.call(host.querySelectorAll('[data-share]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=async function(){
+    if(b.disabled)return;b.disabled=true;
+    try{await sharePost(posts[Number(b.dataset.share)],b);}finally{if(b.isConnected)b.disabled=false;}
+  };});
   Array.prototype.forEach.call(host.querySelectorAll('[data-report]'),function(b){if(b.__releaseBound)return;b.__releaseBound=1;b.onclick=function(){openPostReport(posts[Number(b.dataset.report)]);};});
 }
-async function sharePost(post){
+async function sharePost(post,source){
   try{
     var j=await socialJson('/api/shares',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({target_type:'post',target_id:post.id,expires_in_days:7})});
     var url=location.origin+j.path,title=post.title||post.place_name||'Spotaの思い出';
-    if(navigator.share)await navigator.share({title:title,url:url});
-    else if(navigator.clipboard){await navigator.clipboard.writeText(url);setTip('共有リンクをコピーしました');}
-  }catch(e){setTip(e.message||'共有できませんでした');}
+    if(navigator.share){
+      // これは「共有完了」ではなく、OS共有シートを開いた手応え。成功表示は出さない。
+      if(window.SpotaMotion)window.SpotaMotion.shareLaunch(source);
+      try{await navigator.share({title:title,url:url});}
+      catch(shareError){if(shareError&&shareError.name==='AbortError')return;throw shareError;}
+    }
+    else if(navigator.clipboard){await navigator.clipboard.writeText(url);if(window.SpotaMotion)window.SpotaMotion.shareLaunch(source);setTip('共有リンクをコピーしました','success');}
+  }catch(e){setTip(e.message||'共有できませんでした','error');}
 }
 function bindTimelineRefresh(screen,host,query,mode){
   var hint=host.querySelector('.timeline-refresh-hint');
@@ -461,7 +622,7 @@ async function renderTimeline(screen,host,query,mode,restoreY,refreshing){
     var more=host.querySelector('#feed-more');if(more)more.onclick=async function(){
       more.disabled=true;try{var next=await socialJson('/api/feed',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({limit:24,cursor:j.cursor,mode:mode,query:query||''})});if(!socialRenderAlive(screen,host,generation))return;var offset=posts.length;
         posts=posts.concat(next.posts||[]);var list=host.querySelector('.timeline-list');list.insertAdjacentHTML('beforeend',(next.posts||[]).map(function(p,i){return feedCard(p,offset+i);}).join(''));bindFeedCards(screen,list,posts,{query:query,mode:mode});j=next;if(!next.has_more)more.remove();else more.disabled=false;
-      }catch(e){more.disabled=false;setTip(e.message);}
+      }catch(e){more.disabled=false;setTip(e.message,'error');}
     };
   }catch(e){
     if(!socialRenderAlive(screen,host,generation))return;
@@ -471,14 +632,30 @@ async function renderTimeline(screen,host,query,mode,restoreY,refreshing){
 }
 
 async function openComments(post,onBack){
-  var screen=makeReleaseScreen('コメント',{onBack:onBack}),body=screen.querySelector('.release-body');
-  body.innerHTML='<div class="comment-list" aria-live="polite">読み込んでいます…</div><form class="comment-form"><input maxlength="1000" placeholder="コメントを書く" aria-label="コメント"><button type="submit">送る</button></form>';
-  var list=body.querySelector('.comment-list'),form=body.querySelector('.comment-form'),input=form.querySelector('input');
+  // #16: タイムライン上の写真を残したまま、コメントだけを下から重ねる。
+  var previousFocus=document.activeElement,commentInert=[];
+  var sheet=showSheet('<div class="grab" aria-hidden="true"></div><section class="comment-sheet-body" role="dialog" aria-modal="true" aria-labelledby="comment-sheet-title"><header><h2 id="comment-sheet-title">コメント</h2><button type="button" data-comment-close>閉じる</button></header><div class="comment-list" aria-live="polite">読み込んでいます…</div><form class="comment-form"><input maxlength="1000" placeholder="コメントを書く" aria-label="コメント"><button type="submit">送る</button></form></section>',function(){commentInert.forEach(function(node){node.inert=false;});commentInert=[];if(previousFocus&&previousFocus.isConnected)previousFocus.focus();});
+  sheet.classList.add('comment-sheet-shell');
+  Array.prototype.forEach.call(document.body.children,function(node){
+    if(node!==sheet&&node!==scrim&&node.id!=='err'&&node.id!=='spota-wait'&&node.id!=='spota-wait-status'&&!node.inert){node.inert=true;commentInert.push(node);}
+  });
+  sheet.querySelector('[data-comment-close]').onclick=closeSheet;
+  sheet.onkeydown=function(event){
+    if(event.key==='Escape'){event.preventDefault();closeSheet();return;}
+    if(event.key!=='Tab')return;
+    var focusable=Array.prototype.filter.call(sheet.querySelectorAll('button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),a[href],[tabindex]:not([tabindex="-1"])'),function(node){return !node.hidden&&node.offsetParent!==null;});
+    if(!focusable.length){event.preventDefault();return;}
+    var first=focusable[0],last=focusable[focusable.length-1];
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
+  };
+  requestAnimationFrame(function(){var close=sheet.querySelector('[data-comment-close]');if(close&&sheet.isConnected)close.focus();});
+  var body=sheet.querySelector('.comment-sheet-body'),list=body.querySelector('.comment-list'),form=body.querySelector('.comment-form'),input=form.querySelector('input');
   function row(c){var who=c.author&&(c.author.name||c.author.handle)||'ユーザー';return '<div class="comment-row" data-comment="'+esc(c.id)+'"><i>'+esc(who.charAt(0))+'</i><div><b>'+esc(who)+'</b><p>'+esc(c.body)+'</p><time>'+esc(releaseDate(c.created_at))+'</time></div>'+(c.mine?'<button type="button" aria-label="コメントを削除">×</button>':'')+'</div>';}
-  function bindDelete(){Array.prototype.forEach.call(list.querySelectorAll('.comment-row>button'),function(b){b.onclick=async function(){var r=b.closest('[data-comment]');try{await socialJson('/api/posts/'+encodeURIComponent(post.id)+'/comments/'+encodeURIComponent(r.dataset.comment),{method:'DELETE'});r.remove();}catch(e){setTip(e.message);}};});}
+  function bindDelete(){Array.prototype.forEach.call(list.querySelectorAll('.comment-row>button'),function(b){b.onclick=async function(){var r=b.closest('[data-comment]');try{await socialJson('/api/posts/'+encodeURIComponent(post.id)+'/comments/'+encodeURIComponent(r.dataset.comment),{method:'DELETE'});r.remove();}catch(e){setTip(e.message,'error');}};});}
   try{var j=await socialJson('/api/posts/'+encodeURIComponent(post.id)+'/comments');list.innerHTML=(j.comments||[]).length?(j.comments||[]).map(row).join(''):'<div class="release-empty"><b>最初のコメントをどうぞ</b></div>';bindDelete();}
   catch(e){list.innerHTML='<div class="release-empty"><b>コメントを読めませんでした</b><span>'+esc(e.message)+'</span></div>';}
-  form.onsubmit=async function(e){e.preventDefault();var value=input.value.trim();if(!value)return;form.querySelector('button').disabled=true;try{var c=await socialJson('/api/posts/'+encodeURIComponent(post.id)+'/comments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:value,client_operation_id:nid()})});if(list.querySelector('.release-empty'))list.innerHTML='';list.insertAdjacentHTML('beforeend',row(c));var inserted=list.lastElementChild;if(inserted)inserted.classList.add('motion-comment-in');input.value='';bindDelete();}catch(err){setTip(err.message);}form.querySelector('button').disabled=false;};
+  form.onsubmit=async function(e){e.preventDefault();var value=input.value.trim();if(!value)return;form.querySelector('button').disabled=true;try{var c=await socialJson('/api/posts/'+encodeURIComponent(post.id)+'/comments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:value,client_operation_id:nid()})});if(list.querySelector('.release-empty'))list.innerHTML='';list.insertAdjacentHTML('beforeend',row(c));var inserted=list.lastElementChild;if(inserted)inserted.classList.add('motion-comment-in');input.value='';bindDelete();}catch(err){setTip(err.message,'error');}form.querySelector('button').disabled=false;};
 }
 
 function notificationCopy(n){return {like:'あなたの思い出にいいねしました',comment:'コメントしました',flash:'公開された思い出をフラッシュで届けました',follow:'あなたをフォローしました',post:'新しい思い出を公開しました',message:'メッセージが届きました'}[n.kind]||'お知らせがあります';}
@@ -489,7 +666,7 @@ async function renderNotifications(screen,host){
     var newestUnread=list.querySelector('.notification-row.unread');if(newestUnread)newestUnread.classList.add('motion-notification-in');
     Array.prototype.forEach.call(list.querySelectorAll('.notification-row'),function(b){b.onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:[b.dataset.notification]})});}catch(e){}if(b.dataset.kind==='message'&&b.dataset.entity)openConversation(b.dataset.entity,b.querySelector('b').textContent);else if((b.dataset.kind==='like'||b.dataset.kind==='comment'||b.dataset.kind==='flash')&&b.dataset.entity)openSocialHub('timeline');else if(b.dataset.handle)openPublicProfile(b.dataset.handle);refreshSocialBadge();};});
   }catch(e){if(!socialRenderAlive(screen,host,generation))return;var failed=host.querySelector('.notification-list');if(failed)failed.innerHTML='<div class="release-empty"><b>通知を読めませんでした</b><span>'+esc(e.message)+'</span></div>';}
-  host.querySelector('#notifications-read').onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})});Array.prototype.forEach.call(host.querySelectorAll('.notification-row'),function(r){r.classList.remove('unread');});refreshSocialBadge();}catch(e){setTip(e.message);}};
+  host.querySelector('#notifications-read').onclick=async function(){try{await socialJson('/api/notifications/read',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({all:true})});Array.prototype.forEach.call(host.querySelectorAll('.notification-row'),function(r){r.classList.remove('unread');});refreshSocialBadge();}catch(e){setTip(e.message,'error');}};
 }
 async function renderConversations(screen,host){
   var generation=beginSocialRender(screen);
@@ -508,7 +685,7 @@ async function openConversation(id,label){
 }
 async function startConversation(handle){
   try{var j=await socialJson('/api/conversations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({handle:handle})});openConversation(j.id,j.person&&(j.person.name||j.person.handle));}
-  catch(e){setTip(e.message||'フレンドになるとメッセージを送れます');}
+  catch(e){setTip(e.message||'フレンドになるとメッセージを送れます','error');}
 }
 async function refreshSocialBadge(){
   var notificationBadge=document.getElementById('notification-badge');
@@ -542,15 +719,25 @@ async function openProfileIconPicker(handle,current){
   body.innerHTML='<section class="profile-icon-picker"><p>プロフィールに表示する印を選んでください。</p><div role="radiogroup" aria-label="プロフィールアイコン">'+
     PROFILE_ICONS.map(function(key){var on=key===current;return '<button type="button" data-profile-icon="'+key+'" class="'+(on?'on':'')+'" role="radio" aria-checked="'+String(on)+'" aria-label="'+esc(PROFILE_ICON_LABELS[key])+'">'+profileIconSvg(key)+'<span>'+esc(PROFILE_ICON_LABELS[key])+'</span></button>';}).join('')+'</div></section>';
   Array.prototype.forEach.call(body.querySelectorAll('[data-profile-icon]'),function(button){button.onclick=async function(){
-    var key=button.dataset.profileIcon;button.disabled=true;
+    var key=button.dataset.profileIcon;if(key===current){setTip('このアイコンを使っています');return;}
+    var previous=current,operationUid=fbUser&&fbUser.uid;button.disabled=true;
     try{await socialJson('/api/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile_icon:key})});
-      if(meP)meP.profile_icon=key;setTip('アイコンを変更しました');openPublicProfile(handle);
-    }catch(e){button.disabled=false;setTip(e.message||'変更できませんでした');}
+      current=key;if(meP)meP.profile_icon=key;openPublicProfile(handle);
+      if(window.SpotaMotion&&typeof window.SpotaMotion.showUndo==='function')window.SpotaMotion.showUndo('アイコンを変更しました',async function(){
+        try{
+          if(!operationUid||!fbUser||fbUser.uid!==operationUid)throw new Error('アカウントが変わったため元に戻せません');
+          await socialJson('/api/me',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile_icon:previous})});
+          if(!fbUser||fbUser.uid!==operationUid)throw new Error('アカウントが変わったため表示を更新できません');
+          current=previous;if(meP)meP.profile_icon=previous;setTip('元のアイコンへ戻しました','success');openPublicProfile(handle);
+        }catch(error){setTip(error.message||'元に戻せませんでした','error');throw error;}
+      });
+      else setTip('アイコンを変更しました','success');
+    }catch(e){button.disabled=false;setTip(e.message||'変更できませんでした','error');}
   };});
 }
 
 /* ---------- プロフィール ---------- */
-async function openPublicProfile(handle){
+async function openPublicProfile(handle,origin){
   if(!fbUser){setTip('プロフィールを見るにはログインしてください');return;}
   var screen=makeReleaseScreen('プロフィール',{kind:'profile'}),body=screen.querySelector('.release-body');
   body.innerHTML='<div class="profile-loading" aria-live="polite">プロフィールを読み込んでいます…</div>';
@@ -573,13 +760,14 @@ async function openPublicProfile(handle){
     };
     var settings=body.querySelector('#profile-settings');if(settings)settings.onclick=function(){closeReleaseScreen();openMe();};
     var timeline=body.querySelector('#profile-timeline');if(timeline)timeline.onclick=function(){openSocialHub('timeline');};
-    var avatar=body.querySelector('#profile-avatar');if(avatar&&own)avatar.onclick=function(){openProfileIconPicker(profile.handle||handle,profile.profile_icon||'pin');};
+    var avatar=body.querySelector('#profile-avatar');
+    if(window.SpotaMotion&&origin)window.SpotaMotion.avatarTransition(origin,avatar);
+    if(avatar&&own)avatar.onclick=function(){openProfileIconPicker(profile.handle||handle,profile.profile_icon||'pin');};
     var followButton=body.querySelector('#profile-follow');if(followButton)followButton.onclick=async function(){
       var previous=!!follow.followed,next=!previous;followButton.disabled=true;
       function paint(value){follow.followed=!!value;followButton.classList.toggle('on',follow.followed);followButton.textContent=follow.followed?'フォロー中':'フォロー';followButton.setAttribute('aria-pressed',String(follow.followed));}
-      paint(next);if(next&&window.SpotaMotion)window.SpotaMotion.restartClass(followButton,'profile-follow-confirm',620);
-      try{await socialJson('/api/follows/'+encodeURIComponent(profile.handle||handle),{method:next?'PUT':'DELETE'});}
-      catch(e){paint(previous);setTip(e.message);}followButton.disabled=false;
+      try{await socialJson('/api/follows/'+encodeURIComponent(profile.handle||handle),{method:next?'PUT':'DELETE'});paint(next);if(next&&window.SpotaMotion)window.SpotaMotion.restartClass(followButton,'profile-follow-confirm',620);}
+      catch(e){paint(previous);setTip(e.message,'error');}followButton.disabled=false;
     };
     var message=body.querySelector('#profile-message');if(message)message.onclick=function(){startConversation(profile.handle||handle);};
     var friend=body.querySelector('#profile-friend');if(friend)friend.onclick=async function(){friend.disabled=true;await addByHandle(profile.handle||handle);friend.textContent='申請しました';};
@@ -587,7 +775,7 @@ async function openPublicProfile(handle){
       var p=photoPosts[Number(b.dataset.profilePhoto)],img=b.querySelector('img');putRemotePhoto(img,p.photo_id,screen,'thumb');
       b.onclick=function(){if(img.src)openViewer([img.src],0,name,p.place_name||p.title,p.tag||'',releaseDate(p.taken_at),releaseTags(p.tag),[p.photo_id]);};
     });
-  }catch(e){body.innerHTML='<div class="release-empty"><b>プロフィールを読み込めませんでした</b><span>'+esc(e.message||'通信を確認してください')+'</span></div>';}
+  }catch(e){setTip(e.message||'プロフィールを読み込めませんでした','error');body.innerHTML='<div class="release-empty"><b>プロフィールを読み込めませんでした</b><span>'+esc(e.message||'通信を確認してください')+'</span></div>';}
 }
 
 /* ---------- 既存の5操作へ接続 ---------- */

@@ -505,7 +505,8 @@ test('iOS native overlay is reproducible from the GitHub checkout', async () => 
 test('photo restore jobs are invalidated across authentication boundaries', async () => {
   const core = await read('public/core.js');
   const sync = await read('public/sync.js');
-  assert.match(core, /next!==activeSpotScope[\s\S]{0,220}invalidatePhotoRestoreQueue/);
+  assert.match(core, /next!==activeSpotScope[\s\S]{0,360}invalidatePhotoRestoreQueue/);
+  assert.match(core, /next!==activeSpotScope[\s\S]{0,360}dismissUndo/);
   assert.match(sync, /function invalidatePhotoRestoreQueue\(\)/);
   assert.match(sync, /restoreGeneration\+\+/);
   assert.match(sync, /controller\.abort\(\)/);
@@ -516,7 +517,7 @@ test('photo restore jobs are invalidated across authentication boundaries', asyn
 test('shared photo object URLs are cleared across account boundaries', async () => {
   const core = await read('public/core.js');
   const release = await read('public/release.js');
-  assert.match(core, /next!==activeSpotScope[\s\S]{0,100}clearSharedPhotoCache/);
+  assert.match(core, /next!==activeSpotScope[\s\S]{0,360}clearSharedPhotoCache/);
   assert.match(release, /function clearSharedPhotoCache\(\)/);
   assert.match(release, /sharedPhotoGeneration\+\+/);
   assert.match(release, /URL\.revokeObjectURL\(url\)/);

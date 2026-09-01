@@ -40,7 +40,10 @@ document.body.classList.toggle('dark',night);
 
 function esc(s){return String(s==null?'':s).replace(/[<>&"]/g,function(c){
   return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c];});}
-function setTip(t){var e=document.getElementById('tip');e.textContent=t;e.style.opacity='1';
+function setTip(t,kind){var e=document.getElementById('tip');e.textContent=t;e.style.opacity='1';
+  // kind は処理結果を確定した呼び出し側だけが指定する。未指定の文言は
+  // 通知だけに留め、成功演出を推測して誤表示しない。
+  if(kind&&window.SpotaMotion&&typeof window.SpotaMotion.tipFeedback==='function')window.SpotaMotion.tipFeedback(kind);
   clearTimeout(setTip.t);setTip.t=setTimeout(function(){e.style.opacity='0';},4200);}
 function valid(p){return p&&isFinite(p.lat)&&isFinite(p.lng)&&Math.abs(p.lat)<=90&&Math.abs(p.lng)<=180;}
 function nid(){return 'p'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
@@ -107,13 +110,14 @@ function openDB(){
   if(dbOpenPromise)return dbOpenPromise;
   dbOpenPromise=new Promise(function(r){try{
   if(!window.indexedDB)return r(false);
-  var q=indexedDB.open('michikusa',3);
+  var q=indexedDB.open('michikusa',4);
   q.onupgradeneeded=function(){var d=q.result;
     if(!d.objectStoreNames.contains('spots'))d.createObjectStore('spots',{keyPath:'id'});
     if(!d.objectStoreNames.contains('meta'))d.createObjectStore('meta',{keyPath:'k'});
     if(!d.objectStoreNames.contains('seen'))d.createObjectStore('seen',{keyPath:'id'});
-    if(!d.objectStoreNames.contains('deleted'))d.createObjectStore('deleted',{keyPath:'id'});};
-  q.onsuccess=function(){db=q.result;r(true);};q.onerror=function(){r(false);};
+    if(!d.objectStoreNames.contains('deleted'))d.createObjectStore('deleted',{keyPath:'id'});
+    if(!d.objectStoreNames.contains('album_order'))d.createObjectStore('album_order',{keyPath:'key'});};
+  q.onsuccess=function(){db=q.result;db.onversionchange=function(){try{db.close();}catch(e){}db=null;dbOpenPromise=null;};r(true);};q.onerror=function(){r(false);};
   setTimeout(function(){if(!db)r(false);},4000);}catch(e){r(false);}});
   return dbOpenPromise;
 }
@@ -134,6 +138,40 @@ function dbPut(s,v){return new Promise(function(r){if(!db)return r(false);
     transaction.oncomplete=function(){if(settled)return;settled=true;dbLastError='';r(true);};
     transaction.onerror=fail;transaction.onabort=fail;
   }catch(e){dbLastError=String(e&&e.name||e&&e.message||'IndexedDB write failed').slice(0,80);r(false);}});}
+/*
+ * Album order is stored separately from photo records. Reordering must never
+ * serialize up to 120 original images again: only the small owner/id/month/order
+ * rows are committed in one transaction.
+ */
+function albumOrderKey(scope,id){return String(scope)+'\u001f'+String(id);}
+function dbPutAlbumOrdersAtomic(records,expectedScope){return new Promise(function(resolve){
+  if(!db||!Array.isArray(records)||!records.length||records.length>120||
+      !expectedScope||expectedScope!==activeSpotScope||!db.objectStoreNames.contains('album_order'))return resolve(false);
+  var clean=[],ids=Object.create(null),orders=Object.create(null),month='';
+  for(var i=0;i<records.length;i++){
+    var record=records[i]||{},id=String(record.id||''),scope=String(record.owner_scope||''),
+      monthKey=String(record.month_key||''),order=Number(record.order);
+    if(!id||id.length>256||scope!==expectedScope||scope!==activeSpotScope||
+        !/^(?:none|\d{4}-\d{2})$/.test(monthKey)||!Number.isInteger(order)||order<0||order>=records.length||
+        ids[id]||orders[order]||(month&&month!==monthKey))return resolve(false);
+    ids[id]=1;orders[order]=1;month=monthKey;
+    clean.push({key:albumOrderKey(scope,id),id:id,owner_scope:scope,month_key:monthKey,order:order});
+  }
+  var transaction,settled=false;
+  function fail(e){
+    if(settled)return;settled=true;
+    var err=(transaction&&transaction.error)||(e&&e.target&&e.target.error)||e;
+    dbLastError=String(err&&err.name||err&&err.message||'IndexedDB write failed').slice(0,80);
+    resolve(false);
+  }
+  try{
+    transaction=db.transaction('album_order','readwrite');
+    var store=transaction.objectStore('album_order');
+    clean.forEach(function(value){store.put(value);});
+    transaction.oncomplete=function(){if(settled)return;settled=true;dbLastError='';resolve(true);};
+    transaction.onerror=fail;transaction.onabort=fail;
+  }catch(e){fail(e);}
+});}
 function dbFailureReason(){
   return /QuotaExceeded/i.test(dbLastError)?'端末の保存容量が不足しています':
     (dbLastError?'端末保存エラー: '+dbLastError:'端末へ保存できませんでした');
@@ -144,11 +182,13 @@ function dbAll(s){return new Promise(function(r){if(!db)return r([]);
   try{var q=tx(s,'readonly').getAll();q.onsuccess=function(){r(q.result||[]);};q.onerror=function(){r([]);};}catch(e){r([]);}});}
 function dbGet(s,k){return new Promise(function(r){if(!db)return r(null);
   try{var q=tx(s,'readonly').get(k);q.onsuccess=function(){r(q.result||null);};q.onerror=function(){r(null);};}catch(e){r(null);}});}
+window.dbPutAlbumOrdersAtomic=dbPutAlbumOrdersAtomic;
 
 /* 端末データはログイン中のアカウントだけを表示・同期する。 */
 async function activateSpotScope(user){
   var seq=++spotScopeSwitch, next=spotScope(user);
   if(next!==activeSpotScope){
+    if(window.SpotaMotion&&typeof window.SpotaMotion.dismissUndo==='function')window.SpotaMotion.dismissUndo();
     if(typeof window.clearSharedPhotoCache==='function')window.clearSharedPhotoCache();
     if(typeof window.invalidatePhotoRestoreQueue==='function')window.invalidatePhotoRestoreQueue();
   }
@@ -161,13 +201,21 @@ async function activateSpotScope(user){
   var liveMap=window.__michikusaMap;
   if(typeof render==='function'&&liveMap&&liveMap.getSource&&liveMap.getSource('mine'))render(true);
   await openDB();
-  var all=await dbAll('spots');
+  var all=await dbAll('spots'),albumOrders=await dbAll('album_order');
   var tombstones={};(await dbAll('deleted')).forEach(function(t){
     if(t.owner_scope===next)tombstones[t.server_id]=1;
   });
   if(seq!==spotScopeSwitch)return spots;
   spots=all.filter(function(p){
     return valid(p)&&p.owner_scope===next&&!tombstones[p.server_id];
+  });
+  var orderById=Object.create(null);albumOrders.forEach(function(row){
+    if(row&&row.owner_scope===next)orderById[String(row.id||'')]=row;
+  });
+  spots.forEach(function(p){
+    var row=orderById[String(p.id||'')],month=String(p.d||'').slice(0,7)||'none';
+    if(row&&row.month_key===month&&Number.isInteger(row.order)&&row.order>=0)p.album_order=row.order;
+    else delete p.album_order;
   });
   if(typeof others!=='undefined')others={};
   liveMap=window.__michikusaMap;

@@ -185,15 +185,28 @@ test('本番UIはFilmo動作を追加し、更新と即時反応を分離する'
     read('public/native.js'), read('public/post.js'), read('public/place.js'), read('public/map.js')
   ]);
   assert.match(html, /id="spota-wait" hidden aria-hidden="true"/);
-  assert.ok(html.indexOf('/motion.js?v=126') < html.indexOf('/map.js?v=125'));
+  assert.ok(html.indexOf('/motion.js?v=127') < html.indexOf('/map.js?v=127'));
   assert.match(css, /\.spota-wait\{[^}]*background:transparent;pointer-events:none/s);
   assert.match(css, /spotaCharge 2\.2s/);
   assert.match(css, /\.timeline-refresh-hint\.refreshing \.timeline-refresh-spinner\{display:block;animation:timelineSpin 1s linear infinite\}/);
   assert.match(release, /renderTimeline\(screen,state\.host,state\.query,state\.mode,0,true\)/);
   assert.match(release, /socialJson\('\/api\/feed',[\s\S]*,!refreshing\)/);
-  assert.match(release, /paint\(next,wasCount\+\(next\?1:-1\)\)/);
-  assert.match(release, /paint\(next\);if\(next&&window\.SpotaMotion\)/);
+  assert.match(release, /var j=await socialJson\('\/api\/posts\/'[\s\S]*paint\(j\.liked,j\.count\)/);
+  assert.match(release, /await socialJson\('\/api\/follows\/'[\s\S]*paint\(next\);if\(next&&window\.SpotaMotion\)/);
+  assert.match(release, /var sheet=showSheet\('[\s\S]*comment-sheet-body/);
+  assert.doesNotMatch(release, /makeReleaseScreen\('コメント'/);
+  assert.match(release, /commentInert\.push\(node\)/);
+  assert.match(release, /node\.inert=true/);
+  assert.match(release, /event\.key!=='Tab'/);
+  assert.match(release, /event\.shiftKey&&document\.activeElement===first/);
+  assert.match(release, /document\.activeElement===last/);
+  assert.match(css, /\.comment-sheet-shell\{[^}]*height:min\(72dvh,680px\)[^}]*max-height:calc\(100dvh/s);
+  assert.doesNotMatch(release, /else if\(window\.SpotaMotion\)window\.SpotaMotion\.restartClass\(b,'like-burst'/);
   assert.match(native, /SpotaMotion\.pulseLocation\(d\)/);
+  assert.match(native, /SpotaMotion\.locateStart\(locateButton\)/);
+  assert.match(native, /SpotaMotion\.locateStart\(button\)/);
+  assert.ok(native.includes("d.innerHTML='<i class=\"current-location-dot\"></i><i class=\"current-location-ring\"></i>';"));
+  assert.doesNotMatch(native, /current-location-ring"><\/i>\+'<i class="current-location-ring/);
   assert.match(post, /SpotaMotion\.photoLanding\(rec\.photo,rec\.lng,rec\.lat\)/);
   assert.match(place, /SpotaMotion\.viewerTransition\(v,previousFocus,track\.children\[idx\]\)/);
   assert.match(map, /beginWait\('地図を読み込んでいます'\)/);
@@ -212,9 +225,11 @@ test('本番の7モーションは承認済みプレビューの数値を使う'
   assert.match(css, /\.motion-photo-drop\{[^}]*width:150px;height:150px/s);
   assert.match(css, /spotaCameraFlash \.5s cubic-bezier\(\.22,\.61,\.36,1\)/);
   assert.match(motion, /duration:2500,easing:'cubic-bezier\(\.22,\.61,\.36,1\)'/);
-  assert.match(css, /spotaLocationPulse \.9s cubic-bezier\(\.22,\.61,\.36,1\) 1 both/);
-  assert.match(css, /nth-child\(3\)\{animation-delay:\.12s\}/);
-  assert.match(css, /nth-child\(4\)\{animation-delay:\.24s\}/);
+  assert.match(css, /spotaLocationPulse \.72s cubic-bezier\(\.22,\.61,\.36,1\) 1 both/);
+  assert.doesNotMatch(css, /current-location-ring:nth-child\(3\)/);
+  assert.doesNotMatch(css, /current-location-ring:nth-child\(4\)/);
+  assert.match(css, /\.spota-map-crossfade\{[^}]*pointer-events:none/s);
+  assert.match(css, /\.spota-map-crossfade\.is-leaving\{[^}]*transition:opacity \.24s/s);
   assert.match(motion, /duration:1900,easing:'cubic-bezier\(\.22,\.61,\.36,1\)'/);
   assert.match(css, /spotaCharge 2\.2s/);
   assert.match(release, /Math\.min\(90,dy\*\.45\)/);
@@ -264,4 +279,40 @@ test('採用番号とMotion 50は本番の既存機能へ接続される', async
   assert.match(preview, /B\. Corner Split/);
   assert.match(preview, /C\. Editorial Wipe/);
   assert.match(html, /id="btn-timeline"[\s\S]*id="btn-bulk"[\s\S]*id="btn-cam"[\s\S]*id="btn-lib"[\s\S]*id="btn-me"/);
+});
+
+test('保存・共有・プロフィール・共有写真の演出は実処理の結果後だけ発火する', async () => {
+  const [core, motion, post, release, css] = await Promise.all([
+    read('public/core.js'), read('public/motion.js'), read('public/post.js'),
+    read('public/release.js'), read('public/app.css')
+  ]);
+  assert.match(core, /setTip\(t,kind\)/);
+  assert.match(core, /tipFeedback\(kind\)/);
+  assert.match(motion, /function avatarTransition\(origin,target\)/);
+  assert.match(motion, /function saveSuccess\(node\)/);
+  assert.match(motion, /function shareLaunch\(node\)/);
+  assert.match(motion, /function sharedPhotoReveal\(node\)/);
+  assert.match(motion, /function photoError\(node\)/);
+  assert.match(motion, /function locateStart\(node\)/);
+  assert.match(motion, /function showUndo\(message,undo,options\)/);
+  assert.match(motion, /typeof undo!=='function'/);
+  assert.match(post, /saveSuccess\(document\.getElementById\('btn-cam'\)\)/);
+  assert.match(post, /setTip\('残しました','success'\)/);
+  assert.match(post, /setTip\([^;]+,'error'\)/);
+  assert.match(release, /img\.decode\(\)/);
+  assert.ok(release.indexOf("await img.decode()") < release.indexOf('sharedPhotoReveal(img)'));
+  assert.match(release, /sharePost\(posts\[Number\(b\.dataset\.share\)\],b\)/);
+  assert.match(release, /shareLaunch\(source\)[\s\S]*await navigator\.share\(/);
+  assert.match(release, /shareError\.name==='AbortError'/);
+  assert.match(release, /if\(b\.disabled\)return;b\.disabled=true/);
+  assert.match(release, /openPublicProfile\(b\.dataset\.profile,b\)/);
+  assert.match(release, /avatarTransition\(origin,avatar\)/);
+  assert.match(release, /showUndo\('アイコンを変更しました',async function/);
+  assert.match(release, /profile_icon:previous/);
+  assert.match(css, /\.tip\.motion-tip-success\{animation:tipSuccess/);
+  assert.match(css, /\.tip\.motion-tip-error\{animation:tipError/);
+  assert.match(css, /\.cam\.motion-save-confirm\{animation:motionSaveConfirm/);
+  assert.match(css, /img\.motion-shared-photo\{animation:motionSharedPhoto/);
+  assert.match(css, /img\.motion-photo-error\{animation:motionPhotoError/);
+  assert.match(css, /\.motion-undo-toast\{[^}]*backdrop-filter/s);
 });

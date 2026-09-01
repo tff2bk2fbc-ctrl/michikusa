@@ -491,17 +491,18 @@ async function handleBulk(files){
       btn.disabled=false;btn.textContent='もう一度試す';
       if(readFailed){
         msg.innerHTML='写真データを保存用に読み直せませんでした。<br><span style="font-size:12px">'+esc(readError||'写真を選び直して、もう一度お試しください。')+'</span>';
-        setTip('写真データを読み直せませんでした: '+(readError||'不明なエラー'));
+        setTip('写真データを読み直せませんでした: '+(readError||'不明なエラー'),'error');
       }else{
         var storageError=typeof dbFailureReason==='function'?dbFailureReason():'端末へ保存できませんでした';
         msg.innerHTML=esc(storageError)+'。<br><span style="font-size:12px">同期済み写真を整理して再試行しましたが、保存を確定できませんでした。</span>';
-        setTip(storageError);
+        setTip(storageError,'error');
       }
       return;
     }
+    if(window.SpotaMotion)window.SpotaMotion.saveSuccess(document.getElementById('btn-cam'));
     closeSheet(); render(true);
     var failed=readFailed+saveFailed;
-    setTip(done+'枚を '+donePlaces+'か所に置きました'+(failed?'（'+failed+'枚は追加できませんでした）':''));
+    setTip(done+'枚を '+donePlaces+'か所に置きました'+(failed?'（'+failed+'枚は追加できませんでした）':''),failed?'error':'success');
     if(fbUser)syncUp();
     if(manual.length)startManualPhotoImports(manual);
     else if(use.length) map.easeTo({center:[use[0].lng,use[0].lat],zoom:16.6,duration:900});
@@ -628,13 +629,14 @@ function openAdd(p){
       visibility:chosenVisibility,owner_scope:sheetScope};
     if(!(await putSpotWithStorageRecovery(rec))){
       ok.disabled=false;ok.textContent='ここに残す';
-      setTip(typeof dbFailureReason==='function'?dbFailureReason():'端末へ保存できませんでした');return;
+      setTip(typeof dbFailureReason==='function'?dbFailureReason():'端末へ保存できませんでした','error');return;
     }
     if(p.fp)await seenAdd(p.fp,sheetScope);
     if(activeSpotScope!==sheetScope){closeSheet();return;}
     spots.push(rec);
     if(typeof ensureLocalThumb==='function')ensureLocalThumb(rec);
-    closeSheet(); render(true); setTip('残しました');finishManualPhotoImport();
+    if(window.SpotaMotion)window.SpotaMotion.saveSuccess(document.getElementById('btn-cam'));
+    closeSheet(); render(true); setTip('残しました','success');finishManualPhotoImport();
     if(rec.photo&&window.SpotaMotion)window.SpotaMotion.photoLanding(rec.photo,rec.lng,rec.lat);
     if(fbUser) pushOne(rec).then(function(o){
       if(o&&rec.server_id&&tagged.length){

@@ -326,13 +326,16 @@ function showMe(lat,lng,acc){
   if(meM)meM.remove();
   var d=document.createElement('div');
   d.className='current-location-marker';
-  d.innerHTML='<i class="current-location-dot"></i><i class="current-location-ring"></i>'+
-    '<i class="current-location-ring"></i><i class="current-location-ring"></i>';
+  // #27 は取得中の待機表示、#28 は取得完了後の静かな一回波紋。
+  // 波紋を複数重ねると通知のように見えるため、マーカーには一つだけ置く。
+  d.innerHTML='<i class="current-location-dot"></i><i class="current-location-ring"></i>';
   meM=new maplibregl.Marker({element:d}).setLngLat([lng,lat]).addTo(map);
   if(window.SpotaMotion)window.SpotaMotion.pulseLocation(d);
 }
 async function goHome(quiet,initial){
   var waitId=initial&&window.SpotaMotion?window.SpotaMotion.beginWait('現在地を取得しています'):0;
+  var locateButton=document.getElementById('map-locate'),endLocate=window.SpotaMotion?window.SpotaMotion.locateStart(locateButton):null;
+  if(locateButton)locateButton.disabled=true;
   try{
     var p=await whereAmI();
     if(!p){
@@ -344,7 +347,7 @@ async function goHome(quiet,initial){
     map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.4,duration:900});
     showMe(p.lat,p.lng,p.acc);
     setTimeout(function(){ autoLoad(true); },900);
-  }finally{if(waitId)window.SpotaMotion.endWait(waitId);}
+  }finally{if(endLocate)endLocate();if(locateButton)locateButton.disabled=false;if(waitId)window.SpotaMotion.endWait(waitId);}
 }
 
 /* 地図のstyleとnative.jsは通信状況によって完了順が入れ替わる。
@@ -516,13 +519,16 @@ function shrink(file,cb){
 }
 
 document.getElementById('map-locate').onclick=async function(){
+  var button=this,endLocate=window.SpotaMotion?window.SpotaMotion.locateStart(button):null;button.disabled=true;
   setTip('現在地を取得しています…');
-  var p=await whereAmI();
-  if(!p){ setTip('現在地を使えません。設定から許可してください'); return; }
-  locDone=true;
-  map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
-  showMe(p.lat,p.lng,p.acc);
-  setTip('現在地　誤差 約'+Math.round(p.acc)+'m');
+  try{
+    var p=await whereAmI();
+    if(!p){setTip('現在地を使えません。設定から許可してください','error');return;}
+    locDone=true;
+    map.easeTo({center:[p.lng,p.lat],zoom:p.acc>2000?14:16.6,duration:850});
+    showMe(p.lat,p.lng,p.acc);
+    setTip('現在地　誤差 約'+Math.round(p.acc)+'m','success');
+  }finally{if(endLocate)endLocate();button.disabled=false;}
 };
 
 window.setColorMode=function(mode){

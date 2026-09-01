@@ -13,6 +13,7 @@
   var serial=0,visible=0;
   var jobs=Object.create(null);
   var lastHapticAt=0;
+  var undoToast=null,undoTimer=0;
 
   // UIで採用したモーション番号。機能のない場所へ演出だけを増やさないため、
   // 実際の操作が存在する画面から順に接続する。
@@ -229,6 +230,68 @@
     setTimeout(function(){node.classList.remove(name);},duration||900);
   }
 
+  // 成否は呼び出し側が実際の処理結果を受け取った後だけ渡す。
+  // 演出側から通信を発生させたり、結果を推測したりしない。
+  function tipFeedback(kind){
+    var tip=document.getElementById('tip');
+    if(!tip||!kind)return;
+    restartClass(tip,kind==='success'?'motion-tip-success':'motion-tip-error',kind==='success'?500:420);
+  }
+
+  // 既に画面にあるプロフィールアイコンを目的地へ移す。複製画像や
+  // 手書きの代替アセットは作らず、元要素と遷移先の実要素だけを使う。
+  function avatarTransition(origin,target){
+    if(reduce||!origin||!target||!target.animate)return false;
+    var from=origin.getBoundingClientRect(),to=target.getBoundingClientRect();
+    if(from.width<8||from.height<8||to.width<8||to.height<8)return false;
+    var dx=from.left-to.left,dy=from.top-to.top,sx=from.width/to.width,sy=from.height/to.height;
+    target.animate([
+      {transformOrigin:'center',transform:'translate3d('+dx+'px,'+dy+'px,0) scale('+sx+','+sy+')',opacity:.72},
+      {transformOrigin:'center',transform:'translate3d('+(dx*.18)+'px,'+(dy*.18)+'px,0) scale('+(1+(sx-1)*.18)+','+(1+(sy-1)*.18)+')',opacity:1,offset:.68},
+      {transformOrigin:'center',transform:'none',opacity:1}
+    ],{duration:520,easing:'cubic-bezier(.22,.61,.36,1)',fill:'both'});
+    return true;
+  }
+
+  function saveSuccess(node){restartClass(node||document.getElementById('btn-cam'),'motion-save-confirm',560);}
+  function shareLaunch(node){restartClass(node,'motion-share-launch',460);}
+  function sharedPhotoReveal(node){restartClass(node,'motion-shared-photo',430);}
+  function photoError(node){restartClass(node,'motion-photo-error',380);}
+  // #27: 既存の現在地アイコン自体をピント合わせのように収束させる。
+  // 新しい装飾アセットや進捗リングは作らず、取得中だけaria-busyも同期する。
+  function locateStart(node){
+    node=node||document.getElementById('map-locate');if(!node)return function(){};
+    node.classList.add('motion-locating');node.setAttribute('aria-busy','true');
+    var ended=false;return function(){if(ended)return;ended=true;node.classList.remove('motion-locating');node.removeAttribute('aria-busy');};
+  }
+
+  // #10: 見た目だけのUndoは出さない。実際に元へ戻す非同期処理を受け取った時だけ表示する。
+  function dismissUndo(){
+    clearTimeout(undoTimer);undoTimer=0;
+    var node=undoToast;undoToast=null;
+    if(!node)return;
+    node.classList.remove('is-visible');node.classList.add('is-leaving');
+    setTimeout(function(){if(node.parentNode)node.parentNode.removeChild(node);},reduce?0:180);
+  }
+  function showUndo(message,undo,options){
+    if(!document.body||typeof undo!=='function')return function(){};
+    dismissUndo();options=options||{};
+    var host=document.createElement('div');host.className='motion-undo-toast';
+    host.setAttribute('role','region');host.setAttribute('aria-label','操作を元に戻す');
+    var label=document.createElement('span');label.textContent=String(message||'変更しました');
+    label.setAttribute('role','status');label.setAttribute('aria-live','polite');
+    var button=document.createElement('button');button.type='button';button.textContent='元に戻す';
+    host.appendChild(label);host.appendChild(button);document.body.appendChild(host);undoToast=host;
+    requestAnimationFrame(function(){if(host.isConnected)host.classList.add('is-visible');});
+    button.addEventListener('click',async function(){
+      if(button.disabled)return;button.disabled=true;clearTimeout(undoTimer);undoTimer=0;
+      try{await Promise.resolve(undo());dismissUndo();}
+      catch(e){label.textContent=String(e&&e.message||'元に戻せませんでした');tipFeedback('error');button.disabled=false;undoTimer=setTimeout(dismissUndo,5200);}
+    });
+    undoTimer=setTimeout(dismissUndo,Math.max(3200,Number(options.duration)||5200));
+    return dismissUndo;
+  }
+
   function installInteractionMotion(){
     if(!document||typeof document.addEventListener!=='function')return;
     // カメラを少し長く押すと、輪を出さずに一度だけ「ぐっ」と返す。
@@ -264,6 +327,15 @@
     viewerTransition:viewerTransition,
     rollNumber:rollNumber,
     restartClass:restartClass,
+    tipFeedback:tipFeedback,
+    avatarTransition:avatarTransition,
+    saveSuccess:saveSuccess,
+    shareLaunch:shareLaunch,
+    sharedPhotoReveal:sharedPhotoReveal,
+    photoError:photoError,
+    locateStart:locateStart,
+    showUndo:showUndo,
+    dismissUndo:dismissUndo,
     haptic:haptic,
     bindHold:bindHold
   };

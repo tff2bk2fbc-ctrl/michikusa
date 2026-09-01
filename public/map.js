@@ -256,8 +256,42 @@ if(!deferInitialMap)startSpotaMapAfterOnboarding();
 function applyTint(){
   try{
     if(!baseStyle)return;
+    /*
+     * #29: setStyle は地図を一瞬空にすることがあるため、切替直前の
+     * canvasを画像として短時間だけ重ねる。新しいstyleが読み込まれて
+     * から透明化するので、白/黒の中間フレームや操作ブロックを作らない。
+     * toDataURLが地図提供元の制約で失敗した場合は、演出を足さず即時更新する。
+     */
+    var cover=null,coverDone=false;
+    try{
+      var canvas=map.getCanvas();
+      if(canvas&&canvas.width&&canvas.height){
+        // PNG/base64へ変換せず、現在の実キャンバスを小さな一時canvasへ同期コピーする。
+        // 大画面でも最大辺1600pxに抑え、240msの遷移のために過剰なメモリを使わない。
+        var ratio=Math.min(1,1600/Math.max(canvas.width,canvas.height));
+        cover=document.createElement('canvas');
+        cover.width=Math.max(1,Math.round(canvas.width*ratio));
+        cover.height=Math.max(1,Math.round(canvas.height*ratio));
+        var context=cover.getContext('2d',{alpha:false});
+        if(!context)throw new Error('crossfade canvas unavailable');
+        context.drawImage(canvas,0,0,cover.width,cover.height);
+        cover.className='spota-map-crossfade';
+        cover.setAttribute('aria-hidden','true');
+        document.body.appendChild(cover);
+      }
+    }catch(e){ cover=null; }
+    function removeCover(){
+      if(coverDone)return;coverDone=true;
+      if(!cover)return;
+      cover.classList.add('is-leaving');
+      setTimeout(function(){if(cover&&cover.parentNode)cover.parentNode.removeChild(cover);},260);
+    }
     map.setStyle(retint(baseStyle),{diff:false});
-    map.once('style.load',function(){ setTimeout(afterStyle,0); });
+    map.once('style.load',function(){
+      setTimeout(function(){afterStyle();removeCover();},0);
+    });
+    // style.load is expected, but never leave a stale screenshot over the map.
+    if(cover)setTimeout(removeCover,1200);
   }catch(e){ showErr('[applyTint] '+dump(e)); }
 }
 /* 3Dの建物。起動時に描くと重いので、あとから足す */

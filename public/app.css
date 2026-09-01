@@ -158,12 +158,14 @@ body.dark .onboarding-legal{--onboarding-dim:#B4B4BA}
   box-shadow:0 0 0 6px rgba(30,136,229,.22),0 2px 8px rgba(0,0,0,.35)}
 .current-location-ring{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px;
   border:2px solid rgba(30,136,229,.55);border-radius:50%;opacity:0;pointer-events:none}
-.current-location-marker.is-locating .current-location-dot{animation:spotaDotSettle .8s cubic-bezier(.34,1.56,.64,1)}
-.current-location-marker.is-locating .current-location-ring{animation:spotaLocationPulse .9s cubic-bezier(.22,.61,.36,1) 1 both}
-.current-location-marker.is-locating .current-location-ring:nth-child(3){animation-delay:.12s}
-.current-location-marker.is-locating .current-location-ring:nth-child(4){animation-delay:.24s}
-@keyframes spotaDotSettle{0%{transform:scale(.4)}70%{transform:scale(1.22)}100%{transform:scale(1)}}
-@keyframes spotaLocationPulse{0%{opacity:.75;transform:scale(.4)}74%,100%{opacity:0;transform:scale(5)}}
+/* #28: 取得完了を示す一回だけの静かな波紋。#27の待機カメラとは分離する。 */
+.current-location-marker.is-locating .current-location-ring{animation:spotaLocationPulse .72s cubic-bezier(.22,.61,.36,1) 1 both}
+@keyframes spotaLocationPulse{0%{opacity:.58;transform:scale(.72)}72%{opacity:.18}100%{opacity:0;transform:scale(3.45)}}
+
+/* #29: 地図そのものの描画を保ったまま、旧スタイルを新スタイルへ短くクロスフェードする。 */
+.spota-map-crossfade{position:fixed;inset:0;z-index:25;width:100%;height:100%;display:block;object-fit:cover;
+  background:var(--bg);opacity:1;pointer-events:none}
+.spota-map-crossfade.is-leaving{opacity:0;transition:opacity .24s cubic-bezier(.25,.1,.25,1)}
 
 /* ---------- 上 ---------- */
 .map-trend-strip{position:fixed;top:0;left:12px;right:12px;z-index:40;min-height:44px;
@@ -226,6 +228,8 @@ body.dark .top-action{border-color:rgba(255,255,255,.18)}
   width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:var(--sf);
   border:1px solid var(--line);box-shadow:var(--sh);color:var(--ink)}
 .map-locate svg{width:23px;height:23px}.map-locate:active{transform:scale(.93)}
+.map-locate.motion-locating svg{animation:spotaLocateFocus .65s cubic-bezier(.25,.1,.25,1) infinite alternate}
+@keyframes spotaLocateFocus{from{opacity:.42;transform:scale(1.32)}to{opacity:1;transform:scale(.88)}}
 body.placing .map-locate{display:none}
 
 /* ---------- 写真ピン ---------- */
@@ -258,6 +262,10 @@ body.placing .map-locate{display:none}
   bottom:calc(env(safe-area-inset-bottom,0px) + 96px);font-size:11.5px;color:var(--ink);
   background:var(--sf);box-shadow:var(--sh);padding:8px 14px;border-radius:999px;
   pointer-events:none;transition:opacity .4s;max-width:86vw;text-align:center}
+.tip.motion-tip-success{animation:tipSuccess .5s cubic-bezier(.22,.61,.36,1)}
+.tip.motion-tip-error{animation:tipError .42s cubic-bezier(.22,.61,.36,1)}
+@keyframes tipSuccess{0%{transform:translateX(-50%) scale(.94);opacity:.58}58%{transform:translateX(-50%) scale(1.04);opacity:1}100%{transform:translateX(-50%) scale(1);opacity:1}}
+@keyframes tipError{0%,100%{transform:translateX(-50%)}25%{transform:translateX(calc(-50% - 7px))}50%{transform:translateX(calc(-50% + 7px))}75%{transform:translateX(calc(-50% - 3px))}}
 
 /* ---------- シート ---------- */
 .scrim{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.35);opacity:0;
@@ -438,6 +446,26 @@ button.motion-pressing:not(.nav-btn):not(.cam){transform:scale(.975)}
 .motion-toggle-confirm{animation:spotaToggleSettle .28s cubic-bezier(.2,.82,.2,1)}
 .motion-number-roll{position:relative;overflow:hidden}
 .motion-number-roll span{position:absolute!important;inset:0 auto auto 0!important}
+.cam.motion-save-confirm{animation:motionSaveConfirm .56s cubic-bezier(.22,.61,.36,1)}
+.timeline-actions button.motion-share-launch{animation:motionShareLaunch .46s cubic-bezier(.22,.61,.36,1)}
+img.motion-shared-photo{animation:motionSharedPhoto .43s cubic-bezier(.22,.61,.36,1)}
+img.motion-photo-error{animation:motionPhotoError .38s cubic-bezier(.22,.61,.36,1)}
+@keyframes motionSaveConfirm{0%,100%{transform:scale(1)}42%{transform:scale(.9)}72%{transform:scale(1.07)} }
+@keyframes motionShareLaunch{0%,100%{transform:scale(1)}45%{transform:scale(.88)}72%{transform:scale(1.06)} }
+@keyframes motionSharedPhoto{0%{opacity:.5;transform:scale(.97)}65%{opacity:1;transform:scale(1.012)}100%{opacity:1;transform:none}}
+@keyframes motionPhotoError{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}50%{transform:translateX(5px)}75%{transform:translateX(-2px)}}
+.motion-undo-toast{position:fixed;z-index:125;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 104px);
+  display:flex;align-items:center;gap:14px;min-height:56px;max-width:min(88vw,420px);padding:6px 7px 6px 17px;
+  border:1px solid color-mix(in srgb,var(--ink) 12%,transparent);border-radius:24px;color:var(--ink);
+  background:color-mix(in srgb,var(--sf) 84%,transparent);box-shadow:0 16px 42px rgba(0,0,0,.18);
+  -webkit-backdrop-filter:saturate(165%) blur(22px);backdrop-filter:saturate(165%) blur(22px);
+  opacity:0;transform:translate3d(-50%,14px,0) scale(.96);transition:opacity .18s ease,transform .34s cubic-bezier(.22,.78,.22,1)}
+.motion-undo-toast.is-visible{opacity:1;transform:translate3d(-50%,0,0) scale(1)}
+.motion-undo-toast.is-leaving{opacity:0;transform:translate3d(-50%,8px,0) scale(.98)}
+.motion-undo-toast span{min-width:0;font-size:13px;font-weight:680;line-height:1.25}
+.motion-undo-toast button{flex:0 0 auto;min-width:88px;min-height:44px;padding:0 16px;border:0;border-radius:18px;
+  background:var(--ink);color:var(--bg);font:inherit;font-size:13px;font-weight:760}
+.motion-undo-toast button:disabled{opacity:.48}
 @keyframes spotaHoldSettle{0%{transform:scale(.955)}58%{transform:scale(1.025)}100%{transform:scale(1)}}
 @keyframes spotaSegmentSettle{0%{transform:scale(.96)}62%{transform:scale(1.018)}100%{transform:scale(1)}}
 @keyframes spotaToggleSettle{0%{filter:brightness(.94)}58%{filter:brightness(1.07)}100%{filter:none}}
@@ -552,13 +580,21 @@ button.motion-pressing:not(.nav-btn):not(.cam){transform:scale(.975)}
 .memory-intro>p:not(.release-kicker){max-width:34em;color:var(--dim);font-size:13px;line-height:1.75}
 .memory-intro .release-main{margin-top:21px}
 .album-section{padding-top:26px}.album-heading{display:flex;align-items:baseline;justify-content:space-between;padding:0 16px 11px}
-.album-heading h2{font-size:18px;line-height:1.4}.album-heading span{font-size:11.5px;color:var(--dim)}
+.album-heading h2{font-size:18px;line-height:1.4}.album-heading-actions{display:flex;align-items:center;gap:9px}.album-heading span{font-size:11.5px;color:var(--dim)}
+.album-edit{min-height:44px;padding:0 11px;border:1px solid var(--line);border-radius:999px;background:var(--sf);color:var(--ink);font-size:11.5px;font-weight:700}.album-edit:disabled{opacity:.5}
 .album-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px}
-.album-grid button{position:relative;aspect-ratio:1;padding:0;overflow:hidden;background:var(--chip)}
-.album-grid button:nth-child(7n+1){grid-column:span 2;grid-row:span 2}
+.album-card{position:relative;min-width:0;aspect-ratio:1;overflow:hidden;background:var(--chip);outline-offset:-3px;contain:layout paint}
+.album-card:nth-child(7n+1){grid-column:span 2;grid-row:span 2}
+.album-photo{position:absolute;inset:0;width:100%;height:100%;padding:0;overflow:hidden;background:var(--chip);text-align:left}
+.album-section.is-editing .album-photo{pointer-events:none}
 .album-grid img{width:100%;height:100%;display:block;object-fit:cover;transition:opacity .18s}
-.album-grid span{position:absolute;left:8px;right:8px;bottom:7px;color:#fff;font-size:11.5px;font-weight:650;
+.album-photo span{position:absolute;left:8px;right:8px;bottom:7px;color:#fff;font-size:11.5px;font-weight:650;
   text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 5px rgba(0,0,0,.76)}
+.album-sort-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 16px 10px;padding:11px 12px;border:1px solid var(--line);border-radius:16px;background:color-mix(in srgb,var(--sf) 76%,transparent);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px)}
+.album-sort-toolbar p{margin:0;color:var(--dim);font-size:11px;line-height:1.45}.album-sort-toolbar>div{display:flex;gap:5px;flex:0 0 auto}.album-sort-toolbar button{min-height:44px;padding:0 10px;border:1px solid var(--line);border-radius:11px;background:var(--bg);color:var(--ink);font-size:11px;font-weight:700}.album-sort-toolbar .album-save{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.album-card.is-dragging{z-index:2;opacity:.76;transform:scale(.97);box-shadow:0 12px 30px rgba(0,0,0,.25)}.album-section.is-editing .album-card{touch-action:none;cursor:grab}.album-section.is-editing .album-card:focus-visible{outline:3px solid #fff;outline-offset:-3px;box-shadow:inset 0 0 0 7px #0A0A0B,inset 0 0 0 10px var(--focus)}.album-reorder-controls{position:absolute;z-index:2;left:5px;right:5px;bottom:5px;display:flex;gap:4px}.album-reorder-controls button{min-height:44px;flex:1;border:1px solid rgba(255,255,255,.5);border-radius:10px;background:rgba(18,20,25,.73);color:#fff;font-size:11px;font-weight:750;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+@media (prefers-reduced-motion:reduce){.album-grid img{transition:none}.album-card{scroll-behavior:auto}.album-card.is-dragging{transform:none;box-shadow:none}}
+@media (forced-colors:active){.album-section.is-editing .album-card:focus-visible{outline:3px solid Highlight;box-shadow:none}}
 .release-empty,.profile-loading,.timeline-status{display:flex;min-height:240px;padding:48px 22px;
   align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--dim);font-size:13px;line-height:1.7}
 .release-empty b,.timeline-status b{color:var(--ink);font-size:16px;margin-bottom:7px}
@@ -714,6 +750,12 @@ button.motion-pressing:not(.nav-btn):not(.cam){transform:scale(.975)}
 .comment-row>div{min-width:0;flex:1}.comment-row b{font-size:12.5px}.comment-row p{margin-top:4px;font-size:14px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.comment-row time{color:var(--dim);font-size:10px}.comment-row>button{width:44px;height:44px;color:var(--dim)}
 .comment-form,.message-form{position:fixed;z-index:5;left:0;right:0;bottom:0;display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:8px;padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px);background:color-mix(in srgb,var(--bg) 92%,transparent);border-top:1px solid var(--line);backdrop-filter:blur(16px)}
 .comment-form input,.message-form textarea{min-height:44px;padding:11px 14px;border-radius:18px;background:var(--sf);font-size:16px;resize:none}.comment-form button,.message-form button{min-height:44px;font-size:13px;font-weight:750}
+.comment-sheet-shell{height:min(72vh,680px);height:min(72dvh,680px);max-height:calc(100dvh - env(safe-area-inset-top,0px) - 12px);overflow:hidden;background:color-mix(in srgb,var(--sf) 94%,transparent);-webkit-backdrop-filter:blur(24px) saturate(1.5);backdrop-filter:blur(24px) saturate(1.5)}
+.comment-sheet-body{height:calc(100% - 13px);display:grid;grid-template-rows:auto minmax(0,1fr) auto}
+.comment-sheet-body>header{display:flex;align-items:center;justify-content:space-between;min-height:54px;padding:4px 16px 8px;border-bottom:1px solid var(--line)}
+.comment-sheet-body>header h2{font-size:16px;letter-spacing:-.01em}.comment-sheet-body>header button{min-width:54px;min-height:44px;color:var(--dim);font-size:13px;font-weight:700}
+.comment-sheet-body .comment-list{min-height:0;overflow-y:auto;padding-bottom:12px;overscroll-behavior:contain}
+.comment-sheet-body .comment-form{position:relative;z-index:1;left:auto;right:auto;bottom:auto;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 10px)}
 .chat-body{height:calc(100dvh - env(safe-area-inset-top,0px) - 58px);display:flex;flex-direction:column;padding-bottom:0}.message-list{flex:1;overflow-y:auto;padding:16px 12px 100px}.message-row{display:flex;flex-direction:column;align-items:flex-start;margin:7px 0}.message-row.mine{align-items:flex-end}.message-row p{max-width:78%;padding:10px 13px;border-radius:17px 17px 17px 4px;background:var(--sf);font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.message-row.mine p{border-radius:17px 17px 4px 17px;background:var(--ink);color:var(--bg)}.message-row time{margin:3px 5px 0;color:var(--dim);font-size:9px}
 
 /* 1日1枚の候補。写真は端末内に留め、USEを確定した後だけ既存の追加フローへ渡す。 */
@@ -871,9 +913,12 @@ body.placing .fabs,body.placing .tip,body.placing .top,body.placing .map-trend-s
 @media (prefers-reduced-motion:reduce){
   *{transition-duration:.01ms!important;animation-duration:.01ms!important}
   .spota-wait.is-running .charge,.spota-wait.is-running .bulb i,.timeline-refresh-hint.refreshing .timeline-refresh-spinner,
-  .current-location-marker.is-locating .current-location-dot,.current-location-marker.is-locating .current-location-ring,
+  .current-location-marker.is-locating .current-location-ring,.spota-map-crossfade.is-leaving,
   .timeline-photo.like-burst .timeline-like-heart,.timeline-photo.like-burst .timeline-like-particles i,
-  .timeline-follow.follow-confirm .follow-check,.profile-actions .release-main.profile-follow-confirm{animation:none!important}
+  .timeline-follow.follow-confirm .follow-check,.profile-actions .release-main.profile-follow-confirm,
+  .cam.motion-save-confirm,.timeline-actions button.motion-share-launch,img.motion-shared-photo,img.motion-photo-error,
+  .tip.motion-tip-success,.tip.motion-tip-error,.map-locate.motion-locating svg{animation:none!important}
+  .motion-undo-toast,.motion-undo-toast.is-visible,.motion-undo-toast.is-leaving{transition:none!important;transform:translate3d(-50%,0,0) scale(1)}
   .spota-wait.is-running .charge{stroke-dashoffset:0;opacity:.52}
   .timeline-follow.on .follow-check{transform:rotate(-45deg) scale(1)}
 }
