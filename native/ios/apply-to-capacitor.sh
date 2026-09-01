@@ -59,6 +59,7 @@ mkdir -p "$CAP_ROOT/public"
 rsync -a --delete "$WEB_SOURCE/" "$CAP_ROOT/public/"
 
 cp "$SOURCE_DIR/DailyPhotoPlugin.swift" "$APP_DIR/DailyPhotoPlugin.swift"
+cp "$SOURCE_DIR/SpotaHapticsPlugin.swift" "$APP_DIR/SpotaHapticsPlugin.swift"
 cp "$SOURCE_DIR/SpotaBridgeViewController.swift" "$APP_DIR/SpotaBridgeViewController.swift"
 cp "$SOURCE_DIR/SceneDelegate.swift" "$APP_DIR/SceneDelegate.swift"
 cp "$SOURCE_DIR/AppDelegate.swift" "$APP_DIR/AppDelegate.swift"
@@ -130,6 +131,20 @@ unless text.include?("DailyPhotoPlugin.swift in Sources")
   source_lines = "\t\t\t\tA10D0001301F500000000001 /* DailyPhotoPlugin.swift in Sources */,\n" \
                  "\t\t\t\tA10D0003301F500000000001 /* SpotaBridgeViewController.swift in Sources */,\n"
   abort "App Sources phase was not found" unless text.sub!(source_pattern) { Regexp.last_match(1) + source_lines }
+  File.write(path, text)
+end
+
+unless text.include?("SpotaHapticsPlugin.swift in Sources")
+  build_file = "\t\tA10D0008301F500000000001 /* SpotaHapticsPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10D0009301F500000000001 /* SpotaHapticsPlugin.swift */; };\n"
+  file_ref = "\t\tA10D0009301F500000000001 /* SpotaHapticsPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotaHapticsPlugin.swift; sourceTree = \"<group>\"; };\n"
+  abort "PBXBuildFile section was not found" unless text.sub!("/* Begin PBXBuildFile section */\n", "/* Begin PBXBuildFile section */\n#{build_file}")
+  abort "PBXFileReference section was not found" unless text.sub!("/* Begin PBXFileReference section */\n", "/* Begin PBXFileReference section */\n#{file_ref}")
+
+  group_pattern = /(\t\t[0-9A-F]+ \/\* App \*\/ = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n)/
+  abort "App PBXGroup was not found" unless text.sub!(group_pattern) { Regexp.last_match(1) + "\t\t\t\tA10D0009301F500000000001 /* SpotaHapticsPlugin.swift */,\n" }
+
+  source_pattern = /(\t\t[0-9A-F]+ \/\* Sources \*\/ = \{\n\t\t\tisa = PBXSourcesBuildPhase;\n\t\t\tbuildActionMask = [0-9]+;\n\t\t\tfiles = \(\n)/
+  abort "App Sources phase was not found" unless text.sub!(source_pattern) { Regexp.last_match(1) + "\t\t\t\tA10D0008301F500000000001 /* SpotaHapticsPlugin.swift in Sources */,\n" }
   File.write(path, text)
 end
 

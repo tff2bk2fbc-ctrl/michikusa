@@ -16,6 +16,7 @@ final class SpotaBridgeViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
         bridge?.registerPluginType(DailyPhotoPlugin.self)
+        bridge?.registerPluginType(SpotaHapticsPlugin.self)
 
         guard let webView = bridge?.webView else {
             scheduleStartupFallback()

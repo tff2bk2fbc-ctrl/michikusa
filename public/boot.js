@@ -4,7 +4,7 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v125';
+var BUILD='v126';
 var SPOTA_ONBOARDING_VERSION='2026-08-17.1';
 var onboardingSaved='';
 try{onboardingSaved=localStorage.getItem('spota_onboarding_complete')||'';}catch(e){}

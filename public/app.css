@@ -159,9 +159,9 @@ body.dark .onboarding-legal{--onboarding-dim:#B4B4BA}
 .current-location-ring{position:absolute;left:50%;top:50%;width:18px;height:18px;margin:-9px;
   border:2px solid rgba(30,136,229,.55);border-radius:50%;opacity:0;pointer-events:none}
 .current-location-marker.is-locating .current-location-dot{animation:spotaDotSettle .8s cubic-bezier(.34,1.56,.64,1)}
-.current-location-marker.is-locating .current-location-ring{animation:spotaLocationPulse 2.4s cubic-bezier(.22,.61,.36,1) infinite}
-.current-location-marker.is-locating .current-location-ring:nth-child(3){animation-delay:.8s}
-.current-location-marker.is-locating .current-location-ring:nth-child(4){animation-delay:1.6s}
+.current-location-marker.is-locating .current-location-ring{animation:spotaLocationPulse .9s cubic-bezier(.22,.61,.36,1) 1 both}
+.current-location-marker.is-locating .current-location-ring:nth-child(3){animation-delay:.12s}
+.current-location-marker.is-locating .current-location-ring:nth-child(4){animation-delay:.24s}
 @keyframes spotaDotSettle{0%{transform:scale(.4)}70%{transform:scale(1.22)}100%{transform:scale(1)}}
 @keyframes spotaLocationPulse{0%{opacity:.75;transform:scale(.4)}74%,100%{opacity:0;transform:scale(5)}}
 
@@ -364,28 +364,29 @@ body.placing .map-locate{display:none}
 .fabs{position:fixed;left:12px;right:12px;z-index:36;
   bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
   display:flex;align-items:center;
-  min-height:72px;padding:8px 9px;border-radius:25px;border:1px solid var(--glassline);
+  min-height:74px;padding:8px 9px;border-radius:27px;border:1px solid color-mix(in srgb,var(--glassline) 86%,transparent);
   background:
-    linear-gradient(145deg,rgba(255,255,255,.30),transparent 42%),
+    radial-gradient(120% 75% at 50% -18%,rgba(255,255,255,.58),transparent 57%),
+    linear-gradient(145deg,rgba(255,255,255,.32),transparent 44%),
     var(--glass);
   backdrop-filter:blur(28px) saturate(1.75) contrast(1.08);
   -webkit-backdrop-filter:blur(28px) saturate(1.75) contrast(1.08);
   box-shadow:
-    0 16px 38px rgba(20,22,24,.24),
-    0 2px 7px rgba(20,22,24,.12),
+    0 20px 46px rgba(20,22,24,.25),
+    0 3px 9px rgba(20,22,24,.12),
     inset 0 1px 0 rgba(255,255,255,var(--gtop)),
     inset 0 -1px 0 rgba(0,0,0,var(--gbot)),
-    inset 1px 0 0 rgba(255,255,255,.18),
-    inset -1px 0 0 rgba(255,255,255,.12);
-  overflow:hidden;
+    inset 1px 0 0 rgba(255,255,255,.22),
+    inset -1px 0 0 rgba(255,255,255,.14);
+  overflow:hidden;isolation:isolate;
   transition:transform .34s cubic-bezier(.2,.9,.25,1),opacity .28s}
 .fabs.hide{transform:translateY(160%);opacity:0;pointer-events:none}
 
 /* 縁の光。上と下で強さを変えると、面が上を向いて見える */
 /* 表面の反射。上半分だけ明るくする */
-.sheen{position:absolute;left:2px;right:2px;top:2px;height:48%;
-  border-radius:23px 23px 15px 15px;pointer-events:none;
-  background:linear-gradient(180deg,rgba(255,255,255,var(--sheen)),rgba(255,255,255,.04) 58%,transparent)}
+.sheen{position:absolute;z-index:0;left:2px;right:2px;top:2px;height:50%;
+  border-radius:25px 25px 16px 16px;pointer-events:none;
+  background:linear-gradient(180deg,rgba(255,255,255,var(--sheen)),rgba(255,255,255,.055) 62%,transparent)}
 
 /* 上を走る光 */
 .glare-wrap{position:absolute;inset:0;border-radius:34px;overflow:hidden;pointer-events:none}
@@ -395,7 +396,7 @@ body.placing .map-locate{display:none}
 .fabs.lit .glare{opacity:1;animation:sweep 1.4s cubic-bezier(.4,0,.2,1)}
 @keyframes sweep{to{left:125%}}
 
-.nav-items{position:relative;display:grid;grid-template-columns:repeat(5,minmax(44px,1fr));
+.nav-items{position:relative;z-index:1;display:grid;grid-template-columns:repeat(5,minmax(44px,1fr));
   align-items:center;gap:2px;flex:1;min-width:0}
 
 /* 押した場所へ滑って動く枠 */
@@ -407,9 +408,9 @@ body.placing .map-locate{display:none}
 .pill.on{opacity:1}
 
 .nav-btn{position:relative;min-width:44px;min-height:52px;padding:8px 2px;border-radius:20px;
-  color:var(--dim);transition:color .28s,transform .16s;background:none}
+  color:var(--dim);transition:color .28s,transform .16s cubic-bezier(.2,.8,.2,1),filter .18s;background:none}
 .nav-btn.on{color:var(--ink)}
-.nav-btn:active{transform:scale(.92)}
+.nav-btn:active,.nav-btn.motion-pressing{transform:scale(.94);filter:saturate(.86)}
 .bc{display:flex;align-items:center;justify-content:center}
 .bc svg{width:25px;height:25px;flex:0 0 25px;filter:drop-shadow(0 1px 1px rgba(255,255,255,.32))}
 .bc b{width:28px;height:28px;display:grid;place-items:center;border-radius:50%;background:var(--ink);color:var(--bg);
@@ -424,10 +425,22 @@ body.placing .map-locate{display:none}
 .cam{width:54px;height:54px;border-radius:50%;margin:auto;
   background:var(--btn);color:var(--btnink);
   display:flex;align-items:center;justify-content:center;
-  box-shadow:0 4px 14px rgba(0,0,0,.32),0 0 0 4px var(--camring);
-  transition:transform .16s}
-.cam:active{transform:scale(.9)}
+  box-shadow:0 8px 18px rgba(0,0,0,.30),0 1px 1px rgba(0,0,0,.32),0 0 0 4px var(--camring),inset 0 1px 0 rgba(255,255,255,.16);
+  transition:transform .16s cubic-bezier(.2,.8,.2,1),box-shadow .2s}
+.cam:active,.cam.motion-pressing{transform:scale(.91);box-shadow:0 4px 11px rgba(0,0,0,.25),0 0 0 3px var(--camring)}
 .cam svg{width:24px;height:24px}
+
+/* 採用モーション 1 / 4 / 5 / 6 / 7。長押しは輪を出さず、成立時の触覚と面の沈みだけで返す。 */
+button.motion-pressing:not(.nav-btn):not(.cam){transform:scale(.975)}
+.motion-holding{transform:scale(.955)!important;filter:saturate(.82);transition:transform .16s cubic-bezier(.2,.8,.2,1),filter .16s}
+.motion-hold-complete{animation:spotaHoldSettle .22s cubic-bezier(.2,.82,.2,1)}
+.motion-segment-confirm{animation:spotaSegmentSettle .28s cubic-bezier(.2,.82,.2,1)}
+.motion-toggle-confirm{animation:spotaToggleSettle .28s cubic-bezier(.2,.82,.2,1)}
+.motion-number-roll{position:relative;overflow:hidden}
+.motion-number-roll span{position:absolute!important;inset:0 auto auto 0!important}
+@keyframes spotaHoldSettle{0%{transform:scale(.955)}58%{transform:scale(1.025)}100%{transform:scale(1)}}
+@keyframes spotaSegmentSettle{0%{transform:scale(.96)}62%{transform:scale(1.018)}100%{transform:scale(1)}}
+@keyframes spotaToggleSettle{0%{filter:brightness(.94)}58%{filter:brightness(1.07)}100%{filter:none}}
 
 @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
   .fabs{background:rgba(248,248,246,.94)} body.dark .fabs{background:rgba(28,28,30,.94)}}
@@ -631,9 +644,11 @@ body.placing .map-locate{display:none}
 .timeline-actions button.flash b{animation:timelineCountRoll .4s cubic-bezier(.22,.61,.36,1)}
 .timeline-actions button[data-flash].on svg{fill:currentColor;stroke:currentColor}
 .timeline-actions button.flash-burst svg{animation:flashBurst .5s cubic-bezier(.18,.88,.24,1)}
+.timeline-actions button.unlike-settle svg{animation:unlikeSettle .28s cubic-bezier(.22,.61,.36,1)}
 @keyframes likeFlash{0%,100%{transform:scale(1)}28%{transform:scale(.7)}58%{transform:scale(1.3)}}
 @keyframes timelineCountRoll{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:none}}
 @keyframes flashBurst{0%{transform:scale(.72) rotate(-8deg);opacity:.3}50%{transform:scale(1.45) rotate(5deg)}100%{transform:scale(1);opacity:1}}
+@keyframes unlikeSettle{0%{transform:scale(1);fill:currentColor}55%{transform:scale(.76);opacity:.48}100%{transform:scale(1);fill:transparent;opacity:1}}
 .feed-more{display:block;width:calc(100% - 32px);min-height:48px;margin:18px 16px;border:1px solid var(--line);font-size:13px;font-weight:700}
 
 .public-profile{padding:32px 18px 25px;border-bottom:1px solid var(--line);text-align:center}
@@ -689,19 +704,32 @@ body.placing .map-locate{display:none}
 .notification-row>i,.conversation-row>i,.comment-row>i{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border-radius:50%;background:var(--ink);color:var(--bg);font-size:13px;font-style:normal;font-weight:700}
 .notification-row>span,.conversation-row>span{min-width:0;flex:1}.notification-row b,.conversation-row b{display:block;font-size:13.5px}.notification-row small,.conversation-row small{display:block;margin-top:3px;color:var(--dim);font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .notification-row time{color:var(--dim);font-size:10px}.notification-row.unread{box-shadow:inset 3px 0 var(--ink)}.conversation-row em{min-width:22px;height:22px;display:grid;place-items:center;border-radius:99px;background:var(--ink);color:var(--bg);font-size:10px;font-style:normal}
+.notification-row.motion-notification-in{animation:notificationInsert .36s cubic-bezier(.16,1,.3,1)}
+@keyframes notificationInsert{from{opacity:0;transform:translateY(-16px) scale(.98)}to{opacity:1;transform:none}}
 .comment-list{padding-bottom:92px}.comment-row{display:flex;align-items:flex-start;gap:11px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.comment-row.motion-comment-in{animation:commentInsert .3s cubic-bezier(.16,1,.3,1)}
+@keyframes commentInsert{from{opacity:0;transform:translateY(-14px) scale(.985)}to{opacity:1;transform:none}}
+.message-row.motion-message-in{animation:messageInsert .34s cubic-bezier(.16,1,.3,1)}
+@keyframes messageInsert{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
 .comment-row>div{min-width:0;flex:1}.comment-row b{font-size:12.5px}.comment-row p{margin-top:4px;font-size:14px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}.comment-row time{color:var(--dim);font-size:10px}.comment-row>button{width:44px;height:44px;color:var(--dim)}
 .comment-form,.message-form{position:fixed;z-index:5;left:0;right:0;bottom:0;display:grid;grid-template-columns:minmax(0,1fr) 58px;gap:8px;padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px);background:color-mix(in srgb,var(--bg) 92%,transparent);border-top:1px solid var(--line);backdrop-filter:blur(16px)}
 .comment-form input,.message-form textarea{min-height:44px;padding:11px 14px;border-radius:18px;background:var(--sf);font-size:16px;resize:none}.comment-form button,.message-form button{min-height:44px;font-size:13px;font-weight:750}
 .chat-body{height:calc(100dvh - env(safe-area-inset-top,0px) - 58px);display:flex;flex-direction:column;padding-bottom:0}.message-list{flex:1;overflow-y:auto;padding:16px 12px 100px}.message-row{display:flex;flex-direction:column;align-items:flex-start;margin:7px 0}.message-row.mine{align-items:flex-end}.message-row p{max-width:78%;padding:10px 13px;border-radius:17px 17px 17px 4px;background:var(--sf);font-size:14px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere}.message-row.mine p{border-radius:17px 17px 4px 17px;background:var(--ink);color:var(--bg)}.message-row time{margin:3px 5px 0;color:var(--dim);font-size:9px}
 
-/* 写真フォルダから1枚ずつ、左右スワイプで採否を決める。 */
+/* 1日1枚の候補。写真は端末内に留め、USEを確定した後だけ既存の追加フローへ渡す。 */
 .memory-deck-screen .release-body{height:calc(100dvh - env(safe-area-inset-top,0px) - 58px);padding:0;overflow:hidden}
-.memory-deck{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto;padding:14px 18px calc(env(safe-area-inset-bottom,0px) + 20px)}
-.memory-deck>header{display:flex;align-items:baseline;justify-content:space-between;padding:0 2px 12px}.memory-deck>header p{font-size:14px}.memory-deck>header span{color:var(--dim);font-size:11px}
-.memory-stage{min-height:0;display:grid;place-items:center;overflow:hidden}.memory-card{position:relative;width:min(88vw,430px);height:min(64dvh,600px);overflow:hidden;background:#111;touch-action:pan-y;will-change:transform;border:1px solid color-mix(in srgb,var(--line) 70%,transparent)}
-.memory-card img{width:100%;height:100%;display:block;object-fit:cover}.memory-choice{position:absolute;top:18px;padding:8px 12px;border:2px solid currentColor;border-radius:6px;background:rgba(0,0,0,.24);color:#fff;font-size:14px;font-weight:800;opacity:0;transition:opacity .08s}.memory-choice.no{right:18px;color:#F06A5F;transform:rotate(5deg)}.memory-choice.yes{left:18px;color:#74A9E8;transform:rotate(-5deg)}.memory-card.choose-no .memory-choice.no,.memory-card.choose-yes .memory-choice.yes{opacity:1}
-.memory-deck-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:14px}.memory-deck-actions button{min-height:52px;border:1px solid var(--line);font-size:13px;font-weight:750}.memory-deck-actions button:last-child{background:var(--ink);color:var(--bg)}
+.memory-deck{height:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto;padding:12px 18px calc(env(safe-area-inset-bottom,0px) + 18px);background:linear-gradient(155deg,#E6EAF5 0%,var(--bg) 42%,#EEF0F4 100%)}
+body.dark .memory-deck{background:linear-gradient(155deg,#1B1D25 0%,var(--bg) 46%,#17181D 100%)}
+.memory-deck>header{position:relative;z-index:4;display:flex;align-items:baseline;justify-content:space-between;padding:0 2px 10px}.memory-deck>header p{font-size:13px;font-variant-numeric:tabular-nums}.memory-deck>header span{color:var(--dim);font-size:10.5px}
+.memory-stage{position:relative;min-height:0;display:grid;place-items:center;overflow:hidden}
+.memory-card{position:relative;z-index:2;width:min(88vw,430px);height:min(64dvh,600px);overflow:hidden;border:1px solid rgba(255,255,255,.56);border-radius:30px;background:#111;box-shadow:0 22px 54px rgba(22,25,34,.24),inset 0 1px 0 rgba(255,255,255,.42);touch-action:pan-y;will-change:transform,opacity;outline-offset:4px}
+.memory-card img{width:100%;height:100%;display:block;object-fit:cover;pointer-events:none}
+.memory-verdict{position:absolute;z-index:3;left:2px;top:6px;max-width:90%;color:#090B10;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;font-size:clamp(76px,22vw,148px);font-weight:900;line-height:.82;letter-spacing:-.075em;text-transform:lowercase;white-space:nowrap;opacity:0;transform:translate3d(-28px,24px,0) rotate(-4deg);transform-origin:left top;pointer-events:none;filter:drop-shadow(0 1px 0 rgba(255,255,255,.28));transition:opacity .12s linear,transform .18s cubic-bezier(.2,.8,.2,1)}
+body.dark .memory-verdict{color:#F2F3F7}
+.memory-verdict span{display:block}
+.memory-stage.choose-yes .memory-verdict.yes,.memory-stage.choose-no .memory-verdict.no{opacity:calc(.18 + var(--decision-progress,.82));transform:translate3d(0,0,0) rotate(-1.5deg)}
+.memory-stage.choose-yes .memory-verdict.no,.memory-stage.choose-no .memory-verdict.yes{opacity:0}
+.memory-deck-actions{position:relative;z-index:4;display:grid;grid-template-columns:1fr 1fr;gap:10px;padding-top:13px}.memory-deck-actions button{min-height:52px;border:1px solid color-mix(in srgb,var(--line) 84%,transparent);border-radius:16px;background:color-mix(in srgb,var(--sf) 68%,transparent);backdrop-filter:blur(18px) saturate(1.4);-webkit-backdrop-filter:blur(18px) saturate(1.4);font-size:12px;font-weight:820;letter-spacing:.11em}.memory-deck-actions button:last-child{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 
 @media (min-width:680px){.release-screen:not(.profile-screen){background:var(--sf)}.release-screen:not(.profile-screen)>.release-body,.release-screen:not(.profile-screen)>.release-bar{box-shadow:0 0 0 1px var(--line)}
   .timeline-photo{aspect-ratio:3/2}.release-body{background:var(--bg)}}

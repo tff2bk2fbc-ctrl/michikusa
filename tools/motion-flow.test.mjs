@@ -185,7 +185,7 @@ test('本番UIはFilmo動作を追加し、更新と即時反応を分離する'
     read('public/native.js'), read('public/post.js'), read('public/place.js'), read('public/map.js')
   ]);
   assert.match(html, /id="spota-wait" hidden aria-hidden="true"/);
-  assert.ok(html.indexOf('/motion.js?v=124') < html.indexOf('/map.js?v=125'));
+  assert.ok(html.indexOf('/motion.js?v=126') < html.indexOf('/map.js?v=125'));
   assert.match(css, /\.spota-wait\{[^}]*background:transparent;pointer-events:none/s);
   assert.match(css, /spotaCharge 2\.2s/);
   assert.match(css, /\.timeline-refresh-hint\.refreshing \.timeline-refresh-spinner\{display:block;animation:timelineSpin 1s linear infinite\}/);
@@ -212,9 +212,9 @@ test('本番の7モーションは承認済みプレビューの数値を使う'
   assert.match(css, /\.motion-photo-drop\{[^}]*width:150px;height:150px/s);
   assert.match(css, /spotaCameraFlash \.5s cubic-bezier\(\.22,\.61,\.36,1\)/);
   assert.match(motion, /duration:2500,easing:'cubic-bezier\(\.22,\.61,\.36,1\)'/);
-  assert.match(css, /spotaLocationPulse 2\.4s cubic-bezier\(\.22,\.61,\.36,1\) infinite/);
-  assert.match(css, /nth-child\(3\)\{animation-delay:\.8s\}/);
-  assert.match(css, /nth-child\(4\)\{animation-delay:1\.6s\}/);
+  assert.match(css, /spotaLocationPulse \.9s cubic-bezier\(\.22,\.61,\.36,1\) 1 both/);
+  assert.match(css, /nth-child\(3\)\{animation-delay:\.12s\}/);
+  assert.match(css, /nth-child\(4\)\{animation-delay:\.24s\}/);
   assert.match(motion, /duration:1900,easing:'cubic-bezier\(\.22,\.61,\.36,1\)'/);
   assert.match(css, /spotaCharge 2\.2s/);
   assert.match(release, /Math\.min\(90,dy\*\.45\)/);
@@ -241,6 +241,27 @@ test('いいね件数は通信失敗が早く返ってもロールバック値�
 });
 
 test('新しいモーションは外部通信先を追加しない', async () => {
-  const motion = await read('public/motion.js');
+  const [motion, options] = await Promise.all([read('public/motion.js'),read('public/motion-50-options.js')]);
   assert.doesNotMatch(motion, /fetch\(|XMLHttpRequest|WebSocket|https?:\/\//);
+  assert.doesNotMatch(options, /fetch\(|XMLHttpRequest|WebSocket|https?:\/\//);
+});
+
+test('採用番号とMotion 50は本番の既存機能へ接続される', async () => {
+  const [html, motion, post, css, preview] = await Promise.all([
+    read('public/index.html'), read('public/motion.js'), read('public/post.js'),
+    read('public/app.css'), read('public/motion-50-options.html')
+  ]);
+  [1,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,27,28,29,30,31,32,41,43,44,45,46,47,48,49,50]
+    .forEach(id => assert.match(motion,new RegExp('(?:^|[,\\s])'+id+':')));
+  assert.match(motion, /function bindHold\(/);
+  assert.match(motion, /haptic\(options\.style\|\|'rigid'/);
+  assert.match(motion, /bindHold\(camera,null,\{duration:520,style:'rigid',intensity:\.9\}\)/);
+  assert.doesNotMatch(css, /\.motion-holding[^{]*\{[^}]*stroke-dash/s);
+  assert.match(post, /<span>use<\/span><span>it\.<\/span>/);
+  assert.match(post, /<span>pass<\/span><span>it\.<\/span>/);
+  assert.match(post, /thresholdHit/);
+  assert.match(preview, /A\. Diagonal Verdict/);
+  assert.match(preview, /B\. Corner Split/);
+  assert.match(preview, /C\. Editorial Wipe/);
+  assert.match(html, /id="btn-timeline"[\s\S]*id="btn-bulk"[\s\S]*id="btn-cam"[\s\S]*id="btn-lib"[\s\S]*id="btn-me"/);
 });

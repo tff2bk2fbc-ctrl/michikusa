@@ -12,6 +12,62 @@
   var reduce=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   var serial=0,visible=0;
   var jobs=Object.create(null);
+  var lastHapticAt=0;
+
+  // UIで採用したモーション番号。機能のない場所へ演出だけを増やさないため、
+  // 実際の操作が存在する画面から順に接続する。
+  var catalog=Object.freeze({
+    1:'press',4:'hold-haptic',5:'segment',6:'toggle',7:'number-roll',8:'success',9:'error',10:'undo',
+    11:'photo-like',12:'heart-fill',13:'heart-remove',14:'save-burst',15:'follow',16:'comment-sheet',
+    17:'comment-insert',18:'share-sheet',19:'avatar',20:'shared-photo',22:'pin-drop',27:'locate',28:'location',
+    29:'map-crossfade',30:'map-flight',31:'one-hand-zoom',32:'image-quality',41:'flash-loader',43:'blur-up',
+    44:'pull-refresh',45:'bottom-nav',46:'screen',47:'notification-insert',48:'message-state',49:'album-sort',50:'daily-swipe'
+  });
+
+  function haptic(style,intensity){
+    var now=Date.now();
+    // 誤作動や連打でTaptic Engineを連続駆動しない。
+    if(now-lastHapticAt<70)return Promise.resolve(false);
+    lastHapticAt=now;
+    var cap=window.Capacitor,plugins=cap&&cap.Plugins||{};
+    var nativePlugin=plugins.SpotaHaptics;
+    if(nativePlugin&&typeof nativePlugin.impact==='function'){
+      return Promise.resolve(nativePlugin.impact({style:style||'medium',intensity:Number(intensity)||.88}))
+        .then(function(){return true;}).catch(function(){return false;});
+    }
+    // Haptics pluginが既にある環境も壊さず利用する。
+    if(plugins.Haptics&&typeof plugins.Haptics.impact==='function'){
+      return Promise.resolve(plugins.Haptics.impact({style:String(style||'medium').toUpperCase()}))
+        .then(function(){return true;}).catch(function(){return false;});
+    }
+    var nav=window.navigator||(typeof navigator!=='undefined'?navigator:null);
+    if(nav&&nav.vibrate){nav.vibrate(style==='rigid'?16:9);return Promise.resolve(true);}
+    return Promise.resolve(false);
+  }
+
+  // 残り時間の輪は表示しない。押している間は面が沈み、成立時だけ一度「ぐっ」と返す。
+  function bindHold(node,complete,options){
+    if(!node||typeof node.addEventListener!=='function')return function(){};
+    options=options||{};var duration=Math.max(360,Number(options.duration)||620);
+    var pointer=null,timer=0,done=false;
+    function reset(){clearTimeout(timer);timer=0;pointer=null;done=false;node.classList.remove('motion-holding','motion-hold-complete');}
+    function finish(){
+      if(pointer===null||done)return;done=true;node.classList.remove('motion-holding');node.classList.add('motion-hold-complete');
+      haptic(options.style||'rigid',options.intensity||.92);
+      if(typeof complete==='function')complete();
+      setTimeout(function(){node.classList.remove('motion-hold-complete');},220);
+    }
+    function down(event){
+      if(pointer!==null||event.isPrimary===false||(event.pointerType==='mouse'&&event.button!==0))return;
+      pointer=event.pointerId;done=false;node.classList.add('motion-holding');
+      try{node.setPointerCapture(pointer);}catch(e){}
+      timer=setTimeout(finish,duration);
+    }
+    function end(event){if(pointer!==null&&event.pointerId===pointer)reset();}
+    node.addEventListener('pointerdown',down);node.addEventListener('pointerup',end);
+    node.addEventListener('pointercancel',reset);node.addEventListener('lostpointercapture',reset);
+    return function(){reset();node.removeEventListener('pointerdown',down);node.removeEventListener('pointerup',end);node.removeEventListener('pointercancel',reset);node.removeEventListener('lostpointercapture',reset);};
+  }
 
   function showWait(job){
     if(!job||!jobs[job.id]||job.shown)return;
@@ -153,7 +209,18 @@
     }
     if(current.textContent===nextValue)return;
     Array.prototype.forEach.call(spans,function(span){if(span!==current)span.remove();});
-    current.textContent=nextValue;
+    if(reduce||!current.animate||!node.appendChild){current.textContent=nextValue;return;}
+    var previous=Number(current.textContent),nextNumber=Number(nextValue),direction=isFinite(previous)&&isFinite(nextNumber)&&nextNumber<previous?-1:1;
+    var incoming=document.createElement('span');incoming.textContent=nextValue;node.appendChild(incoming);
+    node.classList.add('motion-number-roll');var generation=(node.__spotaRollGeneration||0)+1;node.__spotaRollGeneration=generation;
+    current.animate([{transform:'translateY(0)',opacity:1},{transform:'translateY('+(-direction*100)+'%)',opacity:.18}],
+      {duration:240,easing:'cubic-bezier(.22,.61,.36,1)',fill:'forwards'});
+    var animation=incoming.animate([{transform:'translateY('+(direction*100)+'%)',opacity:.18},{transform:'translateY(0)',opacity:1}],
+      {duration:240,easing:'cubic-bezier(.22,.61,.36,1)',fill:'forwards'});
+    animation.onfinish=animation.oncancel=function(){
+      if(node.__spotaRollGeneration!==generation)return;
+      node.textContent='';incoming.textContent=nextValue;node.appendChild(incoming);node.classList.remove('motion-number-roll');
+    };
   }
 
   function restartClass(node,name,duration){
@@ -162,7 +229,33 @@
     setTimeout(function(){node.classList.remove(name);},duration||900);
   }
 
+  function installInteractionMotion(){
+    if(!document||typeof document.addEventListener!=='function')return;
+    // カメラを少し長く押すと、輪を出さずに一度だけ「ぐっ」と返す。
+    // 撮影アクション自体は従来どおりpointerup後のclickで実行する。
+    var camera=document.getElementById('btn-cam');
+    if(camera)bindHold(camera,null,{duration:520,style:'rigid',intensity:.9});
+    var pressed=null;
+    function releasePress(){if(pressed){pressed.classList.remove('motion-pressing');pressed=null;}}
+    document.addEventListener('pointerdown',function(event){
+      var target=event.target&&event.target.closest&&event.target.closest('button,.chip,[role="tab"]');
+      if(!target||target.disabled)return;releasePress();pressed=target;target.classList.add('motion-pressing');
+    },true);
+    document.addEventListener('pointerup',releasePress,true);document.addEventListener('pointercancel',releasePress,true);
+    document.addEventListener('click',function(event){
+      var segment=event.target&&event.target.closest&&event.target.closest('[role="tab"],.chip');
+      if(segment)restartClass(segment,'motion-segment-confirm',300);
+    },true);
+    document.addEventListener('change',function(event){
+      var input=event.target;if(!input||!/^(checkbox|radio)$/.test(input.type||''))return;
+      var host=input.closest&&input.closest('label,button,fieldset');if(host)restartClass(host,'motion-toggle-confirm',300);
+    },true);
+  }
+
+  installInteractionMotion();
+
   window.SpotaMotion={
+    catalog:catalog,
     beginWait:beginWait,
     endWait:endWait,
     withWait:withWait,
@@ -170,6 +263,8 @@
     pulseLocation:pulseLocation,
     viewerTransition:viewerTransition,
     rollNumber:rollNumber,
-    restartClass:restartClass
+    restartClass:restartClass,
+    haptic:haptic,
+    bindHold:bindHold
   };
 })();

@@ -269,7 +269,7 @@ test("自分の地図は3枚目より後のサーバー写真も復元キュー�
 
 test("スワイプは日次候補だけに使い、意図的な選択は直接追加する", () => {
   assert.match(postSource, /secureShuffle\(candidates\)/);
-  assert.match(postSource, /右へ使う・左へ使わない/);
+  assert.match(postSource, /右へ USE・左へ PASS/);
   assert.match(postSource, /if\(use\)kept\.push\(candidate\)/);
   assert.doesNotMatch(postSource, /kept\.push\(await chosenCandidateFile/);
   assert.match(postSource, /releaseScreen!==screen/);

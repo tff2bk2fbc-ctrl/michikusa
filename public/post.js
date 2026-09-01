@@ -130,18 +130,20 @@ function openMemoryDeck(candidates,options){
   options=options||{};
   candidates=(options.daily?candidates.slice(0,1):secureShuffle(candidates).slice(0,200));if(!candidates.length){setTip('選ばれませんでした');return;}
   var screen=makeReleaseScreen(options.daily?'今日の1枚':'写真を選ぶ'),body=screen.querySelector('.release-body');screen.classList.add('memory-deck-screen');
-  body.innerHTML='<section class="memory-deck"><header><p><b id="deck-step">1</b> / '+candidates.length+'</p><span>右へ使う・左へ使わない</span></header><div class="memory-stage"><div class="memory-card" id="memory-card"><img id="memory-card-img" alt="選択する写真"><span class="memory-choice no">使わない</span><span class="memory-choice yes">使う</span></div></div><div class="memory-deck-actions"><button type="button" id="memory-no">使わない</button><button type="button" id="memory-yes">使う</button></div><div class="sr-only" id="memory-live" aria-live="polite"></div></section>';
-  var card=body.querySelector('#memory-card'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true,finishing=false;
+  body.innerHTML='<section class="memory-deck"><header><p><b id="deck-step">1</b> / '+candidates.length+'</p><span>右へ USE・左へ PASS</span></header><div class="memory-stage" id="memory-stage"><div class="memory-verdict yes" aria-hidden="true"><span>use</span><span>it.</span></div><div class="memory-verdict no" aria-hidden="true"><span>pass</span><span>it.</span></div><div class="memory-card" id="memory-card" role="group" tabindex="0" aria-label="今日の写真候補。右矢印または右スワイプで使う、左矢印または左スワイプで使わない"><img id="memory-card-img" alt="選択する写真"></div></div><div class="memory-deck-actions"><button type="button" id="memory-no" aria-label="この写真を使わない">PASS</button><button type="button" id="memory-yes" aria-label="この写真を使う">USE</button></div><div class="sr-only" id="memory-live" aria-live="polite"></div></section>';
+  var card=body.querySelector('#memory-card'),stage=body.querySelector('#memory-stage'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true,finishing=false;
   screen.__onClose=function(){alive=false;if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}if(options.onClose)options.onClose(finishing);};
   function preview(){
     if(!alive||releaseScreen!==screen||!screen.isConnected)return;
     if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}
     if(at>=candidates.length){finish();return;}
-    var c=candidates[at];step.textContent=String(at+1);card.style.transition='none';card.style.transform='';card.classList.remove('choose-yes','choose-no');
+    var c=candidates[at];step.textContent=String(at+1);card.style.transition='none';card.style.transform='';card.style.opacity='';stage.style.removeProperty('--decision-progress');stage.classList.remove('choose-yes','choose-no');
     if(c.file){currentUrl=URL.createObjectURL(c.file);img.src=currentUrl;}else img.src=c.asset;
   }
   function decide(use,direction){
-    if(!alive||busy||at>=candidates.length)return;busy=true;card.classList.add(use?'choose-yes':'choose-no');card.style.transition='transform .24s cubic-bezier(.2,.72,.2,1),opacity .2s';card.style.transform='translate3d('+(direction*(innerWidth+120))+'px,0,0) rotate('+(direction*7)+'deg)';live.textContent=use?'この写真を使います':'この写真は使いません';
+    if(!alive||busy||at>=candidates.length)return;busy=true;stage.classList.add(use?'choose-yes':'choose-no');stage.style.setProperty('--decision-progress','1');card.style.transition='transform .26s cubic-bezier(.2,.72,.2,1),opacity .2s';card.style.opacity='.12';card.style.transform='translate3d('+(direction*(innerWidth+120))+'px,'+(use?'-18vh':'4vh')+',0) rotate('+(direction*7)+'deg)';live.textContent=use?'この写真を使います':'この写真は使いません';
+    // スワイプ判定線で既に触覚を返した場合は、指を離した瞬間に二重発火させない。
+    if(window.SpotaMotion&&!thresholdHit)window.SpotaMotion.haptic('rigid',.92);
     var candidate=candidates[at++];
     // デッキ中は原寸Blobを保持せず参照だけを残す。採用後の解析時に1枚ずつ読む。
     if(use)kept.push(candidate);
@@ -155,11 +157,13 @@ function openMemoryDeck(candidates,options){
     if(options.onKeep){options.onKeep(kept[0]);return;}
     setTip(kept.length+'枚を確認します');handleBulk(kept);
   }
-  var dragging=false,locked=false,pointer=0,sx=0,lastX=0,lastT=0,vx=0;
-  card.onpointerdown=function(e){if(busy||!e.isPrimary||e.button!==0)return;dragging=true;locked=false;pointer=e.pointerId;sx=lastX=e.clientX;lastT=e.timeStamp;vx=0;card.style.transition='none';};
-  card.onpointermove=function(e){if(!dragging||e.pointerId!==pointer)return;var dx=e.clientX-sx;if(!locked&&Math.abs(dx)>8){locked=true;try{card.setPointerCapture(pointer);}catch(err){}}if(!locked)return;e.preventDefault();var dt=Math.max(1,e.timeStamp-lastT),instant=(e.clientX-lastX)/dt*1000;vx=vx*.65+instant*.35;lastX=e.clientX;lastT=e.timeStamp;card.style.transform='translate3d('+dx+'px,0,0) rotate('+(dx/innerWidth*6)+'deg)';card.classList.toggle('choose-yes',dx>18);card.classList.toggle('choose-no',dx<-18);};
-  function release(e){if(!dragging||e.pointerId!==pointer)return;dragging=false;var dx=e.clientX-sx,idle=e.timeStamp-lastT;if(idle>80)vx=0;var byDistance=Math.abs(dx)>card.offsetWidth*.25,bySpeed=Math.abs(vx)>700,go=byDistance||bySpeed,direction=byDistance?(dx>0?1:-1):(vx>0?1:-1);if(go)decide(direction>0,direction);else{card.style.transition='transform .3s cubic-bezier(.18,.78,.24,1)';card.style.transform='';card.classList.remove('choose-yes','choose-no');}}
-  card.onpointerup=release;card.onpointercancel=function(){if(dragging){dragging=false;card.style.transition='transform .25s';card.style.transform='';card.classList.remove('choose-yes','choose-no');}};
+  var dragging=false,locked=false,pointer=0,sx=0,sy=0,lastX=0,lastT=0,vx=0,thresholdHit=false;
+  card.onpointerdown=function(e){if(busy||!e.isPrimary||(e.pointerType==='mouse'&&e.button!==0))return;dragging=true;locked=false;thresholdHit=false;pointer=e.pointerId;sx=lastX=e.clientX;sy=e.clientY;lastT=e.timeStamp;vx=0;card.style.transition='none';};
+  card.onpointermove=function(e){if(!dragging||e.pointerId!==pointer)return;var dx=e.clientX-sx,dy=e.clientY-sy;if(!locked&&Math.max(Math.abs(dx),Math.abs(dy))>8){if(Math.abs(dy)>Math.abs(dx)*1.2){dragging=false;return;}locked=true;try{card.setPointerCapture(pointer);}catch(err){}}if(!locked)return;e.preventDefault();var dt=Math.max(1,e.timeStamp-lastT),instant=(e.clientX-lastX)/dt*1000;vx=vx*.65+instant*.35;lastX=e.clientX;lastT=e.timeStamp;var y=Math.max(-140,Math.min(70,dy*.42)),progress=Math.min(1,Math.abs(dx)/(card.offsetWidth*.30));card.style.transform='translate3d('+dx+'px,'+y+'px,0) rotate('+(dx/innerWidth*7)+'deg)';stage.style.setProperty('--decision-progress',String(progress));stage.classList.toggle('choose-yes',dx>12);stage.classList.toggle('choose-no',dx<-12);var nowHit=progress>=1;if(nowHit&&!thresholdHit&&window.SpotaMotion)window.SpotaMotion.haptic('rigid',.86);thresholdHit=nowHit;};
+  function resetCard(){card.style.transition='transform .3s cubic-bezier(.18,.78,.24,1),opacity .18s';card.style.transform='';card.style.opacity='';stage.style.removeProperty('--decision-progress');stage.classList.remove('choose-yes','choose-no');thresholdHit=false;}
+  function release(e){if(!dragging||e.pointerId!==pointer)return;dragging=false;var dx=e.clientX-sx,idle=e.timeStamp-lastT;if(idle>80)vx=0;var byDistance=Math.abs(dx)>card.offsetWidth*.28,bySpeed=Math.abs(vx)>760,go=byDistance||bySpeed,direction=byDistance?(dx>0?1:-1):(vx>0?1:-1);if(go)decide(direction>0,direction);else resetCard();}
+  card.onpointerup=release;card.onpointercancel=function(){if(dragging){dragging=false;resetCard();}};card.onlostpointercapture=function(){if(dragging){dragging=false;resetCard();}};
+  card.onkeydown=function(e){if(e.key==='ArrowRight'){e.preventDefault();decide(true,1);}else if(e.key==='ArrowLeft'){e.preventDefault();decide(false,-1);}};
   body.querySelector('#memory-no').onclick=function(){decide(false,-1);};body.querySelector('#memory-yes').onclick=function(){decide(true,1);};preview();
 }
 

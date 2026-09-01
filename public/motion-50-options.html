@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Spota Motion 50</title>
+  <style>
+    *{box-sizing:border-box}
+    :root{--ink:#090b10;--muted:#6d717c;--line:rgba(20,25,34,.14);--surface:#f7f8fb;--blue:#e0e6f5;--glass:rgba(255,255,255,.64);--ease:cubic-bezier(.2,.8,.2,1)}
+    html{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Hiragino Sans",sans-serif;background:#dfe5f3;color:var(--ink);-webkit-text-size-adjust:100%}
+    body{margin:0;min-height:100vh;background:radial-gradient(90% 60% at 50% 0,#f7f8fb 0,transparent 68%),linear-gradient(150deg,#dde4f5,#f2f3f6 55%,#dfe5f0)}
+    button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation}
+    button:focus-visible,.decision-card:focus-visible{outline:3px solid #195fa8;outline-offset:4px}
+    .wrap{width:min(1260px,100%);margin:auto;padding:0 clamp(16px,2.2vw,28px) 64px}
+    .mast{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(240px,.6fr);gap:36px;align-items:end;padding:18px 0 38px;border-bottom:1px solid var(--line)}
+    .mast h1,.verdict{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;font-weight:900;letter-spacing:-.075em}
+    .mast h1{margin:0;font-size:clamp(108px,19.5vw,172px);line-height:.82}
+    .mast p{margin:0 0 7px;color:var(--muted);font-size:14px;line-height:1.72}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;padding-top:24px}
+    .option{min-width:0;padding:14px;border:1px solid rgba(255,255,255,.72);border-radius:34px;background:var(--glass);box-shadow:0 22px 55px rgba(28,35,50,.13),inset 0 1px 0 #fff;backdrop-filter:blur(24px) saturate(1.35)}
+    .option>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 7px 14px}
+    .option h2{margin:0;font-size:18px;letter-spacing:-.025em}.option header p{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.5}
+    .badge{padding:6px 8px;border-radius:99px;background:var(--ink);color:white;font-size:9px;font-weight:800;letter-spacing:.08em}
+    .stage{position:relative;height:520px;display:grid;place-items:center;overflow:hidden;border-radius:25px;background:linear-gradient(150deg,#e6eaf5,#f5f5f3);isolation:isolate}
+    .decision-card{position:relative;z-index:3;width:82%;height:72%;padding:0;overflow:hidden;border:1px solid rgba(255,255,255,.62);border-radius:30px;background:#121318;box-shadow:0 25px 58px rgba(13,18,28,.28),inset 0 1px 0 rgba(255,255,255,.35);touch-action:pan-y;will-change:transform,opacity}
+    .decision-card img{width:100%;height:100%;display:block;object-fit:cover;background:#101116;pointer-events:none}
+    .decision-card::after{content:"SPOTA / DAILY MEMORY";position:absolute;left:16px;right:16px;bottom:15px;color:white;font-size:9px;font-weight:740;letter-spacing:.13em;text-shadow:0 1px 8px #000}
+    .verdict{position:absolute;z-index:4;left:3px;top:8px;color:var(--ink);font-size:clamp(70px,8.5vw,116px);line-height:.82;text-transform:lowercase;pointer-events:none;opacity:0;transform:translate3d(-28px,24px,0) rotate(-4deg);transform-origin:left top;transition:opacity .12s linear,transform .18s var(--ease)}
+    .verdict span{display:block}.stage.use .verdict.use,.stage.pass .verdict.pass{opacity:calc(.2 + var(--progress,.8));transform:translate3d(0,0,0) rotate(-1.5deg)}
+    .stage.use .verdict.pass,.stage.pass .verdict.use{opacity:0}
+    .option-b .verdict.use{left:3px}.option-b .verdict.pass{left:auto;right:3px;transform-origin:right top;text-align:right;transform:translate3d(28px,24px,0) rotate(4deg)}
+    .option-b .stage.pass .verdict.pass{transform:translate3d(0,0,0) rotate(1.5deg)}
+    .option-c .verdict{z-index:1;left:-3px;top:58px;font-size:clamp(86px,10vw,138px);clip-path:inset(0 100% 0 0);opacity:1;transform:none;transition:clip-path .2s var(--ease)}
+    .option-c .stage.use .verdict.use,.option-c .stage.pass .verdict.pass{clip-path:inset(0 calc((1 - var(--progress,.8))*100%) 0 0);transform:none}
+    .option-c .decision-card{z-index:2}
+    .actions{display:grid;grid-template-columns:1fr 1fr;gap:9px;padding-top:12px}
+    .actions button{min-height:50px;border:1px solid var(--line);border-radius:15px;background:rgba(255,255,255,.55);font-size:11px;font-weight:840;letter-spacing:.12em}
+    .actions button:last-child{border-color:var(--ink);background:var(--ink);color:white}
+    .hint{min-height:40px;margin:10px 5px 0;color:var(--muted);font-size:10.5px;line-height:1.55}
+    .status{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+    @media(max-width:920px){.mast{grid-template-columns:1fr}.grid{grid-template-columns:1fr}.stage{height:min(620px,70vh)}.option{max-width:560px;margin:auto}.verdict{font-size:clamp(76px,22vw,132px)}}
+    @media(max-width:560px){.mast h1{font-size:clamp(82px,24vw,112px)}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}.decision-card{transform:none!important}.verdict{transform:none!important}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="mast" aria-labelledby="title">
+      <h1 id="title">50 ways<br>to respond.</h1>
+      <p>写真は端末内で候補表示され、USEを選ぶまで送信されません。カードの左右スワイプ、左右矢印キー、下のボタンで3案を比較できます。</p>
+    </section>
+    <section class="grid" aria-label="Motion 50の3案">
+      <article class="option option-a" data-option="A">
+        <header><div><h2>A. Diagonal Verdict</h2><p>左上から判断語が出る本番推奨案</p></div><span class="badge">RECOMMENDED</span></header>
+        <div class="stage">
+          <div class="verdict use" aria-hidden="true"><span>use</span><span>it.</span></div>
+          <div class="verdict pass" aria-hidden="true"><span>pass</span><span>it.</span></div>
+          <div class="decision-card" role="group" tabindex="0" aria-label="A案。右で使う、左で使わない"><img src="icon-1024.png" alt="Spotaの今日の写真候補"></div>
+          <p class="status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="actions"><button type="button" data-choice="pass">PASS</button><button type="button" data-choice="use">USE</button></div>
+        <p class="hint">右上へ流すと USE、左へ流すと PASS。判定線で一度だけ硬めの触覚を返します。</p>
+      </article>
+      <article class="option option-b" data-option="B">
+        <header><div><h2>B. Corner Split</h2><p>判定語を両端へ分ける明快な案</p></div></header>
+        <div class="stage">
+          <div class="verdict use" aria-hidden="true"><span>keep</span><span>this.</span></div>
+          <div class="verdict pass" aria-hidden="true"><span>not</span><span>this.</span></div>
+          <div class="decision-card" role="group" tabindex="0" aria-label="B案。右で使う、左で使わない"><img src="icon-1024.png" alt="Spotaの今日の写真候補"></div>
+          <p class="status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="actions"><button type="button" data-choice="pass">NOT THIS</button><button type="button" data-choice="use">KEEP THIS</button></div>
+        <p class="hint">左右の判定先が最も理解しやすい案。Aより少しゲーム的な印象になります。</p>
+      </article>
+      <article class="option option-c" data-option="C">
+        <header><div><h2>C. Editorial Wipe</h2><p>巨大文字が写真の背後から現れる案</p></div></header>
+        <div class="stage">
+          <div class="verdict use" aria-hidden="true"><span>this</span><span>one.</span></div>
+          <div class="verdict pass" aria-hidden="true"><span>next</span><span>one.</span></div>
+          <div class="decision-card" role="group" tabindex="0" aria-label="C案。右で使う、左で使わない"><img src="icon-1024.png" alt="Spotaの今日の写真候補"></div>
+          <p class="status" role="status" aria-live="polite"></p>
+        </div>
+        <div class="actions"><button type="button" data-choice="pass">NEXT ONE</button><button type="button" data-choice="use">THIS ONE</button></div>
+        <p class="hint">参考画像のエディトリアル感を最も強く使う案。写真の視認性はAが優位です。</p>
+      </article>
+    </section>
+  </main>
+  <script src="motion-50-options.js"></script>
+</body>
+</html>
