@@ -185,7 +185,7 @@ test('本番UIはFilmo動作を追加し、更新と即時反応を分離する'
     read('public/native.js'), read('public/post.js'), read('public/place.js'), read('public/map.js')
   ]);
   assert.match(html, /id="spota-wait" hidden aria-hidden="true"/);
-  assert.ok(html.indexOf('/motion.js?v=127') < html.indexOf('/map.js?v=127'));
+  assert.ok(html.indexOf('/motion.js?v=128') < html.indexOf('/map.js?v=128'));
   assert.match(css, /\.spota-wait\{[^}]*background:transparent;pointer-events:none/s);
   assert.match(css, /spotaCharge 2\.2s/);
   assert.match(css, /\.timeline-refresh-hint\.refreshing \.timeline-refresh-spinner\{display:block;animation:timelineSpin 1s linear infinite\}/);
@@ -262,9 +262,10 @@ test('新しいモーションは外部通信先を追加しない', async () =>
 });
 
 test('採用番号とMotion 50は本番の既存機能へ接続される', async () => {
-  const [html, motion, post, css, preview] = await Promise.all([
+  const [html, motion, post, css, preview, previewScript] = await Promise.all([
     read('public/index.html'), read('public/motion.js'), read('public/post.js'),
-    read('public/app.css'), read('public/motion-50-options.html')
+    read('public/app.css'), read('public/motion-50-options.html'),
+    read('public/motion-50-options.js')
   ]);
   [1,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,27,28,29,30,31,32,41,43,44,45,46,47,48,49,50]
     .forEach(id => assert.match(motion,new RegExp('(?:^|[,\\s])'+id+':')));
@@ -272,12 +273,26 @@ test('採用番号とMotion 50は本番の既存機能へ接続される', async
   assert.match(motion, /haptic\(options\.style\|\|'rigid'/);
   assert.match(motion, /bindHold\(camera,null,\{duration:520,style:'rigid',intensity:\.9\}\)/);
   assert.doesNotMatch(css, /\.motion-holding[^{]*\{[^}]*stroke-dash/s);
-  assert.match(post, /<span>use<\/span><span>it\.<\/span>/);
-  assert.match(post, /<span>pass<\/span><span>it\.<\/span>/);
+  assert.match(post, /data-motion-50="B"/);
+  assert.match(post, /<span>keep<\/span><span>this\.<\/span>/);
+  assert.match(post, /<span>not<\/span><span>this\.<\/span>/);
+  assert.match(post, />NOT THIS<\/button><button[^>]*id="memory-yes"[^>]*>KEEP THIS<\/button>/);
+  assert.match(post, /aria-label="NOT THIS。写真を使わない"/);
+  assert.match(post, /aria-label="KEEP THIS。写真を使う"/);
+  assert.match(post, /aria-describedby="deck-progress deck-instructions"/);
+  assert.match(post, /role="status" aria-live="polite" aria-atomic="true"/);
+  assert.match(post, /reduceDeck\?0:220/);
+  assert.match(css, /memory-deck\[data-motion-50="B"\][^{]*\.memory-verdict\.no\{[^}]*right:2px[^}]*text-align:right/);
+  assert.match(css, /\.memory-card:focus-visible\{outline:3px solid var\(--focus\)/);
+  assert.match(css, /touch-action:pan-y pinch-zoom/);
   assert.match(post, /thresholdHit/);
   assert.match(preview, /A\. Diagonal Verdict/);
   assert.match(preview, /B\. Corner Split/);
   assert.match(preview, /C\. Editorial Wipe/);
+  assert.match(preview, /option option-b[\s\S]*?<span class="badge">SELECTED<\/span>/);
+  assert.doesNotMatch(preview, /option option-a[\s\S]*?<span class="badge">(?:RECOMMENDED|SELECTED)<\/span>[\s\S]*?option option-b/);
+  assert.match(preview, /\.decision-card\{[^}]*touch-action:pan-y pinch-zoom/);
+  assert.match(previewScript, /},reduce\?0:300\);/);
   assert.match(html, /id="btn-timeline"[\s\S]*id="btn-bulk"[\s\S]*id="btn-cam"[\s\S]*id="btn-lib"[\s\S]*id="btn-me"/);
 });
 

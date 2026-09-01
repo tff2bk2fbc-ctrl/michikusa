@@ -130,8 +130,9 @@ function openMemoryDeck(candidates,options){
   options=options||{};
   candidates=(options.daily?candidates.slice(0,1):secureShuffle(candidates).slice(0,200));if(!candidates.length){setTip('選ばれませんでした');return;}
   var screen=makeReleaseScreen(options.daily?'今日の1枚':'写真を選ぶ'),body=screen.querySelector('.release-body');screen.classList.add('memory-deck-screen');
-  body.innerHTML='<section class="memory-deck"><header><p><b id="deck-step">1</b> / '+candidates.length+'</p><span>右へ USE・左へ PASS</span></header><div class="memory-stage" id="memory-stage"><div class="memory-verdict yes" aria-hidden="true"><span>use</span><span>it.</span></div><div class="memory-verdict no" aria-hidden="true"><span>pass</span><span>it.</span></div><div class="memory-card" id="memory-card" role="group" tabindex="0" aria-label="今日の写真候補。右矢印または右スワイプで使う、左矢印または左スワイプで使わない"><img id="memory-card-img" alt="選択する写真"></div></div><div class="memory-deck-actions"><button type="button" id="memory-no" aria-label="この写真を使わない">PASS</button><button type="button" id="memory-yes" aria-label="この写真を使う">USE</button></div><div class="sr-only" id="memory-live" aria-live="polite"></div></section>';
-  var card=body.querySelector('#memory-card'),stage=body.querySelector('#memory-stage'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true,finishing=false;
+  // Motion 50 B / Corner Split。左右の判定語を分け、進行方向を一目で読めるようにする。
+  body.innerHTML='<section class="memory-deck" data-motion-50="B"><header><p id="deck-progress"><b id="deck-step">1</b> / '+candidates.length+'</p><span id="deck-instructions">右へ KEEP THIS・左へ NOT THIS</span></header><div class="memory-stage" id="memory-stage"><div class="memory-verdict yes" aria-hidden="true"><span>keep</span><span>this.</span></div><div class="memory-verdict no" aria-hidden="true"><span>not</span><span>this.</span></div><div class="memory-card" id="memory-card" role="group" tabindex="0" aria-describedby="deck-progress deck-instructions" aria-label="今日の写真候補。右矢印または右スワイプで使う、左矢印または左スワイプで使わない"><img id="memory-card-img" alt="選択する写真"></div></div><div class="memory-deck-actions"><button type="button" id="memory-no" aria-label="NOT THIS。写真を使わない">NOT THIS</button><button type="button" id="memory-yes" aria-label="KEEP THIS。写真を使う">KEEP THIS</button></div><div class="sr-only" id="memory-live" role="status" aria-live="polite" aria-atomic="true"></div></section>';
+  var card=body.querySelector('#memory-card'),stage=body.querySelector('#memory-stage'),img=body.querySelector('#memory-card-img'),step=body.querySelector('#deck-step'),live=body.querySelector('#memory-live'),at=0,kept=[],busy=false,currentUrl='',alive=true,finishing=false,reduceDeck=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);
   screen.__onClose=function(){alive=false;if(currentUrl){URL.revokeObjectURL(currentUrl);currentUrl='';}if(options.onClose)options.onClose(finishing);};
   function preview(){
     if(!alive||releaseScreen!==screen||!screen.isConnected)return;
@@ -141,14 +142,14 @@ function openMemoryDeck(candidates,options){
     if(c.file){currentUrl=URL.createObjectURL(c.file);img.src=currentUrl;}else img.src=c.asset;
   }
   function decide(use,direction){
-    if(!alive||busy||at>=candidates.length)return;busy=true;stage.classList.add(use?'choose-yes':'choose-no');stage.style.setProperty('--decision-progress','1');card.style.transition='transform .26s cubic-bezier(.2,.72,.2,1),opacity .2s';card.style.opacity='.12';card.style.transform='translate3d('+(direction*(innerWidth+120))+'px,'+(use?'-18vh':'4vh')+',0) rotate('+(direction*7)+'deg)';live.textContent=use?'この写真を使います':'この写真は使いません';
+    if(!alive||busy||at>=candidates.length)return;busy=true;stage.classList.add(use?'choose-yes':'choose-no');stage.style.setProperty('--decision-progress','1');card.style.transition=reduceDeck?'opacity .01ms':'transform .26s cubic-bezier(.2,.72,.2,1),opacity .2s';card.style.opacity='.12';card.style.transform=reduceDeck?'none':'translate3d('+(direction*(innerWidth+120))+'px,'+(use?'-18vh':'4vh')+',0) rotate('+(direction*7)+'deg)';live.textContent=use?'この写真を使います':'この写真は使いません';
     // スワイプ判定線で既に触覚を返した場合は、指を離した瞬間に二重発火させない。
     if(window.SpotaMotion&&!thresholdHit)window.SpotaMotion.haptic('rigid',.92);
     var candidate=candidates[at++];
     // デッキ中は原寸Blobを保持せず参照だけを残す。採用後の解析時に1枚ずつ読む。
     if(use)kept.push(candidate);
     if(options.onDecision)options.onDecision(use,candidate);
-    setTimeout(function(){if(!alive||releaseScreen!==screen)return;busy=false;preview();},220);
+    setTimeout(function(){if(!alive||releaseScreen!==screen)return;busy=false;preview();},reduceDeck?0:220);
   }
   function finish(){
     if(!alive||releaseScreen!==screen||!screen.isConnected)return;
@@ -219,7 +220,12 @@ async function maybeShowDailyPhoto(force){
       onDecision:function(use,item){if(!use)discardDaily(Daily,item);},
       onKeep:async function(item){
         try{
+          // フル写真の読み込み中にログイン先が変わった場合、別アカウントの追加フローへ渡さない。
+          var keepScope=activeSpotScope,keepAuth=null;
+          if(typeof captureAuth==='function')keepAuth=await captureAuth().catch(function(){return null;});
+          if(activeSpotScope!==keepScope||(keepAuth&&typeof authIsCurrent==='function'&&!authIsCurrent(keepAuth))){discardDaily(Daily,item);setTip('アカウントが変わったため追加を中止しました');return;}
           setTip('写真を準備しています…');var full=await Daily.photo({id:item.dailyId}),photo=full&&full.photo;
+          if(activeSpotScope!==keepScope||(keepAuth&&typeof authIsCurrent==='function'&&!authIsCurrent(keepAuth))){discardDaily(Daily,item);setTip('アカウントが変わったため追加を中止しました');return;}
           if(!photo||!photo.dataUrl)throw new Error('empty photo');finishDaily();await afterPhoto(photo.dataUrl,null,photo.exif||item.exif||{});
         }catch(e){retryDaily(plan);setTip('写真を読めませんでした。2時間後にもう一度試します');}
       }

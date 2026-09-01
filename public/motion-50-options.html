@@ -24,7 +24,7 @@
     .option h2{margin:0;font-size:18px;letter-spacing:-.025em}.option header p{margin:4px 0 0;color:var(--muted);font-size:11px;line-height:1.5}
     .badge{padding:6px 8px;border-radius:99px;background:var(--ink);color:white;font-size:9px;font-weight:800;letter-spacing:.08em}
     .stage{position:relative;height:520px;display:grid;place-items:center;overflow:hidden;border-radius:25px;background:linear-gradient(150deg,#e6eaf5,#f5f5f3);isolation:isolate}
-    .decision-card{position:relative;z-index:3;width:82%;height:72%;padding:0;overflow:hidden;border:1px solid rgba(255,255,255,.62);border-radius:30px;background:#121318;box-shadow:0 25px 58px rgba(13,18,28,.28),inset 0 1px 0 rgba(255,255,255,.35);touch-action:pan-y;will-change:transform,opacity}
+    .decision-card{position:relative;z-index:3;width:82%;height:72%;padding:0;overflow:hidden;border:1px solid rgba(255,255,255,.62);border-radius:30px;background:#121318;box-shadow:0 25px 58px rgba(13,18,28,.28),inset 0 1px 0 rgba(255,255,255,.35);touch-action:pan-y pinch-zoom;will-change:transform,opacity}
     .decision-card img{width:100%;height:100%;display:block;object-fit:cover;background:#101116;pointer-events:none}
     .decision-card::after{content:"SPOTA / DAILY MEMORY";position:absolute;left:16px;right:16px;bottom:15px;color:white;font-size:9px;font-weight:740;letter-spacing:.13em;text-shadow:0 1px 8px #000}
     .verdict{position:absolute;z-index:4;left:3px;top:8px;color:var(--ink);font-size:clamp(70px,8.5vw,116px);line-height:.82;text-transform:lowercase;pointer-events:none;opacity:0;transform:translate3d(-28px,24px,0) rotate(-4deg);transform-origin:left top;transition:opacity .12s linear,transform .18s var(--ease)}
@@ -53,7 +53,7 @@
     </section>
     <section class="grid" aria-label="Motion 50の3案">
       <article class="option option-a" data-option="A">
-        <header><div><h2>A. Diagonal Verdict</h2><p>左上から判断語が出る本番推奨案</p></div><span class="badge">RECOMMENDED</span></header>
+        <header><div><h2>A. Diagonal Verdict</h2><p>左上から判断語が出る比較案</p></div></header>
         <div class="stage">
           <div class="verdict use" aria-hidden="true"><span>use</span><span>it.</span></div>
           <div class="verdict pass" aria-hidden="true"><span>pass</span><span>it.</span></div>
@@ -64,7 +64,7 @@
         <p class="hint">右上へ流すと USE、左へ流すと PASS。判定線で一度だけ硬めの触覚を返します。</p>
       </article>
       <article class="option option-b" data-option="B">
-        <header><div><h2>B. Corner Split</h2><p>判定語を両端へ分ける明快な案</p></div></header>
+        <header><div><h2>B. Corner Split</h2><p>判定語を両端へ分ける採用案</p></div><span class="badge">SELECTED</span></header>
         <div class="stage">
           <div class="verdict use" aria-hidden="true"><span>keep</span><span>this.</span></div>
           <div class="verdict pass" aria-hidden="true"><span>not</span><span>this.</span></div>
@@ -87,6 +87,6 @@
       </article>
     </section>
   </main>
-  <script src="motion-50-options.js"></script>
+  <script src="motion-50-options.js?v=128"></script>
 </body>
 </html>

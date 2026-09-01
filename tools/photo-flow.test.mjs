@@ -269,7 +269,7 @@ test("自分の地図は3枚目より後のサーバー写真も復元キュー�
 
 test("スワイプは日次候補だけに使い、意図的な選択は直接追加する", () => {
   assert.match(postSource, /secureShuffle\(candidates\)/);
-  assert.match(postSource, /右へ USE・左へ PASS/);
+  assert.match(postSource, /右へ KEEP THIS・左へ NOT THIS/);
   assert.match(postSource, /if\(use\)kept\.push\(candidate\)/);
   assert.doesNotMatch(postSource, /kept\.push\(await chosenCandidateFile/);
   assert.match(postSource, /releaseScreen!==screen/);
@@ -290,6 +290,17 @@ test("1日1枚は明示同意後のみ有効になり、不使用で送信しな
   assert.doesNotMatch(postSource.slice(decisionStart, keepStart), /api\(|fetch\(|Daily\.photo/);
   assert.doesNotMatch(postSource, /randomCandidate\(\{exclude:/);
   assert.doesNotMatch(postSource, /function dailySeen|function rememberDaily/);
+});
+
+test("日次候補の読込中にアカウントが変わると別アカウントへ写真を渡さない", () => {
+  const keepStart = postSource.indexOf('onKeep:async function');
+  const keepEnd = postSource.indexOf('}catch(e){retryDaily(plan)', keepStart);
+  const keepFlow = postSource.slice(keepStart, keepEnd);
+  assert.match(keepFlow, /keepScope=activeSpotScope/);
+  assert.match(keepFlow, /keepAuth=await captureAuth\(\)/);
+  assert.equal((keepFlow.match(/activeSpotScope!==keepScope/g) || []).length, 2);
+  assert.equal((keepFlow.match(/!authIsCurrent\(keepAuth\)/g) || []).length, 2);
+  assert.ok(keepFlow.lastIndexOf('activeSpotScope!==keepScope') < keepFlow.indexOf('await afterPhoto'));
 });
 
 test("日次写真の準備失敗は2時間後へ再予約し、読めない候補はnative側で飛ばす", () => {

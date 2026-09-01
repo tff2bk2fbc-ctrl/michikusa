@@ -11,7 +11,7 @@
       paint(choice,1);status.textContent=(choice==='use'?'USE':'PASS')+'を選択しました';if(!threshold)haptic();
       card.style.transition=reduce?'opacity .15s':'transform .26s var(--ease),opacity .2s';card.style.opacity='.12';
       card.style.transform=reduce?'none':`translate3d(${choice==='use'?'125%':'-125%'},${choice==='use'?'-14%':'3%'},0) rotate(${choice==='use'?7:-7}deg)`;
-      setTimeout(()=>{card.style.transition='none';clear();requestAnimationFrame(()=>{card.style.transition='';card.focus({preventScroll:true});});},300);
+      setTimeout(()=>{card.style.transition='none';clear();requestAnimationFrame(()=>{card.style.transition='';card.focus({preventScroll:true});});},reduce?0:300);
     };
     card.addEventListener('pointerdown',event=>{if(!event.isPrimary||(event.pointerType==='mouse'&&event.button!==0))return;active=true;pointer=event.pointerId;sx=event.clientX;sy=event.clientY;dx=dy=0;card.style.transition='none';});
     card.addEventListener('pointermove',event=>{if(!active||event.pointerId!==pointer)return;dx=event.clientX-sx;dy=event.clientY-sy;if(Math.abs(dx)<8)return;event.preventDefault();try{card.setPointerCapture(pointer);}catch(e){}const progress=Math.min(1,Math.abs(dx)/(card.offsetWidth*.30));paint(dx>0?'use':'pass',progress);const y=Math.max(-110,Math.min(55,dy*.42));card.style.transform=`translate3d(${dx}px,${y}px,0) rotate(${dx/innerWidth*7}deg)`;if(progress>=1&&!threshold){threshold=true;haptic();}if(progress<1)threshold=false;});
