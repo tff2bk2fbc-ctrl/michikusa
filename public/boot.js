@@ -4,7 +4,7 @@
    版の番号、エラーの表示、起動の計測。
    ここが失敗すると何も出ないので、余計なものを書かない。
    ============================================================ */
-var BUILD='v128';
+var BUILD='v129';
 var SPOTA_ONBOARDING_VERSION='2026-08-17.1';
 var onboardingSaved='';
 try{onboardingSaved=localStorage.getItem('spota_onboarding_complete')||'';}catch(e){}
@@ -80,8 +80,13 @@ function hideSplash(force){
 }
 /* 通信や画像が失敗しても、操作画面を3秒より長く塞がない。 */
 setTimeout(function(){ hideSplash(true); },SPLASH_MAX_MS);
-function showErr(m){var e=document.getElementById('err');e.style.display='block';
-  e.innerHTML='<b>エラー（そのまま貼ってください） BUILD='+BUILD+'</b>\n'+m;}
+function showErr(m){
+  var e=document.getElementById('err');if(!e)return;
+  e.style.display='block';e.replaceChildren();
+  var title=document.createElement('b');
+  title.textContent='エラー（そのまま貼ってください） BUILD='+BUILD;
+  e.appendChild(title);e.appendChild(document.createTextNode('\n'+String(m||'')));
+}
 function dump(x){if(x===undefined)return'undefined';if(x===null)return'null';
   if(x.stack)return (x.message||'')+'\n--- 発生箇所 ---\n'+x.stack;return String(x);}
 /* ファイルを分けたので、どこで失敗したかが分かるようにする */

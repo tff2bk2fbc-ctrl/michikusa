@@ -408,6 +408,10 @@ function baseCat(p){
   return '景';
 }
 map.on('click',function(e){
+  // 地図を水平・垂直に動かした直後の合成clickは、場所選択へ渡さない。
+  // 通常の短いタップだけを残し、意図しない位置確定を防ぐ。
+  if(window.SpotaGestures&&typeof window.SpotaGestures.mapTapAllowed==='function'&&
+     !window.SpotaGestures.mapTapAllowed())return;
   if(placing){ movePlacing(e.lngLat.lat,e.lngLat.lng); return; }
 
   var pad=20,box=[[e.point.x-pad,e.point.y-pad],[e.point.x+pad,e.point.y+pad]],fs=[];

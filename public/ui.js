@@ -133,53 +133,6 @@
 })();
 
 /* ============================================================
-   下のバナーの動き
-
-   ・押した場所へ、丸い枠が滑って動く
-   ・そのとき、上端に光が一度だけ走る
-   ============================================================ */
-(function(){
-  var bar=document.getElementById('fabs');
-  var pill=document.getElementById('pill');
-  if(!bar||!pill)return;
-
-  var btns=Array.prototype.slice.call(bar.querySelectorAll('.nav-btn'));
-
-  function movePill(b){
-    if(!b){ pill.classList.remove('on'); return; }
-    var p=b.parentElement.getBoundingClientRect();
-    var r=b.getBoundingClientRect();
-    pill.style.width=r.width+'px';
-    pill.style.transform='translateX('+(r.left-p.left)+'px)';
-    pill.classList.add('on');
-  }
-  function sweep(){
-    bar.classList.add('pressed');
-    setTimeout(function(){ bar.classList.remove('pressed'); },180);
-  }
-
-  btns.forEach(function(b){
-    b.addEventListener('pointerdown',function(){
-      btns.forEach(function(x){x.classList.remove('on');});
-      b.classList.add('on');
-      movePill(b);
-      sweep();
-      // 少し置いてから枠を戻す。押した感触だけ残す
-      clearTimeout(window.__pillT);
-      window.__pillT=setTimeout(function(){
-        b.classList.remove('on');
-        pill.classList.remove('on');
-      },1400);
-    });
-  });
-
-  document.getElementById('btn-cam').addEventListener('pointerdown',sweep);
-  var bs=document.getElementById('btn-style');
-  if(bs) bs.addEventListener('pointerdown',sweep);
-  window.addEventListener('resize',function(){ pill.classList.remove('on'); });
-})();
-
-/* ============================================================
    診断画面
    ・URL の末尾に ?diag=1 を付けると出る
    ・画面の左上を3回続けて叩いても出る

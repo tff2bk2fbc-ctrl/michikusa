@@ -138,7 +138,9 @@ test('PDF map header and iPhone viewport rules stay fixed', async () => {
   assert.ok(top.indexOf('id="btn-map-scope"') < top.indexOf('id="btn-notifications"'));
   assert.ok(top.indexOf('id="btn-notifications"') < top.indexOf('id="btn-messages"'));
   assert.match(release, /mapAudience==='mine'\?'public':'mine'/);
-  assert.match(css, /\.pill\{[^}]*background:transparent;box-shadow:none/s);
+  assert.match(css, /\.pill\{[^}]*pointer-events:none;[^}]*transition:[^}]*transform/s);
+  assert.match(css, /\.pill>i\{[^}]*border:[^}]*backdrop-filter:blur\([^)]*\)/s);
+  assert.match(css, /\.bc svg\{[^}]*filter:none/s);
   assert.match(css, /\.timeline-search input\{[^}]*font-size:16px/s);
   assert.match(css, /\.comment-form input,.message-form textarea\{[^}]*font-size:16px/s);
   assert.match(css, /\.release-screen\{[^}]*overflow-x:hidden/s);

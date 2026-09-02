@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="stylesheet" href="/vendor/maplibre-gl-4.7.1.min.css" integrity="sha384-K282sW/zFjTkrjR/+yr1H+gCukuy4OEYrkXRybV88g7pk+kZZYpNV6SAV59NcgFg">
-<link rel="stylesheet" href="/app.css?v=128">
+<link rel="stylesheet" href="/app.css?v=129">
 </head>
 <div id="err"></div>
 <div id="splash">
@@ -79,7 +79,7 @@
   <div class="sheen"></div>
 
   <div class="nav-items">
-    <div class="pill" id="pill"></div>
+    <div class="pill" id="pill" aria-hidden="true"><i></i></div>
 
     <button class="nav-btn" id="btn-timeline" data-i="0" type="button" aria-label="タイムライン">
       <div class="bc">
@@ -95,18 +95,18 @@
       </div>
     </button>
 
-    <button class="cam" id="btn-cam" type="button" aria-label="カメラ">
+    <button class="cam" id="btn-cam" data-i="2" type="button" aria-label="カメラ">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7.5h4L8.5 5.5h7L17 7.5h4v12H3z"/><circle cx="12" cy="13" r="3.6"/></svg>
     </button>
 
-    <button class="nav-btn" id="btn-lib" data-i="2" type="button" aria-label="写真">
+    <button class="nav-btn" id="btn-lib" data-i="3" type="button" aria-label="写真">
       <div class="bc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h18v13H3z"/><path d="M3 15l5-4 4 3 3-3 6 5"/><circle cx="8.5" cy="9" r="1.3"/></svg>
         <span class="sr-only">写真</span>
       </div>
     </button>
 
-    <button class="nav-btn" id="btn-me" data-i="3" type="button" aria-label="プロフィール">
+    <button class="nav-btn" id="btn-me" data-i="4" type="button" aria-label="プロフィール">
       <div class="bc">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></svg>
         <span class="sr-only">プロフィール</span>
@@ -138,7 +138,7 @@
 <input type="file" accept="image/*" multiple hidden id="in-bulk">
 
 
-<script src="/boot.js?v=128"></script>
+<script src="/boot.js?v=129"></script>
 <script src="/vendor/maplibre-gl-4.7.1.min.js" integrity="sha384-KKgyz2mG25bKJ1O2PyqTJPlAF8Kw2BpDmsLTNBXslICOBvhTAyF5F0XhLWF2ZovY"></script>
 <script src="/lazy.js?v=124"></script>
 
@@ -147,7 +147,7 @@
 <script src="/core.js?v=128"></script>    <!-- 設定・道具・端末内の保存 -->
 <script src="/motion.js?v=128"></script>  <!-- 待機表示・写真・現在地の動き -->
 <script src="/map.js?v=128"></script>     <!-- 地図・配色・ピン -->
-<script src="/place.js?v=124"></script>   <!-- 場所のシート・写真を開く -->
+<script src="/place.js?v=125"></script>   <!-- 場所のシート・写真を開く -->
 <script src="/data.js?v=126"></script>    <!-- 自前DBの取り込み・明示的な地名検索 -->
 <script src="/native.js?v=128"></script>  <!-- カメラ・現在地・通知 -->
 <script src="/post.js?v=128"></script>    <!-- 記録する・思い出アルバム -->
@@ -155,6 +155,7 @@
 <script src="/onboarding.js?v=124"></script><!-- 初回起動・権限・規約・ログイン -->
 <script src="/release.js?v=128"></script> <!-- 公開地図・アルバム・タイムライン・プロフィール -->
 <script src="/operator.js?v=125"></script><!-- 許可済み運営者だけの急上昇ワード編集 -->
-<script src="/ui.js?v=124"></script>      <!-- スワイプ・ズーム・バナー・診断 -->
+<script src="/ui.js?v=125"></script>      <!-- スワイプ・ズーム・診断 -->
+<script src="/gestures.js?v=129"></script><!-- 下部タブ・地図の誤タップ防止 -->
 </body>
 </html>

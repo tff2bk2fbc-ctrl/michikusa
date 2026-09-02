@@ -1,4 +1,16 @@
-# Spota v128 / Motion 50 B Design QA
+# Spota Design QA
+
+## v129 / Liquid Glass production integration
+
+- Result: passed
+- Record: `docs/qa/v129/README.md`
+- Scope: bottom navigation, search, notifications/messages, profile/settings materials, selection suppression, horizontal navigation gesture, and map drag/tap separation
+- Automated regression: 144/144 passed
+- Dedicated interaction/contrast checks: 9/9 passed
+
+---
+
+## v128 / Motion 50 B
 
 - Source visual truth, KEEP state: `docs/qa/v128/motion50-b-reference.png`
 - Source visual truth, NOT state: `docs/qa/v128/motion50-b-reference-not.png`
